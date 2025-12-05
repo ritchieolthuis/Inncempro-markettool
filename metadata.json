@@ -1,0 +1,5 @@
+{
+  "name": "Rotterdam Architect Scout",
+  "description": "A smart search tool powered by Gemini to find relevant architects in Rotterdam for Inncempro, focusing on Google Maps reviews and business relevance.",
+  "requestFramePermissions": []
+}

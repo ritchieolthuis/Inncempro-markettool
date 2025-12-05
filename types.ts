@@ -1,0 +1,52 @@
+
+export interface GroundingChunk {
+  web?: {
+    uri: string;
+    title: string;
+  };
+}
+
+export interface GroundingMetadata {
+  groundingChunks: GroundingChunk[];
+  groundingSupports: any[];
+  searchEntryPoint?: any;
+}
+
+export interface SearchResult {
+  text: string;
+  groundingMetadata?: GroundingMetadata;
+}
+
+export interface SearchState {
+  isLoading: boolean;
+  data: SearchResult | null;
+  error: string | null;
+}
+
+// NEW: Structured types for fast discovery
+export interface DiscoveredCompany {
+    id: string; // unique ID based on name+city
+    name: string;
+    city: string;
+}
+
+export interface DiscoveryResult {
+    totalEstimatedMatches: number;
+    companies: DiscoveredCompany[];
+}
+
+export interface EnrichedCompanyData {
+    markdownContent: string;
+    groundingChunks: GroundingChunk[];
+}
+
+// AUTH TYPES
+export interface User {
+    id: string;
+    username: string;
+    email: string;
+    password?: string; // In real app, never store plain text. Mocking for localstorage.
+    avatarUrl?: string;
+    themeColor?: string; // Hex code
+    createdAt: number;
+}
