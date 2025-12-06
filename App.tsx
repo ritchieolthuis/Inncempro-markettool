@@ -19,45 +19,51 @@ const DUTCH_LOCATIONS = [
     "Tilburg", "Utrecht (Stad)", "Veenendaal", "Venlo", "Vlaardingen", "Westland", "Zaanstad", "Zoetermeer", "Zwolle"
 ].sort();
 
-// OPTIMALISATIE: Batch size 3 met korte delay is het snelst en meest stabiel.
+// OPTIMALISATIE: Batch size 5 voor maximale snelheid.
 const RESULTS_PER_PAGE = 10; 
-const BATCH_SIZE = 3; 
-const BATCH_DELAY_MS = 200; 
+const BATCH_SIZE = 5; 
+const BATCH_DELAY_MS = 100; 
 
 const DEFAULT_ORIGIN = "Lansinkesweg 4, 7553 AE Hengelo";
 
-// ORDER: East (Home) -> Center -> North-West -> South-West -> South -> South-East -> Back
+// ORDER: Efficiënte lus vanuit Hengelo (Oost) -> Midden -> Noord-West -> Zuid-West -> Zuid -> Zuid-Oost -> Terug
 const GEO_PROVINCE_ORDER: Record<string, number> = {
-    // Overijssel (START)
-    'hengelo': 0, 'enschede': 0, 'almelo': 0, 'deventer': 0, 'zwolle': 0, 'overijssel': 0,
-    // Gelderland
-    'apeldoorn': 1, 'arnhem': 1, 'nijmegen': 1, 'ede': 1, 'gelderland': 1,
-    // Utrecht
-    'utrecht': 2, 'amersfoort': 2, 'veenendaal': 2, 'zeist': 2,
-    // Flevoland
-    'almere': 3, 'lelystad': 3, 'flevoland': 3,
-    // Noord-Holland
-    'amsterdam': 4, 'haarlem': 4, 'alkmaar': 4, 'zaanstad': 4, 'purmerend': 4, 'hilversum': 4, 'amstelveen': 4, 'noord-holland': 4,
-    // Zuid-Holland
-    'leiden': 5, 'den haag': 5, 'zoetermeer': 5, 'delft': 5, 'westland': 5, 'rotterdam': 6, 'schiedam': 6, 'vlaardingen': 6, 'spijkenisse': 6, 'dordrecht': 6, 'gouda': 6, 'alphen aan den rijn': 6, 'zuid-holland': 6,
-    // Zeeland
-    'middelburg': 7, 'vlissingen': 7, 'zeeland': 7,
-    // Noord-Brabant
-    'breda': 8, 'tilburg': 8, "'s-hertogenbosch": 8, 'den bosch': 8, 'oss': 8, 'waalwijk': 8, 'eindhoven': 9, 'helmond': 9, 'noord-brabant': 9,
-    // Limburg
-    'venlo': 10, 'roermond': 10, 'sittard-geleen': 10, 'heerlen': 10, 'maastricht': 10, 'limburg': 10,
-    // Noordelijk (Rest)
-    'drenthe': 11, 'emmen': 11, 'groningen': 12, 'friesland': 13, 'leeuwarden': 13
+    // 1. START OMGEVING (Oost)
+    'hengelo': 0, 'enschede': 1, 'almelo': 2, 'oldenzaal': 2, 'overijssel': 2,
+    
+    // 2. RICHTING WESTEN (Via A1)
+    'deventer': 10, 'apeldoorn': 11, 'ede': 12, 'barneveld': 12, 'amersfoort': 13, 'hilversum': 14, 'utrecht': 15, 'zeist': 15, 'nieuwegein': 15, 'gelderland': 11,
+    
+    // 3. NOORD-HOLLAND & FLEVOLAND
+    'almere': 20, 'lelystad': 21, 'amsterdam': 22, 'zaanstad': 23, 'purmerend': 23, 'alkmaar': 24, 'haarlem': 25, 'haarlemmermeer': 26, 'amstelveen': 26, 'schiphol': 26, 'noord-holland': 22, 'flevoland': 20,
+    
+    // 4. ZUID-HOLLAND (Noord naar Zuid zakken)
+    'leiden': 30, 'alphen aan den rijn': 31, 'den haag': 32, 'zoetermeer': 33, 'delft': 34, 'westland': 34, 'rotterdam': 35, 'schiedam': 35, 'vlaardingen': 35, 'spijkenisse': 36, 'dordrecht': 37, 'gorinchem': 38, 'gouda': 38, 'zuid-holland': 35,
+    
+    // 5. ZEELAND & WEST-BRABANT
+    'middelburg': 40, 'vlissingen': 40, 'bergen op zoom': 41, 'roosendaal': 42, 'breda': 43, 'oosterhout': 43, 'zeeland': 40,
+    
+    // 6. MIDDEN-BRABANT & OOST-BRABANT
+    'tilburg': 50, 'waalwijk': 50, "'s-hertogenbosch": 51, 'den bosch': 51, 'oss': 52, 'eindhoven': 53, 'helmond': 54, 'noord-brabant': 51,
+    
+    // 7. LIMBURG (Zuidelijkste punt, dan terug omhoog)
+    'weert': 60, 'roermond': 61, 'sittard-geleen': 62, 'heerlen': 63, 'maastricht': 64, 'venlo': 65, 'limburg': 61,
+    
+    // 8. TERUGWEG (Via Arnhem/Nijmegen)
+    'nijmegen': 70, 'arnhem': 71, 'doetinchem': 72,
+    
+    // 9. NOORDEN (Apart lusje indien nodig)
+    'zwolle': 80, 'emmen': 81, 'assen': 82, 'groningen': 83, 'leeuwarden': 84, 'drenthe': 81, 'friesland': 84
 };
 
 const getGeoScore = (city: string) => {
     const key = city.toLowerCase().trim();
     if (GEO_PROVINCE_ORDER[key] !== undefined) return GEO_PROVINCE_ORDER[key];
-    // Fallback voor onbekende steden: probeer te matchen op delen
+    // Fallback: match partial
     for (const k in GEO_PROVINCE_ORDER) {
         if (key.includes(k)) return GEO_PROVINCE_ORDER[k];
     }
-    return 99; // Achteraan sluiten
+    return 99; // Unknown locations last
 };
 
 const App: React.FC = () => {
@@ -375,7 +381,8 @@ const App: React.FC = () => {
     const companiesToRoute = viewMode === 'favorites' ? favorites : foundCompanies;
     if (!companiesToRoute.length) return;
 
-    // SORTEER: Op Geografische lus vanuit Hengelo
+    // 1. Filter: Alleen items waar we data van hebben (of die in lijst staan)
+    // 2. Sorteer: Op Geografische lus (Oost -> Midden -> West -> Zuid -> Oost)
     const sortedList = [...companiesToRoute].sort((a, b) => {
         return getGeoScore(a.city) - getGeoScore(b.city);
     });
@@ -391,10 +398,19 @@ const App: React.FC = () => {
         let address = "";
         if (enriched) {
              const addrMatch = enriched.markdownContent.match(/\* Adres: (.*?)(?:\n|$)/);
-             if (addrMatch) address = addrMatch[1].replace('n/a', '').replace('N/A', '').trim();
+             if (addrMatch) {
+                 address = addrMatch[1].replace('n/a', '').replace('N/A', '').trim();
+             }
         }
-        // Fallback: Als geen adres, gebruik Naam + Stad.
-        return address && address.length > 5 ? encodeURIComponent(address) : encodeURIComponent(`${c.name} ${c.city}`);
+        
+        // CRITICAL FIX: Gebruik het volledige adres indien beschikbaar. 
+        // Als adres leeg is, gebruik Naam + Stad. 
+        // Dit voorkomt "Niet gevonden" in Maps.
+        if (address && address.length > 5 && !address.toLowerCase().includes('maps')) {
+            return encodeURIComponent(address);
+        } else {
+            return encodeURIComponent(`${c.name} ${c.city}`);
+        }
     }).join('|');
 
     const mapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(startPoint)}&destination=${encodeURIComponent(endPoint)}&waypoints=${waypoints}&travelmode=driving`;

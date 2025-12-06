@@ -11,7 +11,7 @@ if (!apiKey) {
 
 const ai = new GoogleGenAI({ apiKey: apiKey || '' });
 
-// Helper for delay - INCREASED FOR SAFETY
+// Helper for delay - REDUCED for speed
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function generateWithRetry(modelCall: () => Promise<any>, retries = 0): Promise<any> {
@@ -25,7 +25,7 @@ async function generateWithRetry(modelCall: () => Promise<any>, retries = 0): Pr
                  throw error; 
             }
             if (i === retries) return null;
-            await delay(5000); 
+            await delay(1000); 
         }
     }
     return null;
@@ -42,21 +42,20 @@ export const performDiscoverySearch = async (
     otherFilters: string[]
 ): Promise<DiscoveryResult> => {
     try {
-        // We bouwen een directe, simpele query om timeouts te voorkomen
         const locationStr = regions.includes("Heel Nederland") ? "Nederland" : regions.join(" en ");
         const query = `Zoek naar best beoordeelde ${types.join(' of ')} in ${locationStr}. Focus op Google Reviews > 3.5.`;
         
+        // Simplified prompt for speed
         const prompt = `
         ZOEKOPDRACHT: ${query}
-        Extra context: ${specs.join(', ')} ${otherFilters.join(' ')}
+        Extra filters: ${specs.join(', ')} ${otherFilters.join(' ')}
 
-        DOEL: Genereer een lijst van 15-20 relevante bedrijven.
+        DOEL: Genereer 10-15 relevante bedrijven.
         
-        OUTPUT FORMAT (PUUR JSON):
+        JSON ONLY:
         {
             "companies": [
-                { "name": "Exacte Bedrijfsnaam", "city": "Stad" },
-                ...
+                { "name": "Exacte Naam", "city": "Stad" }
             ]
         }
         `;
@@ -112,16 +111,17 @@ export const enrichBatchCompanies = async (companies: {name: string, city: strin
         const listStr = companies.map((c, i) => `${i+1}. ${c.name} in ${c.city}`).join('\n');
 
         const prompt = `
-            VERRIJK DEZE DATA (KORT & SNEL):
+            VERRIJK DATA SNEL VOOR:
             ${listStr}
 
-            ACTIE:
-            Vind adres, website en rating in Google Maps.
+            INSTRUCTIE:
+            1. Zoek exacte Google Maps naam en ADRES (Straat + Huisnummer is verplicht!).
+            2. Als Maps adres mist -> Check website contact pagina.
             
-            OUTPUT JSON LIJST (PRECIES DEZE FORMAT):
+            RETURN JSON LIST ONLY:
             [
                 {
-                    "markdownContent": "### [Naam Maps]\nLINKS: [Website](URL) | [Route](https://maps.google.com/?q=...) | [Tel](tel:...) | [Info Scan](action:deepscan:...)\n* Adres: [Adres of 'Stad']\n* Rating: [Score] ([Aantal]) - Bron: Google Maps"
+                    "markdownContent": "### [Exacte Naam]\nLINKS: [Website](URL) | [Route](https://maps.google.com/?q=[Naam]+[Stad]) | [Tel](tel:...) | [Info Scan](action:deepscan:...)\n* Adres: [STRAAT + NR + STAD]\n* Rating: [Score] ([Aantal]) - Bron: Google Maps"
                 }
             ]
         `;
@@ -146,8 +146,8 @@ export const enrichBatchCompanies = async (companies: {name: string, city: strin
                     if (parsedList[index] && parsedList[index].markdownContent) {
                         let content = parsedList[index].markdownContent;
                         
-                        // Fallback logic for links
-                        if (!content.includes('http') || content.includes('ZOEK') || content.includes('NA')) {
+                        // Fallback logic ensured
+                        if (!content.includes('http') || content.includes('ZOEK')) {
                              const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(company.name + ' ' + company.city)}`;
                              content = content.replace(/LINKS:.*?(\n|$)/, `LINKS: [Website](${searchUrl}) | [Route](https://maps.google.com/?q=${encodeURIComponent(company.name + ' ' + company.city)}) | [Info Scan](action:deepscan:${company.name})\n`);
                         }
@@ -172,7 +172,7 @@ export const enrichBatchCompanies = async (companies: {name: string, city: strin
     }
 };
 
-// Legacy single enrich (kept for fallback but unused in main loop)
+// Legacy single enrich (kept for fallback)
 export const enrichCompanyData = async (companyName: string, city: string): Promise<EnrichedCompanyData> => {
     return (await enrichBatchCompanies([{name: companyName, city, id: 'single'}]))['single'] || { markdownContent: '', groundingChunks: [] };
 };
@@ -183,16 +183,16 @@ export const enrichCompanyData = async (companyName: string, city: string): Prom
 export const generateDeepScan = async (companyName: string, city: string): Promise<PlaceResult> => {
   try {
       const prompt = `
-          DATA RAPPORT VOOR: "${companyName}" (${city}, Nederland).
+          RAPPORT: "${companyName}" (${city}).
           
-          ZOEKSTAPPEN (Voer uit):
-          1. "${companyName} ${city} reviews google" -> Haal Google Rating + Review aantal.
-          2. "site:linkedin.com ${companyName}" -> LinkedIn Bedrijfspagina.
-          3. "${companyName} team contact" -> Emailadres & Sleutelfiguren (Directie/Partners).
-          4. "${companyName} projecten" -> Recente projecten (Naam + Jaar).
-          5. "vestigingen ${companyName} Nederland Benelux" -> Zoek naar Hoofdvestiging en andere vestigingen.
+          ZOEK:
+          1. Reviews (Score + Aantal)
+          2. LinkedIn (Pagina)
+          3. Contact (Email, Tel, Team)
+          4. Projecten (Recent)
+          5. Vestigingen
 
-          GEEF TERUG (JSON):
+          JSON ONLY:
           {
             "name": "${companyName}",
             "formatted_address": "...",
@@ -206,11 +206,10 @@ export const generateDeepScan = async (companyName: string, city: string): Promi
                 { "name": "Naam", "role": "Functie", "email": "...", "phone": "..." }
             ],
             "recent_projects": [
-                { "name": "Projectnaam", "description": "Korte info", "year": "202X" }
+                { "name": "Project", "description": "Info", "year": "202X" }
             ],
             "branches": [
-                { "address": "...", "city": "...", "isHeadOffice": true, "country": "Nederland" },
-                { "address": "...", "city": "...", "isHeadOffice": false, "country": "..." }
+                { "address": "...", "city": "...", "isHeadOffice": true, "country": "Nederland" }
             ],
             "url": "https://www.google.com/search?q=${encodeURIComponent(companyName + ' ' + city + ' reviews')}"
           }
