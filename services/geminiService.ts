@@ -11,20 +11,21 @@ if (!apiKey) {
 
 const ai = new GoogleGenAI({ apiKey: apiKey || '' });
 
-// Helper for delay - REDUCED TO MINIMUM
+// Helper for delay - INCREASED FOR SAFETY
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function generateWithRetry(modelCall: () => Promise<any>, retries = 1): Promise<any> {
-    for (let i = 0; i < retries; i++) {
+async function generateWithRetry(modelCall: () => Promise<any>, retries = 0): Promise<any> {
+    for (let i = 0; i <= retries; i++) {
         try {
             return await modelCall();
         } catch (error: any) {
+            const errString = JSON.stringify(error);
             // If quota exceeded, stop immediately (don't retry to avoid ban)
-            if (error.status === 429 || (error.message && (error.message.includes('429') || error.message.includes('Quota')))) {
+            if (error.status === 429 || errString.includes('429') || errString.includes('Quota') || errString.includes('RESOURCE_EXHAUSTED')) {
                  throw error; 
             }
-            console.warn(`API Attempt ${i+1} failed. Retrying...`);
-            await delay(1000); 
+            if (i === retries) return null;
+            await delay(5000); 
         }
     }
     return null;
@@ -32,7 +33,7 @@ async function generateWithRetry(modelCall: () => Promise<any>, retries = 1): Pr
 
 /**
  * FASE 1: ONTDEKKING (DISCOVERY)
- * Doel: Vind de grootste en best beoordeelde bedrijven.
+ * Versimpeld voor betrouwbaarheid en snelheid.
  */
 export const performDiscoverySearch = async (
     types: string[], 
@@ -41,31 +42,27 @@ export const performDiscoverySearch = async (
     otherFilters: string[]
 ): Promise<DiscoveryResult> => {
     try {
-        const locationContext = regions.includes("Heel Nederland") ? "Nederland" : `${regions.join(' ')}, Nederland`;
+        // We bouwen een directe, simpele query om timeouts te voorkomen
+        const locationStr = regions.includes("Heel Nederland") ? "Nederland" : regions.join(" en ");
+        const query = `Zoek naar best beoordeelde ${types.join(' of ')} in ${locationStr}. Focus op Google Reviews > 3.5.`;
         
-        // QUERY OPTIMALISATIE VOOR RANKING
-        const searchQuery = `Lijst van ${types.join(' en ')} in ${locationContext} ${specs.length > 0 ? `specialisatie ${specs.join(', ')}` : ''} ${otherFilters.join(' ')}`;
-        
-        // ZEER KORTE PROMPT VOOR SNELHEID
         const prompt = `
-        ZOEKOPDRACHT: "${searchQuery}"
+        ZOEKOPDRACHT: ${query}
+        Extra context: ${specs.join(', ')} ${otherFilters.join(' ')}
+
+        DOEL: Genereer een lijst van 15-20 relevante bedrijven.
         
-        ACTIE:
-        1. Zoek naar de top 50 meest relevante bedrijven via Google Search.
-        2. Sorteer op: 1) Bekendheid/Grootte, 2) Google Reviews.
-        3. Geef een JSON lijst terug.
-        
-        OUTPUT (JSON ONLY):
+        OUTPUT FORMAT (PUUR JSON):
         {
-            "totalEstimatedMatches": 50,
             "companies": [
-                { "name": "Naam", "city": "Stad" }
+                { "name": "Exacte Bedrijfsnaam", "city": "Stad" },
+                ...
             ]
         }
         `;
 
         const response = await generateWithRetry(() => ai.models.generateContent({
-            model: 'gemini-2.5-flash', // Flash model is fastest
+            model: 'gemini-2.5-flash',
             contents: prompt,
             config: {
                 tools: [{ googleSearch: {} }],
@@ -74,91 +71,128 @@ export const performDiscoverySearch = async (
 
         if (response && response.text) {
              let cleanText = response.text;
-             // Robust cleanup
              cleanText = cleanText.replace(/```json/g, '').replace(/```/g, '').trim();
              const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
              if (jsonMatch) cleanText = jsonMatch[0];
 
              try {
                  const data = JSON.parse(cleanText) as DiscoveryResult;
-                 data.companies = data.companies.map(c => ({
+                 const timestamp = new Date().toISOString();
+
+                 let filteredCompanies = data.companies || [];
+                 filteredCompanies = filteredCompanies.map(c => ({
                      ...c,
-                     id: `${c.name}-${c.city}`.replace(/\s+/g, '-').toLowerCase()
+                     id: `${c.name}-${c.city}`.replace(/\s+/g, '-').toLowerCase(),
+                     discoveredAt: timestamp
                  }));
-                 return data;
+                 
+                 return {
+                     totalEstimatedMatches: filteredCompanies.length,
+                     companies: filteredCompanies
+                 };
              } catch (e) {
                  console.error("JSON Parsing failed in Discovery", e);
              }
         }
         return { totalEstimatedMatches: 0, companies: [] };
-    } catch (error) {
+    } catch (error: any) {
         console.error("Discovery Search Failed:", error);
         throw error; 
     }
 };
 
 /**
- * FASE 2: SNELLE VERRIJKING (FAST ENRICHMENT) - TURBO MODE
- * Doel: Haal ALLEEN harde data op (Adres, Rating, Site).
- * GEEN tekstgeneratie, GEEN samenvatting, GEEN marketingpraat.
+ * FASE 2: BATCH VERRIJKING (SPEED & QUALITY FOCUS)
+ * Focus: Google Maps Data EERST.
  */
-export const enrichCompanyData = async (companyName: string, city: string): Promise<EnrichedCompanyData> => {
+export const enrichBatchCompanies = async (companies: {name: string, city: string, id: string}[]): Promise<Record<string, EnrichedCompanyData>> => {
     try {
-        // ULTRA-KORTE PROMPT
+        if (companies.length === 0) return {};
+
+        const listStr = companies.map((c, i) => `${i+1}. ${c.name} in ${c.city}`).join('\n');
+
         const prompt = `
-            DATA EXTRACTIE VOOR: "${companyName}" in "${city}".
+            VERRIJK DEZE DATA (KORT & SNEL):
+            ${listStr}
+
+            ACTIE:
+            Vind adres, website en rating in Google Maps.
             
-            ZOEK: Google Knowledge Panel info.
-            
-            OUTPUT (MARKDOWN):
-            ### ${companyName}
-            LINKS: [Website](ZOEK) | [Route](ZOEK) | [Bel](ZOEK) | [Email](NA) | [Team](NA) | [LinkedIn](NA) | [Reviews](https://www.google.com/search?q=${encodeURIComponent(companyName + ' ' + city + ' reviews')}) | [Info Scan](action:deepscan:${companyName})
-            * Adres: [Adres uit snippet]
-            * Rating: [Score] ([Aantal] reviews) - Bron: Google Maps
-            `;
+            OUTPUT JSON LIJST (PRECIES DEZE FORMAT):
+            [
+                {
+                    "markdownContent": "### [Naam Maps]\nLINKS: [Website](URL) | [Route](https://maps.google.com/?q=...) | [Tel](tel:...) | [Info Scan](action:deepscan:...)\n* Adres: [Adres of 'Stad']\n* Rating: [Score] ([Aantal]) - Bron: Google Maps"
+                }
+            ]
+        `;
 
         const response = await generateWithRetry(() => ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: prompt,
             config: {
-                tools: [{ googleSearch: {} }], // Use search tool to get real address/rating
+                tools: [{ googleSearch: {} }],
             }
         }));
 
-        let content = response?.text || '';
+        const results: Record<string, EnrichedCompanyData> = {};
+        let cleanText = response?.text || '';
+        cleanText = cleanText.replace(/```json/g, '').replace(/```/g, '').trim();
+        const jsonMatch = cleanText.match(/\[[\s\S]*\]/);
         
-        // Fallback for Website/Route if AI puts "ZOEK" placeholder or fails
-        if (content.includes('](ZOEK)') || content.includes('](NA)')) {
-            content = content
-                .replace('(ZOEK)', `(https://www.google.com/search?q=${encodeURIComponent(companyName + ' ' + city + ' website')}&btnI=1)`) // I'm Feeling Lucky style
-                .replace('(ZOEK)', `(https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(companyName + ' ' + city)})`);
-        }
+        if (jsonMatch) {
+            try {
+                const parsedList = JSON.parse(jsonMatch[0]);
+                companies.forEach((company, index) => {
+                    if (parsedList[index] && parsedList[index].markdownContent) {
+                        let content = parsedList[index].markdownContent;
+                        
+                        // Fallback logic for links
+                        if (!content.includes('http') || content.includes('ZOEK') || content.includes('NA')) {
+                             const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(company.name + ' ' + company.city)}`;
+                             content = content.replace(/LINKS:.*?(\n|$)/, `LINKS: [Website](${searchUrl}) | [Route](https://maps.google.com/?q=${encodeURIComponent(company.name + ' ' + company.city)}) | [Info Scan](action:deepscan:${company.name})\n`);
+                        }
+                        
+                        content = content.replace('action:deepscan:...', `action:deepscan:${company.name}`);
 
-        return {
-            markdownContent: content,
-            groundingChunks: response?.candidates?.[0]?.groundingMetadata?.groundingChunks || []
-        };
+                        results[company.id] = {
+                            markdownContent: content,
+                            groundingChunks: []
+                        };
+                    }
+                });
+            } catch (e) {
+                console.error("Batch parsing failed", e);
+            }
+        }
+        return results;
+
     } catch (error) {
-        return { markdownContent: '', groundingChunks: [] };
+        console.error("Batch Enrichment Failed", error);
+        throw error;
     }
+};
+
+// Legacy single enrich (kept for fallback but unused in main loop)
+export const enrichCompanyData = async (companyName: string, city: string): Promise<EnrichedCompanyData> => {
+    return (await enrichBatchCompanies([{name: companyName, city, id: 'single'}]))['single'] || { markdownContent: '', groundingChunks: [] };
 };
 
 /**
  * FASE 3: INFO SCAN (DEEP DIVE)
- * Hier mag het iets langer duren voor kwaliteit.
  */
 export const generateDeepScan = async (companyName: string, city: string): Promise<PlaceResult> => {
   try {
       const prompt = `
-          DATA RAPPORT: "${companyName}" (${city}).
+          DATA RAPPORT VOOR: "${companyName}" (${city}, Nederland).
           
-          ZOEKSTAPPEN:
-          1. "${companyName} ${city} reviews google" -> Rating.
-          2. "site:linkedin.com ${companyName}" -> LinkedIn Page.
-          3. "${companyName} team contact" -> Email & Sleutelfiguren.
-          4. "${companyName} projecten" -> Recent werk.
+          ZOEKSTAPPEN (Voer uit):
+          1. "${companyName} ${city} reviews google" -> Haal Google Rating + Review aantal.
+          2. "site:linkedin.com ${companyName}" -> LinkedIn Bedrijfspagina.
+          3. "${companyName} team contact" -> Emailadres & Sleutelfiguren (Directie/Partners).
+          4. "${companyName} projecten" -> Recente projecten (Naam + Jaar).
+          5. "vestigingen ${companyName} Nederland Benelux" -> Zoek naar Hoofdvestiging en andere vestigingen.
 
-          OUTPUT JSON:
+          GEEF TERUG (JSON):
           {
             "name": "${companyName}",
             "formatted_address": "...",
@@ -166,13 +200,17 @@ export const generateDeepScan = async (companyName: string, city: string): Promi
             "website": "...",
             "rating": 0.0, 
             "user_ratings_total": 0,
-            "review_source": "Google Maps/Trustoo",
+            "review_source": "Google Maps",
             "reviews": [], 
             "team_members": [
-                { "name": "Naam", "role": "Rol", "email": "...", "phone": "..." }
+                { "name": "Naam", "role": "Functie", "email": "...", "phone": "..." }
             ],
             "recent_projects": [
-                { "name": "Project", "description": "Info", "year": "202X" }
+                { "name": "Projectnaam", "description": "Korte info", "year": "202X" }
+            ],
+            "branches": [
+                { "address": "...", "city": "...", "isHeadOffice": true, "country": "Nederland" },
+                { "address": "...", "city": "...", "isHeadOffice": false, "country": "..." }
             ],
             "url": "https://www.google.com/search?q=${encodeURIComponent(companyName + ' ' + city + ' reviews')}"
           }
@@ -197,7 +235,6 @@ export const generateDeepScan = async (companyName: string, city: string): Promi
               if (!data.url) data.url = `https://www.google.com/search?q=${encodeURIComponent(companyName + ' ' + city + ' reviews')}`;
               return data;
           } catch (e) {
-              // Fallback
               return {
                   name: companyName,
                   formatted_address: "Adres niet gevonden",

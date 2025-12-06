@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Globe, MapPin, Mail, Phone, Users, ScanSearch, Star, MessageSquare, Linkedin, ArrowUpRight, CheckCircle2, HardHat, PenTool, Loader2, Heart } from 'lucide-react';
+import { Globe, MapPin, Mail, Phone, Users, ScanSearch, Star, MessageSquare, Linkedin, ArrowUpRight, CheckCircle2, HardHat, PenTool, Loader2, Heart, Building2 } from 'lucide-react';
 import { PlaceResult } from '../services/googleMapsService'; 
 
 export interface MarkdownDisplayProps {
@@ -230,7 +230,7 @@ export const DeepScanReport: React.FC<{ placeData: InfoScanResult }> = ({ placeD
                         
                         <div className="grid grid-cols-2 gap-6">
                             <div>
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1 font-condensed">Adres</span>
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1 font-condensed">Hoofdkantoor</span>
                                 <span className="text-sm font-medium text-slate-800 flex items-start gap-2">
                                     <MapPin className="w-4 h-4 text-slate-400 mt-0.5" />
                                     {placeData.formatted_address || 'N/A'}
@@ -252,6 +252,28 @@ export const DeepScanReport: React.FC<{ placeData: InfoScanResult }> = ({ placeD
                     </div>
                 </div>
             </div>
+
+            {/* NEW: Branches Section */}
+            {placeData.branches && placeData.branches.length > 0 && (
+                <div className="bg-white border border-slate-200 shadow-sm rounded-sm p-6">
+                    <h3 className="font-bold text-lg font-condensed uppercase text-slate-800 flex items-center gap-2 mb-4">
+                        <Building2 className="w-5 h-5 text-slate-500" />
+                        Vestigingen (Nederland & Benelux)
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {placeData.branches.map((branch, i) => (
+                            <div key={i} className={`p-3 border rounded-sm ${branch.isHeadOffice ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-100'}`}>
+                                <div className="flex items-center gap-2 mb-1">
+                                    {branch.isHeadOffice && <span className="text-[9px] font-black uppercase text-white bg-[#009FE3] px-1.5 py-0.5 rounded-sm">HQ</span>}
+                                    <span className="text-sm font-bold text-slate-800">{branch.city}</span>
+                                </div>
+                                <p className="text-xs text-slate-500">{branch.address}</p>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">{branch.country}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                  <div className="bg-white border border-slate-200 shadow-sm rounded-sm p-6">

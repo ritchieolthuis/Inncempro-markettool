@@ -28,6 +28,7 @@ export interface DiscoveredCompany {
     id: string; // unique ID based on name+city
     name: string;
     city: string;
+    discoveredAt: string; // ISO Date string for reference
 }
 
 export interface DiscoveryResult {
@@ -38,6 +39,14 @@ export interface DiscoveryResult {
 export interface EnrichedCompanyData {
     markdownContent: string;
     groundingChunks: GroundingChunk[];
+}
+
+// Branch Info for Deep Scan
+export interface BranchInfo {
+    address: string;
+    city: string;
+    isHeadOffice: boolean;
+    country: string;
 }
 
 // AUTH TYPES
