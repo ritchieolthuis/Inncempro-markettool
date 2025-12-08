@@ -11,21 +11,33 @@ if (!apiKey) {
 
 const ai = new GoogleGenAI({ apiKey: apiKey || '' });
 
-// Helper for delay - REDUCED for speed
+// Helper for delay
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function generateWithRetry(modelCall: () => Promise<any>, retries = 0): Promise<any> {
+// ROBUUSTE RETRY LOGICA (Exponential Backoff)
+// Voorkomt dat het systeem crasht bij 429 errors, maar wacht rustig af.
+async function generateWithRetry(modelCall: () => Promise<any>, retries = 5): Promise<any> {
     for (let i = 0; i <= retries; i++) {
         try {
             return await modelCall();
         } catch (error: any) {
             const errString = JSON.stringify(error);
-            // If quota exceeded, stop immediately (don't retry to avoid ban)
-            if (error.status === 429 || errString.includes('429') || errString.includes('Quota') || errString.includes('RESOURCE_EXHAUSTED')) {
-                 throw error; 
+            const isRateLimit = error.status === 429 || error.code === 429 || errString.includes('429') || errString.includes('Quota') || errString.includes('RESOURCE_EXHAUSTED');
+            
+            if (isRateLimit) {
+                 // Wacht exponentieel langer: 2s, 4s, 8s, 16s...
+                 const waitTime = Math.pow(2, i + 1) * 1000;
+                 console.warn(`API Limiet bereikt (poging ${i+1}/${retries}). Wacht ${waitTime/1000}s en probeer opnieuw...`);
+                 await delay(waitTime);
+                 continue; // Probeer opnieuw
             }
-            if (i === retries) return null;
-            await delay(1000); 
+            
+            // Bij andere errors (of als retries op zijn) stoppen we wel, maar returnen null zodat de app niet crasht
+            if (i === retries) {
+                console.error("Max retries bereikt voor API call.");
+                return null;
+            }
+            throw error;
         }
     }
     return null;
@@ -33,7 +45,6 @@ async function generateWithRetry(modelCall: () => Promise<any>, retries = 0): Pr
 
 /**
  * FASE 1: ONTDEKKING (DISCOVERY)
- * Versimpeld voor betrouwbaarheid en snelheid.
  */
 export const performDiscoverySearch = async (
     types: string[], 
@@ -45,7 +56,6 @@ export const performDiscoverySearch = async (
         const locationStr = regions.includes("Heel Nederland") ? "Nederland" : regions.join(" en ");
         const query = `Zoek naar best beoordeelde ${types.join(' of ')} in ${locationStr}. Focus op Google Reviews > 3.5.`;
         
-        // Simplified prompt for speed
         const prompt = `
         ZOEKOPDRACHT: ${query}
         Extra filters: ${specs.join(', ')} ${otherFilters.join(' ')}
@@ -101,8 +111,7 @@ export const performDiscoverySearch = async (
 };
 
 /**
- * FASE 2: BATCH VERRIJKING (SPEED & QUALITY FOCUS)
- * Focus: Google Maps Data EERST.
+ * FASE 2: BATCH VERRIJKING
  */
 export const enrichBatchCompanies = async (companies: {name: string, city: string, id: string}[]): Promise<Record<string, EnrichedCompanyData>> => {
     try {
@@ -135,6 +144,9 @@ export const enrichBatchCompanies = async (companies: {name: string, city: strin
         }));
 
         const results: Record<string, EnrichedCompanyData> = {};
+        
+        if (!response) return {}; // Fail silently if max retries reached
+
         let cleanText = response?.text || '';
         cleanText = cleanText.replace(/```json/g, '').replace(/```/g, '').trim();
         const jsonMatch = cleanText.match(/\[[\s\S]*\]/);
@@ -146,7 +158,6 @@ export const enrichBatchCompanies = async (companies: {name: string, city: strin
                     if (parsedList[index] && parsedList[index].markdownContent) {
                         let content = parsedList[index].markdownContent;
                         
-                        // Fallback logic ensured
                         if (!content.includes('http') || content.includes('ZOEK')) {
                              const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(company.name + ' ' + company.city)}`;
                              content = content.replace(/LINKS:.*?(\n|$)/, `LINKS: [Website](${searchUrl}) | [Route](https://maps.google.com/?q=${encodeURIComponent(company.name + ' ' + company.city)}) | [Info Scan](action:deepscan:${company.name})\n`);

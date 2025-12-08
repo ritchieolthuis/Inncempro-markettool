@@ -25,10 +25,10 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, user, onLogout, onOpenSett
                 className="w-20 h-20 object-contain"
             />
             <div className="flex flex-col justify-center text-left border-l border-slate-200 pl-6 h-12">
-                <span className="text-3xl font-black text-slate-900 tracking-tight leading-none font-condensed uppercase group-hover:text-[#009FE3] transition-colors">
+                <span className="text-3xl font-bold text-[#009FE3] tracking-tight leading-none font-condensed uppercase transition-colors">
                     inncempro
                 </span>
-                <span className="text-xs text-[#E85E26] font-bold tracking-[0.2em] uppercase mt-1 font-condensed">
+                <span className="text-xs text-[#E85E26] font-normal tracking-[0.2em] uppercase mt-1 font-condensed">
                     Market Intelligence
                 </span>
             </div>

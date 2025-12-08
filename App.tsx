@@ -19,10 +19,11 @@ const DUTCH_LOCATIONS = [
     "Tilburg", "Utrecht (Stad)", "Veenendaal", "Venlo", "Vlaardingen", "Westland", "Zaanstad", "Zoetermeer", "Zwolle"
 ].sort();
 
-// OPTIMALISATIE: Batch size 5 voor maximale snelheid.
+// OPTIMALISATIE: Stabiliteit boven pure snelheid.
+// 2500ms delay = max 24 requests per minuut. Blijft veilig binnen rate limits.
 const RESULTS_PER_PAGE = 10; 
 const BATCH_SIZE = 5; 
-const BATCH_DELAY_MS = 100; 
+const BATCH_DELAY_MS = 2500; 
 
 const DEFAULT_ORIGIN = "Lansinkesweg 4, 7553 AE Hengelo";
 
@@ -212,7 +213,7 @@ const App: React.FC = () => {
     set(prev => prev.includes(item) ? prev.filter(i => i !== item) : [...prev, item]);
   };
 
-  // COOLDOWN LOGIC
+  // COOLDOWN LOGIC (Alleen voor extreme gevallen)
   useEffect(() => {
     let interval: any;
     if (isCoolingDown && cooldownTimer > 0) {
@@ -232,7 +233,7 @@ const App: React.FC = () => {
   const triggerCooldown = () => {
       if (!isCoolingDown) {
           setIsCoolingDown(true);
-          setCooldownTimer(60); 
+          setCooldownTimer(30); 
       }
   };
 
@@ -260,20 +261,9 @@ const App: React.FC = () => {
           setSearchState({ isLoading: false, data: { text: 'Done' }, error: null });
 
       } catch (error: any) {
-          let isQuotaError = false;
-          const errStr = String(error).toLowerCase();
-          
-          if (error?.status === 429 || error?.code === 429) isQuotaError = true;
-          if (error?.error?.code === 429) isQuotaError = true;
-          if (errStr.includes('429') || errStr.includes('quota') || errStr.includes('resource_exhausted')) isQuotaError = true;
-
-          if (isQuotaError) {
-             triggerCooldown();
-             setSearchState({ isLoading: false, data: null, error: "Daglimiet bereikt. Probeer het morgen na 09:00 uur opnieuw." }); 
-          } else {
+             // Discovery fouten mogen wel gemeld worden, maar niet blokkeren als het niet hoeft
              console.error("Discovery error details:", error);
-             setSearchState({ isLoading: false, data: null, error: "Er is een fout opgetreden. Probeer het later opnieuw." });
-          }
+             setSearchState({ isLoading: false, data: null, error: "Er is een fout opgetreden bij het zoeken. Probeer het later opnieuw." });
       }
   };
 
@@ -282,7 +272,7 @@ const App: React.FC = () => {
       executeSearch(city || undefined);
   };
 
-  // BATCHED ENRICHMENT LOOP
+  // BATCHED ENRICHMENT LOOP (Stabilized)
   useEffect(() => {
       let active = true;
       let timeoutId: any;
@@ -316,12 +306,11 @@ const App: React.FC = () => {
 
           } catch (error: any) {
               batch.forEach(c => processingRef.current.delete(c.id));
-              let isQuotaError = false;
-              const errStr = String(error).toLowerCase();
-              if (error?.status === 429 || error?.code === 429 || error?.error?.code === 429) isQuotaError = true;
-              if (errStr.includes('429') || errStr.includes('quota')) isQuotaError = true;
-
-              if (isQuotaError) triggerCooldown();
+              
+              // Bij een error in de batch processor niet direct alles blokkeren, maar gewoon langer wachten.
+              // De service handelt de backoff af, dit is de fallback.
+              console.warn("Batch error, retrying later...", error);
+              timeoutId = setTimeout(processBatch, 10000); // 10s pauze
           }
       };
 
@@ -338,27 +327,13 @@ const App: React.FC = () => {
   // DEEP SCAN
   const handleDeepScanAction = async (action: string, value: string) => {
       if (action === 'deepscan') {
-          if (isCoolingDown) {
-              alert(`Gratis API limiet bereikt. Wacht ${cooldownTimer}s.`);
-              return;
-          }
           setDeepScanState({ isOpen: true, isLoading: true, companyName: value, placeData: null, error: null });
           const cityContext = selectedRegions[0] || 'Nederland';
           try {
               const placeData = await generateDeepScan(value, cityContext);
               setDeepScanState(prev => ({ ...prev, isLoading: false, placeData: placeData }));
           } catch (error: any) {
-               let isQuotaError = false;
-               const errStr = String(error).toLowerCase();
-               if (error?.status === 429 || error?.code === 429 || error?.error?.code === 429) isQuotaError = true;
-               if (errStr.includes('quota')) isQuotaError = true;
-
-               if (isQuotaError) {
-                   triggerCooldown();
-                   setDeepScanState(prev => ({ ...prev, isLoading: false, error: `Limiet bereikt. Wacht ${cooldownTimer}s...` }));
-               } else {
-                   setDeepScanState(prev => ({ ...prev, isLoading: false, error: "Kan gegevens niet ophalen. Probeer het later nog eens." }));
-               }
+               setDeepScanState(prev => ({ ...prev, isLoading: false, error: "Kan gegevens niet ophalen. Probeer het later nog eens." }));
           }
       }
   };
@@ -404,8 +379,6 @@ const App: React.FC = () => {
         }
         
         // CRITICAL FIX: Gebruik het volledige adres indien beschikbaar. 
-        // Als adres leeg is, gebruik Naam + Stad. 
-        // Dit voorkomt "Niet gevonden" in Maps.
         if (address && address.length > 5 && !address.toLowerCase().includes('maps')) {
             return encodeURIComponent(address);
         } else {
@@ -515,7 +488,7 @@ const App: React.FC = () => {
                   <div className="flex justify-center mb-6">
                       <img src="https://www.inncempro.nl/wp-content/uploads/2018/06/Logo-Inncempro-facebook.png" alt="Inncempro Logo" className="w-24 h-24 object-contain"/>
                   </div>
-                  <h1 className="text-3xl font-black text-slate-900 font-condensed uppercase tracking-tight mb-2">Market Intelligence</h1>
+                  <h1 className="text-3xl font-normal text-slate-900 font-condensed uppercase tracking-tight mb-2">Market Intelligence</h1>
                   <p className="text-slate-500 mb-8 text-sm">
                       Log in om toegang te krijgen tot het dashboard.
                   </p>
@@ -593,7 +566,7 @@ const App: React.FC = () => {
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
               <div className="bg-white w-full max-w-md p-6 rounded-sm shadow-xl animate-fade-in relative">
                   <button onClick={() => setShowSettings(false)} className="absolute right-4 top-4 text-slate-400 hover:text-slate-800"><X className="w-5 h-5"/></button>
-                  <h2 className="text-xl font-black text-slate-900 uppercase font-condensed mb-6">Profiel Instellingen</h2>
+                  <h2 className="text-xl font-bold text-slate-900 uppercase font-condensed mb-6">Profiel Instellingen</h2>
                   <form onSubmit={handleUpdateProfile} className="space-y-4">
                       <div>
                           <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Weergavenaam</label>
@@ -616,12 +589,12 @@ const App: React.FC = () => {
           </div>
       )}
 
-      {/* COOLDOWN BANNER */}
+      {/* COOLDOWN BANNER (Alleen zichtbaar bij harde limiet, niet bij auto-retry) */}
       {isCoolingDown && (
         <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-6 py-4 flex flex-col sm:flex-row items-center justify-center gap-4 shadow-sm animate-fade-in">
              <div className="flex items-center gap-3">
                  <AlertTriangle className="w-5 h-5 text-amber-600" />
-                 <div><span className="text-sm font-black uppercase tracking-wider font-condensed block">API Limiet Veiligheid</span><span className="text-xs text-amber-700">Systeem koelt af of daglimiet bereikt (Reset: 09:00).</span></div>
+                 <div><span className="text-sm font-bold uppercase tracking-wider font-condensed block">API Daglimiet Bereikt</span><span className="text-xs text-amber-700">Het systeem pauzeert om blokkade te voorkomen. Wacht heel even...</span></div>
              </div>
              <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-sm border border-amber-100 shadow-sm">
                  <Clock className="w-4 h-4 text-[#E85E26] animate-pulse" />
@@ -634,7 +607,7 @@ const App: React.FC = () => {
       <div className="flex flex-col md:flex-row max-w-[1400px] mx-auto w-full flex-grow">
           <aside className="w-full md:w-80 bg-white border-r border-slate-200 flex-shrink-0 hidden md:flex flex-col h-[calc(100vh-112px)] sticky top-28">
                <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-                  <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest font-condensed flex items-center gap-2"><Filter className="w-4 h-4 text-[#009FE3]" /> Filters</h2>
+                  <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest font-condensed flex items-center gap-2"><Filter className="w-4 h-4 text-[#009FE3]" /> Filters</h2>
               </div>
               <div className="flex-grow overflow-y-auto p-6 space-y-2 scrollbar-thin">
                    <CollapsibleFilterGroup title="Regio & Locatie" items={DUTCH_LOCATIONS} selectedItems={selectedRegions} onToggleItem={(item) => toggleFilter(setSelectedRegions, item)} searchable={true} />
@@ -676,7 +649,7 @@ const App: React.FC = () => {
 
             {searchState.error && !isCoolingDown && viewMode === 'search' && (
                 <div className="max-w-4xl mx-auto w-full mb-8 bg-red-50 border border-red-200 p-4 text-red-800 rounded-sm">
-                    <p className="font-bold text-sm uppercase flex items-center gap-2"><AlertTriangle className="w-4 h-4"/> Foutmelding</p>
+                    <p className="font-bold text-sm uppercase flex items-center gap-2"><AlertTriangle className="w-4 h-4"/> Melding</p>
                     <p className="text-sm mt-1">{searchState.error}</p>
                 </div>
             )}
@@ -686,7 +659,9 @@ const App: React.FC = () => {
                     <div className="inline-flex items-center justify-center w-20 h-20 bg-white rounded-full shadow-sm border border-slate-200 mb-8">
                          <BarChart3 className="w-8 h-8 text-[#009FE3]" />
                     </div>
-                    <h1 className="text-3xl font-black text-slate-900 font-condensed uppercase tracking-tight mb-4">Inncempro Market Intelligence</h1>
+                    <h1 className="text-3xl font-normal text-slate-900 font-condensed uppercase tracking-tight mb-4">
+                        <span className="text-[#009FE3] font-bold">Inncempro</span> Market Intelligence
+                    </h1>
                     <p className="text-slate-500 text-base leading-relaxed mb-8">Welkom, <span className="font-bold text-slate-800">{currentUser.username}</span>. Toegang tot live data.<br/>Zoek architecten en aannemers in Nederland.</p>
                 </div>
             )}
@@ -695,7 +670,7 @@ const App: React.FC = () => {
                 <div className="animate-fade-in space-y-6 max-w-6xl mx-auto w-full">
                     <div className="flex flex-col md:flex-row items-center justify-between border-b-2 border-slate-200 pb-4 gap-4">
                         <div>
-                             <h2 className="text-2xl font-black text-slate-900 font-condensed uppercase tracking-tight">
+                             <h2 className="text-2xl font-bold text-slate-900 font-condensed uppercase tracking-tight">
                                  {viewMode === 'search' ? 'Zoekresultaten' : 'Mijn Favorieten'}
                              </h2>
                              <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-wide">
@@ -781,7 +756,7 @@ const App: React.FC = () => {
                   <div className="flex items-center justify-between p-6 bg-white border-b border-slate-200">
                       <div>
                         <div className="flex items-center gap-2 text-[#E85E26] text-[10px] font-bold uppercase tracking-[0.2em] mb-1"><Building className="w-3 h-3" /> Info Scan</div>
-                        <h2 className="text-3xl font-black text-slate-900 font-condensed uppercase tracking-tight">{deepScanState.companyName}</h2>
+                        <h2 className="text-3xl font-bold text-slate-900 font-condensed uppercase tracking-tight">{deepScanState.companyName}</h2>
                       </div>
                       <button onClick={closeDeepScan} className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-900"><X className="w-6 h-6" /></button>
                   </div>

@@ -108,7 +108,7 @@ export const IntelligenceCard: React.FC<MarkdownDisplayProps> = ({ content, onAc
         <div className="bg-white border border-slate-200 shadow-sm flex flex-col h-full animate-fade-in hover:border-[#009FE3] transition-all rounded-sm relative overflow-hidden group">
             <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-start bg-white">
                 <div className="min-w-0 flex-1 pr-4">
-                    <h3 className="font-black text-slate-900 text-lg uppercase tracking-tight font-condensed truncate" title={title}>{title}</h3>
+                    <h3 className="font-bold text-slate-900 text-lg uppercase tracking-tight font-condensed truncate" title={title}>{title}</h3>
                     {address && <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5 truncate"><MapPin className="w-3 h-3 text-[#E85E26]"/> {address}</p>}
                 </div>
                 <div className="flex flex-col items-end flex-shrink-0 gap-2">
@@ -161,7 +161,7 @@ export const SkeletonCard: React.FC<{ name: string; city: string }> = ({ name, c
             <div className="h-full bg-[#009FE3]/50 w-1/3 animate-[shimmer_1.5s_infinite]"></div>
         </div>
         <div className="px-5 py-4 border-b border-slate-50">
-            <h3 className="font-black text-slate-800 text-lg uppercase tracking-tight font-condensed truncate opacity-50">{name}</h3>
+            <h3 className="font-bold text-slate-800 text-lg uppercase tracking-tight font-condensed truncate opacity-50">{name}</h3>
             <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5"><MapPin className="w-3 h-3"/> {city}</p>
         </div>
         <div className="p-5 flex-grow space-y-4">
@@ -200,9 +200,9 @@ export const DeepScanReport: React.FC<{ placeData: InfoScanResult }> = ({ placeD
                         <Star className="w-48 h-48 -mr-10 -mt-10" />
                     </div>
                     <div>
-                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em] mb-2 text-blue-100 font-condensed">Geverifieerde Google Score</h4>
+                        <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] mb-2 text-blue-100 font-condensed">Geverifieerde Google Score</h4>
                         <div className="flex items-baseline gap-3">
-                             <div className="text-6xl font-black font-condensed leading-none">{hasRating ? placeData.rating : '-'}</div>
+                             <div className="text-6xl font-bold font-condensed leading-none">{hasRating ? placeData.rating : '-'}</div>
                              <div className="flex flex-col">
                                  <div className="flex text-amber-400 gap-1 mb-1">
                                      {[...Array(5)].map((_, i) => (
@@ -225,7 +225,7 @@ export const DeepScanReport: React.FC<{ placeData: InfoScanResult }> = ({ placeD
                     <div className="flex-1 space-y-6">
                         <div className="border-b border-slate-100 pb-4">
                             <span className="text-[10px] font-bold text-[#E85E26] uppercase tracking-[0.2em] block mb-1 font-condensed">Bedrijfsprofiel</span>
-                            <h3 className="text-2xl font-black text-slate-900 font-condensed uppercase">{placeData.name}</h3>
+                            <h3 className="text-2xl font-bold text-slate-900 font-condensed uppercase">{placeData.name}</h3>
                         </div>
                         
                         <div className="grid grid-cols-2 gap-6">
@@ -264,7 +264,7 @@ export const DeepScanReport: React.FC<{ placeData: InfoScanResult }> = ({ placeD
                         {placeData.branches.map((branch, i) => (
                             <div key={i} className={`p-3 border rounded-sm ${branch.isHeadOffice ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-100'}`}>
                                 <div className="flex items-center gap-2 mb-1">
-                                    {branch.isHeadOffice && <span className="text-[9px] font-black uppercase text-white bg-[#009FE3] px-1.5 py-0.5 rounded-sm">HQ</span>}
+                                    {branch.isHeadOffice && <span className="text-[9px] font-bold uppercase text-white bg-[#009FE3] px-1.5 py-0.5 rounded-sm">HQ</span>}
                                     <span className="text-sm font-bold text-slate-800">{branch.city}</span>
                                 </div>
                                 <p className="text-xs text-slate-500">{branch.address}</p>
@@ -339,7 +339,7 @@ export const DeepScanReport: React.FC<{ placeData: InfoScanResult }> = ({ placeD
                          placeData.reviews.map((review, i) => (
                              <div key={i} className="p-6 hover:bg-slate-50 transition-colors">
                                  <div className="flex items-center justify-between mb-2">
-                                     <span className="text-xs font-black text-slate-900 uppercase tracking-wide font-condensed">{review.author_name}</span>
+                                     <span className="text-xs font-bold text-slate-900 uppercase tracking-wide font-condensed">{review.author_name}</span>
                                      <span className="text-[10px] text-slate-400 font-bold uppercase font-condensed">{review.relative_time_description}</span>
                                  </div>
                                  <div className="flex text-amber-400 mb-2">
