@@ -36,13 +36,6 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, user, onLogout, onOpenSett
 
         {/* User Profile & Status */}
         <div className="flex items-center gap-6">
-            <div className="hidden md:flex flex-col text-right">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-condensed">Databron</span>
-                <span className="text-sm font-bold text-slate-700 font-condensed">GOOGLE LIVE INDEX</span>
-            </div>
-            
-            <div className="h-10 w-px bg-slate-200 hidden md:block"></div>
-
             {user ? (
                 <div className="relative">
                     <button 

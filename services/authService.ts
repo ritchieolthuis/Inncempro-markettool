@@ -124,11 +124,13 @@ export const authService = {
     toggleFavorite: (userId: string, company: DiscoveredCompany): DiscoveredCompany[] => {
         const key = `${FAVS_PREFIX}${userId}`;
         const favs = authService.getFavorites(userId);
-        const exists = favs.find(c => c.id === company.id);
+        const isSame = (c: DiscoveredCompany) =>
+            c.name === company.name && c.city === company.city;
+        const exists = favs.find(isSame);
 
         let newFavs;
         if (exists) {
-            newFavs = favs.filter(c => c.id !== company.id);
+            newFavs = favs.filter(c => !isSame(c));
         } else {
             newFavs = [...favs, company];
         }
