@@ -14,21 +14,21 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, user, onLogout, onOpenSett
   const [showDropdown, setShowDropdown] = useState(false);
 
   return (
-    <header className="bg-white border-b-2 border-[#009FE3] sticky top-0 z-30 h-28 flex items-center shadow-md">
-      <div className="max-w-[1400px] w-full mx-auto px-6 lg:px-10 flex justify-between items-center h-full">
-        
+    <header className="bg-white border-b-2 border-[#009FE3] sticky top-0 z-30 h-16 sm:h-24 flex items-center shadow-md">
+      <div className="max-w-[1400px] w-full mx-auto px-4 sm:px-6 lg:px-10 flex justify-between items-center h-full">
+
         {/* Brand Logo */}
-        <button onClick={onHomeClick} className="flex items-center gap-6 group focus:outline-none h-full">
-             <img 
-                src="https://www.inncempro.nl/wp-content/uploads/2018/06/Logo-Inncempro-facebook.png" 
-                alt="Inncempro Logo" 
-                className="w-20 h-20 object-contain"
+        <button onClick={onHomeClick} className="flex items-center gap-3 sm:gap-6 group focus:outline-none h-full">
+             <img
+                src="https://www.inncempro.nl/wp-content/uploads/2018/06/Logo-Inncempro-facebook.png"
+                alt="Inncempro Logo"
+                className="w-10 h-10 sm:w-16 sm:h-16 object-contain"
             />
-            <div className="flex flex-col justify-center text-left border-l border-slate-200 pl-6 h-12">
-                <span className="text-3xl font-bold text-[#009FE3] tracking-tight leading-none font-condensed uppercase transition-colors">
+            <div className="flex flex-col justify-center text-left border-l border-slate-200 pl-3 sm:pl-6 h-10 sm:h-12">
+                <span className="text-xl sm:text-2xl font-bold text-[#009FE3] tracking-tight leading-none font-condensed uppercase transition-colors">
                     inncempro
                 </span>
-                <span className="text-xs text-[#E85E26] font-normal tracking-[0.2em] uppercase mt-1 font-condensed">
+                <span className="text-[9px] sm:text-xs text-[#E85E26] font-normal tracking-[0.15em] sm:tracking-[0.2em] uppercase mt-0.5 sm:mt-1 font-condensed">
                     Market Intelligence
                 </span>
             </div>
