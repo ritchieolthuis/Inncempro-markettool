@@ -1491,14 +1491,20 @@ const App: React.FC = () => {
         results.sort((a: any, b2: any) => relevanceScore(b2) - relevanceScore(a) || (a.naam || '').localeCompare(b2.naam || '', 'nl', { sensitivity: 'base' }));
       }
 
-      const companies = results.map((b: any, i: number) => ({
-          id: `local-${i}`,
-          name: b.naam,
-          city: b.stad || '',
-          discoveredAt: new Date().toISOString(),
-          _raw: b,
-          _distanceKm: distanceMap.has(b) ? distanceMap.get(b) : undefined,
-      }));
+      const HQ_COORDS = { lat: 52.25490615, lng: 6.77819416 }; // Lansinkesweg 4, Hengelo (Inncempro)
+      const companies = results.map((b: any, i: number) => {
+          const cityCoords = getCityCoords(b.stad || '');
+          const hqDist = cityCoords ? haversineKm(HQ_COORDS.lat, HQ_COORDS.lng, cityCoords.lat, cityCoords.lng) : undefined;
+          return {
+            id: `local-${i}`,
+            name: b.naam,
+            city: b.stad || '',
+            discoveredAt: new Date().toISOString(),
+            _raw: b,
+            _distanceKm: distanceMap.has(b) ? distanceMap.get(b) : hqDist,
+            _hqDistanceKm: hqDist,
+          };
+      });
 
       setFoundCompanies(companies as any);
       setTotalMatches(companies.length);
@@ -2163,7 +2169,7 @@ const App: React.FC = () => {
                     <div className={`grid gap-4 ${showRouteMap ? 'grid-cols-1' : 'grid-cols-1 xl:grid-cols-2'}`}>
                         {currentItems.map((company: any) => {
                             const b = (company as any)._raw || company;
-                            const distKm: number | undefined = company._distanceKm;
+                            const distKm: number | undefined = company._hqDistanceKm ?? company._distanceKm;
                             const btnBase = "flex items-center justify-center gap-1.5 px-3 py-2 text-[10px] font-bold uppercase tracking-wider border transition-all flex-1 whitespace-nowrap rounded-sm";
                             return (
                               <div key={company.id} className={`bg-white border p-5 flex flex-col gap-3 transition-colors cursor-pointer ${selectedIds.has(company.id) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`} onClick={() => setSelectedCompany(b)}>
@@ -2176,7 +2182,7 @@ const App: React.FC = () => {
                                       </div>
                                       <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wide leading-tight">{b.naam || company.name}</h3>
                                       {b.source && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${`${srcColor(b.source).bg} ${srcColor(b.source).text}`}`}>{b.source}</span>}
-                                      {distKm !== undefined && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`}</span>}
+                                      {distKm !== undefined && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`} van Hengelo</span>}
                                     </div>
                                     {(b.straat || b.postcode || b.stad || company.city) && (
                                       <p className="text-slate-500 text-xs mt-1 flex items-center gap-1">
