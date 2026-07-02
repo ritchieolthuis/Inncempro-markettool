@@ -1891,12 +1891,16 @@ const App: React.FC = () => {
                              {b.email && <span className="flex items-center gap-1.5"><Mail className="w-3 h-3 flex-shrink-0" />{b.email}</span>}
                            </div>
                          )}
-                         <div className="flex flex-wrap gap-2 mt-auto pt-2 border-t border-slate-100" onClick={e => e.stopPropagation()}>
-                           {b.website && <a href={b.website} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
-                           {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
-                           {b.url && <a href={b.url} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${`${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}`}><ArrowRight className="w-3 h-3"/>{b.source || 'Bronpagina'}</a>}
-                           <button onClick={() => { setSelectedRegions([]); setSelectedTypes([]); setSelectedWerksoort([]); setSelectedContact([]); setCity(b.naam); executeSearch(undefined, undefined, b.naam); }} className={`${btnBase} bg-[#E85E26]/5 text-[#E85E26] border-[#E85E26]/30 hover:border-[#E85E26] hover:bg-[#E85E26]/10`}><Search className="w-3 h-3"/>Zoeken</button>
-                           <FavButton company={{id:`db-${i}`, name: b.naam, city: b.stad, _raw: b}} favorites={favorites} onToggle={toggleFavorite} />
+                         <div className="mt-auto pt-2 border-t border-slate-100 space-y-2" onClick={e => e.stopPropagation()}>
+                           <div className="flex gap-2">
+                             {b.website && <a href={b.website} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
+                             {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
+                             {b.url && <a href={b.url} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${`${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}`}><ArrowRight className="w-3 h-3"/>{b.source || 'Bronpagina'}</a>}
+                           </div>
+                           <div className="flex gap-2">
+                             <button onClick={() => { setSelectedRegions([]); setSelectedTypes([]); setSelectedWerksoort([]); setSelectedContact([]); setRadiusKm(null); setCity(b.naam); setViewMode('search'); executeSearch(undefined, undefined, b.naam, null, null); }} className={`${btnBase} bg-[#E85E26]/5 text-[#E85E26] border-[#E85E26]/30 hover:border-[#E85E26] hover:bg-[#E85E26]/10`}><Search className="w-3 h-3"/>Zoeken in Live</button>
+                             <FavButton company={{id:`db-${i}`, name: b.naam, city: b.stad, _raw: b}} favorites={favorites} onToggle={toggleFavorite} />
+                           </div>
                          </div>
                        </div>
                      ))}
