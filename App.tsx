@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Loader2, ArrowRight, X, BarChart3, Building, Filter, Check, ChevronRight, ChevronDown, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone } from 'lucide-react';
+import { Search, Loader2, ArrowRight, X, BarChart3, Building, Filter, Check, ChevronRight, ChevronDown, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2 } from 'lucide-react';
 import bouwgarantData from './bouwgarant_data.json';
 import cityCoords from './city_coords.json';
 import Header from './components/Header';
@@ -885,6 +885,7 @@ const DUTCH_LOCATIONS = [
 const RESULTS_PER_PAGE = 10;
 
 const DEFAULT_ORIGIN = "Lansinkesweg 4, 7553 AE Hengelo";
+const toUrl = (u: string) => u && /^https?:\/\//i.test(u) ? u : `https://${u}`;
 
 // Radius search utilities
 const haversineKm = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
@@ -1057,6 +1058,7 @@ const getNameBoost = (naam: string): number => {
 const SOURCE_COLORS: Record<string, { bg: string; text: string; btn: string; btnHover: string }> = {
   'Bouwgarant':    { bg: 'bg-[#009FE3]/10', text: 'text-[#009FE3]', btn: 'bg-[#009FE3]', btnHover: 'hover:bg-[#008ac5]' },
   'Architectenweb':{ bg: 'bg-[#E85E26]/10', text: 'text-[#E85E26]', btn: 'bg-[#E85E26]', btnHover: 'hover:bg-[#d14d1b]' },
+  'BNA':           { bg: 'bg-[#1B4F72]/10', text: 'text-[#1B4F72]', btn: 'bg-[#1B4F72]', btnHover: 'hover:bg-[#154060]' },
   'Stiho':         { bg: 'bg-orange-100',   text: 'text-orange-700', btn: 'bg-orange-600', btnHover: 'hover:bg-orange-700' },
   'Jongeneel':     { bg: 'bg-green-100',    text: 'text-green-700',  btn: 'bg-green-600',  btnHover: 'hover:bg-green-700' },
   'BouwPartner':   { bg: 'bg-yellow-100',   text: 'text-yellow-700', btn: 'bg-yellow-600', btnHover: 'hover:bg-yellow-700' },
@@ -1106,12 +1108,178 @@ const App: React.FC = () => {
   const DB_PAGE_SIZE = 50;
   const [favorites, setFavorites] = useState<DiscoveredCompany[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<any | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [mapMarkerCount, setMapMarkerCount] = useState(0);
+  const [editMode, setEditMode] = useState(false);
+  const [editDraft, setEditDraft] = useState<Record<string, string>>({});
+  const MANUAL_EDITS_KEY = 'inncempro_manual_edits';
+  const [manualEdits, setManualEdits] = useState<Record<string, Record<string, string>>>(() => {
+    try { return JSON.parse(localStorage.getItem('inncempro_manual_edits') || '{}'); } catch { return {}; }
+  });
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set()); // key = b.naam (stabiel over alle tabs)
+  const [selectedRaws, setSelectedRaws] = useState<Map<string, any>>(new Map()); // naam → raw bedrijfsdata
   const [sortMode, setSortMode] = useState<'relevant' | 'az'>('relevant');
   const [showRouteMap, setShowRouteMap] = useState(false);
   const [splitRatio,   setSplitRatio]   = useState(58); // left panel %
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
+
+  // Address corrections: stored in localStorage, applied to in-memory data
+  const CORRECTIONS_KEY = 'inncempro_address_corrections';
+  const [addressCorrections, setAddressCorrections] = useState<Record<string, { straat: string; postcode: string; stad: string }>>(() => {
+    try { return JSON.parse(localStorage.getItem(CORRECTIONS_KEY) || '{}'); } catch { return {}; }
+  });
+
+  const CUSTOM_ENTRIES_KEY = 'inncempro_custom_entries';
+  const [customEntries, setCustomEntries] = useState<any[]>(() => {
+    try { return JSON.parse(localStorage.getItem('inncempro_custom_entries') || '[]'); } catch { return []; }
+  });
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addTab, setAddTab] = useState<'single' | 'bulk'>('single');
+  const [addForm, setAddForm] = useState({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '' });
+  const [bulkText, setBulkText] = useState('');
+  const [bulkParsed, setBulkParsed] = useState<any[]>([]);
+  const [bulkMsg, setBulkMsg] = useState('');
+  const [addDuplicate, setAddDuplicate] = useState<any | null>(null);
+
+  const findDuplicate = (naam: string, straat: string, stad: string): any | null => {
+    const all = bouwgarantData as any[];
+    const normName = naam.toLowerCase().trim();
+    const normStraat = straat.toLowerCase().trim();
+    const normStad = stad.toLowerCase().trim();
+    return all.find(b => {
+      const sameName = (b.naam || '').toLowerCase().trim() === normName;
+      const sameAddr = normStraat && normStad &&
+        (b.straat || '').toLowerCase().includes(normStraat.split(' ')[0]) &&
+        (b.stad || '').toLowerCase().trim() === normStad;
+      return sameName || sameAddr;
+    }) || null;
+  };
+
+  const parseBulkText = (text: string): any[] => {
+    const blocks = text.split(/\n{2,}|\r\n{2,}/).map(b => b.trim()).filter(Boolean);
+    if (blocks.length === 0) {
+      // Try line-by-line if no blank-line separation
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+      return lines.map(line => ({ naam: line, straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Handmatig' }));
+    }
+    return blocks.map(block => {
+      const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+      const entry: any = { naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Handmatig' };
+      const emailRe = /[\w.+-]+@[\w-]+\.[a-z]{2,}/i;
+      const urlRe   = /(?:https?:\/\/)?(?:www\.)?[\w-]+\.[a-z]{2,}(?:\/\S*)?/i;
+      const telRe   = /(?:\+31|0)[\s\-]?[\d\s\-]{7,}/;
+      const pcRe    = /\b\d{4}\s?[A-Z]{2}\b/;
+      for (const line of lines) {
+        if (!entry.naam) { entry.naam = line; continue; }
+        const em = line.match(emailRe); if (em && !entry.email) { entry.email = em[0]; continue; }
+        const pc = line.match(pcRe);
+        if (pc) {
+          entry.postcode = pc[0].replace(/\s/, ' ');
+          const rest = line.replace(pc[0], '').trim();
+          if (!entry.straat && !entry.stad) entry.straat = rest;
+          else if (!entry.stad) entry.stad = rest;
+          continue;
+        }
+        const tel = line.match(telRe); if (tel && !entry.telefoon) { entry.telefoon = tel[0].trim(); continue; }
+        const url = line.match(urlRe); if (url && !entry.website) { entry.website = url[0]; continue; }
+        if (!entry.straat) entry.straat = line;
+        else if (!entry.stad) entry.stad = line;
+        else if (!entry.spec1) entry.spec1 = line;
+        else if (!entry.spec2) entry.spec2 = line;
+      }
+      return entry;
+    });
+  };
+
+  const addCustomEntries = (entries: any[]) => {
+    const withId = entries.map(e => ({ ...e, _custom: true }));
+    const next = [...customEntries, ...withId];
+    setCustomEntries(next);
+    localStorage.setItem(CUSTOM_ENTRIES_KEY, JSON.stringify(next));
+    withId.forEach(e => (bouwgarantData as any[]).push(e));
+  };
+
+  // On mount: inject saved custom entries into bouwgarantData
+  React.useEffect(() => {
+    customEntries.forEach(e => {
+      if (!(bouwgarantData as any[]).find((b: any) => b.naam === e.naam && b._custom)) {
+        (bouwgarantData as any[]).push(e);
+      }
+    });
+    // Seed: House of Architects (manually restored)
+    const hoaKey = 'House of Architects||Leen Jongewaardkade 109';
+    const deletedRaw: string[] = JSON.parse(localStorage.getItem('inncempro_deleted_entries') || '[]');
+    if (!deletedRaw.includes(hoaKey) && !(bouwgarantData as any[]).find((b: any) => b.naam === 'House of Architects' && b.straat === 'Leen Jongewaardkade 109')) {
+      const hoa = { naam: 'House of Architects', straat: 'Leen Jongewaardkade 109', postcode: '1031 HS', stad: 'Amsterdam', provincie: 'Noord-Holland', telefoon: '020 235 7402', email: 'info@houseofarchitects.nl', website: 'houseofarchitects.nl', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Handmatig', _custom: true };
+      (bouwgarantData as any[]).push(hoa);
+      const stored: any[] = JSON.parse(localStorage.getItem('inncempro_custom_entries') || '[]');
+      if (!stored.find((e: any) => e.naam === 'House of Architects' && e.straat === 'Leen Jongewaardkade 109')) {
+        stored.push(hoa);
+        localStorage.setItem('inncempro_custom_entries', JSON.stringify(stored));
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const DELETED_KEY = 'inncempro_deleted_entries';
+  const [deletedEntries, setDeletedEntries] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('inncempro_deleted_entries') || '[]')); } catch { return new Set(); }
+  });
+
+  const deleteKey = (naam: string, straat?: string) => `${naam}||${(straat || '').trim()}`;
+
+  const handleDeleteEntry = (naam: string, straat?: string) => {
+    const next = new Set(deletedEntries);
+    next.add(deleteKey(naam, straat));
+    setDeletedEntries(next);
+    localStorage.setItem(DELETED_KEY, JSON.stringify(Array.from(next)));
+  };
+
+  const handleAddressCorrection = (naam: string, correction: { straat: string; postcode: string; stad: string }) => {
+    const next = { ...addressCorrections, [naam]: correction };
+    setAddressCorrections(next);
+    localStorage.setItem(CORRECTIONS_KEY, JSON.stringify(next));
+    // Apply in-memory: find the entry and update it directly
+    const entry = (bouwgarantData as any[]).find(b => b.naam === naam);
+    if (entry) {
+      if (correction.straat)   entry.straat   = correction.straat;
+      if (correction.postcode) entry.postcode = correction.postcode;
+      if (correction.stad)     entry.stad     = correction.stad;
+    }
+  };
+
+  const handleSaveEdit = (naam: string, edits: Record<string, string>) => {
+    const next = { ...manualEdits, [naam]: edits };
+    setManualEdits(next);
+    localStorage.setItem(MANUAL_EDITS_KEY, JSON.stringify(next));
+    const entry = (bouwgarantData as any[]).find(b => b.naam === naam);
+    if (entry) Object.assign(entry, edits);
+    setSelectedCompany((prev: any) => prev ? { ...prev, ...edits } : prev);
+    setEditMode(false);
+  };
+
+  // On mount: apply any stored manual edits to in-memory data
+  React.useEffect(() => {
+    Object.entries(manualEdits).forEach(([naam, edits]) => {
+      const entry = (bouwgarantData as any[]).find(b => b.naam === naam);
+      if (entry) Object.assign(entry, edits);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // On mount: apply any stored corrections to in-memory data
+  React.useEffect(() => {
+    Object.entries(addressCorrections).forEach(([naam, c]) => {
+      const correction = c as { straat: string; postcode: string; stad: string };
+      const entry = (bouwgarantData as any[]).find(b => b.naam === naam);
+      if (entry) {
+        if (correction.straat)   entry.straat   = correction.straat;
+        if (correction.postcode) entry.postcode = correction.postcode;
+        if (correction.stad)     entry.stad     = correction.stad;
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startDrag = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -1127,16 +1295,21 @@ const App: React.FC = () => {
     window.addEventListener('mouseup', onUp);
   };
 
-  const toggleSelect = (id: string, e: React.MouseEvent) => {
+  const toggleSelect = (naam: string, raw: any, e: React.MouseEvent) => {
     e.stopPropagation();
     setSelectedIds(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      next.has(naam) ? next.delete(naam) : next.add(naam);
+      return next;
+    });
+    setSelectedRaws(prev => {
+      const next = new Map(prev);
+      next.has(naam) ? next.delete(naam) : next.set(naam, raw);
       return next;
     });
   };
 
-  const clearSelection = () => setSelectedIds(new Set());
+  const clearSelection = () => { setSelectedIds(new Set()); setSelectedRaws(new Map()); };
   
   // SEARCH HISTORY
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
@@ -1161,6 +1334,7 @@ const App: React.FC = () => {
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [selectedWerksoort, setSelectedWerksoort] = useState<string[]>([]);
   const [selectedContact, setSelectedContact] = useState<string[]>([]);
+  const [selectedLijsten, setSelectedLijsten] = useState<string[]>([]);
 
   const [foundCompanies, setFoundCompanies] = useState<DiscoveredCompany[]>([]);
   const [totalMatches, setTotalMatches] = useState(0);
@@ -1308,7 +1482,7 @@ const App: React.FC = () => {
       const effectiveQuery = (overrideQuery ?? city).trim();
       const effectiveRegions = overrideRegions !== undefined ? overrideRegions : selectedRegions;
       const effectiveRadius = overrideRadiusKm !== undefined ? overrideRadiusKm : radiusKm;
-      const hasInput = effectiveQuery || effectiveRegions.length > 0 || selectedTypes.length > 0 || selectedWerksoort.length > 0 || selectedContact.length > 0 || effectiveRadius;
+      const hasInput = effectiveQuery || effectiveRegions.length > 0 || selectedTypes.length > 0 || selectedWerksoort.length > 0 || selectedContact.length > 0 || selectedLijsten.length > 0 || effectiveRadius;
       if (!hasInput && overrideRadiusCenter === undefined) {
           setFoundCompanies([]);
           setTotalMatches(0);
@@ -1353,14 +1527,15 @@ const App: React.FC = () => {
 
       const TYPE_PRIORITY: Record<string, number> = { architect: 0, bouwbedrijf: 1, aannemer: 2, overig: 3 };
 
-      const results = (bouwgarantData as any[]).filter(b => {
+      const results = activeData.filter(b => {
           // Filter out entries without a name
           if (!(b.naam || '').trim()) return false;
 
           const dbStad = normalizeStad(b.stad || '');
 
-          // Regio filter
-          if (regions.length > 0 && !regions.includes('Heel Nederland')) {
+          // Regio filter — sla over als "Heel Nederland" of alle 12 provincies geselecteerd
+          const allProvincesSelected = PROVINCES.every(p => regions.includes(p));
+          if (regions.length > 0 && !regions.includes('Heel Nederland') && !allProvincesSelected) {
               const matchRegion = regions.some(r => {
                   if (PROVINCES.includes(r)) return b.provincie === r;
                   return dbStad === normalizeStad(r);
@@ -1368,8 +1543,10 @@ const App: React.FC = () => {
               if (!matchRegion) return false;
           }
 
-          // Disciplines filter
-          if (selectedTypes.length > 0) {
+          // Disciplines filter — sla over als alle 4 types geselecteerd (= geen filter)
+          const ALL_DISCIPLINE_TYPES = ['Architecten', 'Bouwbedrijven', 'Aannemers', 'Bouwmaterialen'];
+          const allTypesSelected = ALL_DISCIPLINE_TYPES.every(t => selectedTypes.includes(t));
+          if (selectedTypes.length > 0 && !allTypesSelected) {
               const t = detectType(b);
               const match = selectedTypes.some(sel => {
                   if (sel === 'Architecten') return t === 'architect';
@@ -1386,9 +1563,9 @@ const App: React.FC = () => {
               const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase();
               const match = selectedWerksoort.some(sel => {
                   if (sel === 'Nieuwbouw') return specs.includes('nieuwbouw');
-                  if (sel === 'Renovatie') return specs.includes('renovatie') || specs.includes('verbouw');
-                  if (sel === 'Verduurzaming') return specs.includes('duurzaam') || specs.includes('verdurzam') || specs.includes('energie');
-                  if (sel === 'Restauratie') return specs.includes('restauratie');
+                  if (sel === 'Renovatie') return specs.includes('renovatie') || specs.includes('verbouw') || specs.includes('aanbouw') || specs.includes('verdieping') || specs.includes('levensbestendig') || specs.includes('transformatie') || specs.includes('onderhoud');
+                  if (sel === 'Verduurzaming') return specs.includes('verduurzam') || specs.includes('isoler') || specs.includes('nul-op-de-meter') || specs.includes('duurzaam') || specs.includes('energie') || specs.includes('levensbestendig');
+                  if (sel === 'Restauratie') return specs.includes('restauratie') || specs.includes('monumentaal');
                   if (sel === 'Allround') return specs.includes('allround');
                   return false;
               });
@@ -1407,15 +1584,33 @@ const App: React.FC = () => {
               if (!match) return false;
           }
 
-          // Slim zoeken: naam-prefix heeft prioriteit, locatie als fallback
-          // Bij actieve straal is de zoektekst het middelpunt van de cirkel — geen tekstfilter.
-          if (q && !activeRadiusKm) {
+          if (selectedLijsten.length > 0) {
+              const naam = (b.naam || '').toLowerCase();
+              const match = selectedLijsten.some(lijst => {
+                  if (lijst === 'Van Wijnen') return naam.includes('van wijnen');
+                  return false;
+              });
+              if (!match) return false;
+          }
+
+          // Tekst filtert altijd op bedrijfsnaam/velden.
+          // Radius is een extra afstandsfilter bovenop de tekstfilter.
+          // Als de tekst een bekende stad is én radius actief, werkt het als locatiezoeken.
+          if (q) {
               const naam = (b.naam || '').toLowerCase();
               const terms = expandQuery(q);
-              const matchNaam = terms.some(t => naam.startsWith(t));
-              const locHaystack = [dbStad, (b.straat || ''), (b.postcode || '')].join(' ').toLowerCase();
-              const matchLoc = locHaystack.includes(q);
-              if (!matchNaam && !matchLoc) return false;
+              // Match als de naam begint met, een woord bevat dat begint met, of gewoon de term bevat
+              const matchNaam = terms.some(t =>
+                naam.startsWith(t) ||
+                naam.includes(' ' + t) ||
+                naam.includes('-' + t) ||
+                naam.includes(t)
+              );
+              // Ook zoeken in stad, postcode, straat, email, website
+              const allFields = [dbStad, b.straat, b.postcode, b.email, b.email_sales, b.email_overig, b.website]
+                .filter(Boolean).join(' ').toLowerCase();
+              const matchFields = allFields.includes(q);
+              if (!matchNaam && !matchFields) return false;
           }
 
           return true;
@@ -1463,10 +1658,8 @@ const App: React.FC = () => {
       if (activeRadiusKm && !radiusCenter) {
         const centerCity = (overrideCity ?? city).trim();
         radiusCenter = getCityCoords(centerCity);
-        if (!radiusCenter && centerCity) {
-          setSearchState({ isLoading: false, data: null, error: `Locatie "${centerCity}" niet gevonden. Probeer een grotere stad in de buurt (bijv. Zwolle, Amsterdam, Utrecht).` });
-          return;
-        }
+        // Als de tekst geen bekende stad is, sla de radius over en doe alleen tekst-zoeken
+        // (zodat je b.v. "inbo" kunt typen als bedrijfsnaam zonder een locatiefout te krijgen)
       }
 
       if (activeRadiusKm && radiusCenter) {
@@ -1535,21 +1728,15 @@ const App: React.FC = () => {
   };
 
   // --- SMART ROUTE GENERATION (Efficient TSP Heuristic) ---
-  const handleCreateSmartRoute = (useSelected = false) => {
-    const allItems = viewMode === 'favorites' ? favorites : foundCompanies;
-
-    // Gebruik geselecteerde items als die er zijn, anders alle resultaten
-    let pool: any[] = allItems;
-    if (useSelected && selectedIds.size > 0) {
-      pool = allItems.filter(c => selectedIds.has(c.id));
-    }
+  const handleCreateSmartRoute = () => {
+    // Gebruik geselecteerde items (stabiel over alle tabs via selectedRaws)
+    const pool: any[] = selectedRaws.size > 0
+      ? Array.from(selectedRaws.values()).map(r => ({ id: r.naam, name: r.naam, city: r.stad || '', _raw: r }))
+      : (viewMode === 'favorites' ? favorites : foundCompanies);
     if (!pool.length) return;
 
     const sortedList = [...pool].sort((a: any, b: any) => getGeoScore(a.city) - getGeoScore(b.city));
-    const selection = sortedList.slice(0, 9); // Google Maps max 9 waypoints
-
-    const startPoint = DEFAULT_ORIGIN;
-    const endPoint = DEFAULT_ORIGIN;
+    const selection = sortedList.slice(0, 9);
 
     const waypoints = selection.map((c: any) => {
       const raw = (c as any)._raw;
@@ -1557,7 +1744,7 @@ const App: React.FC = () => {
       return encodeURIComponent(`${c.name} ${c.city}`);
     }).join('|');
 
-    const mapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(startPoint)}&destination=${encodeURIComponent(endPoint)}&waypoints=${waypoints}&travelmode=driving`;
+    const mapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(DEFAULT_ORIGIN)}&destination=${encodeURIComponent(DEFAULT_ORIGIN)}&waypoints=${waypoints}&travelmode=driving`;
     window.open(mapsUrl, '_blank');
   };
 
@@ -1598,6 +1785,12 @@ const App: React.FC = () => {
   };
 
   const sidebarRegionsActive = selectedRegions.filter(r => r !== 'Heel Nederland');
+
+  // Active data — bouwgarantData minus manually deleted entries
+  const activeData = React.useMemo(
+    () => (bouwgarantData as any[]).filter(b => !deletedEntries.has(deleteKey(b.naam, b.straat)) && !deletedEntries.has(b.naam)),
+    [deletedEntries],
+  );
 
   // Dataset fed into ProvinceFilter — changes with active tab so counts reflect current view
   const sidebarDataset = React.useMemo(() => {
@@ -1746,7 +1939,7 @@ const App: React.FC = () => {
       )}
 
       {/* MAIN LAYOUT */}
-      <div className="flex flex-col md:flex-row max-w-[1400px] mx-auto w-full flex-grow">
+      <div className={`flex flex-col md:flex-row max-w-[1400px] mx-auto w-full flex-grow ${selectedIds.size > 0 ? 'pb-20' : ''}`}>
           {viewMode !== 'map' && viewMode !== 'search' && (
           <aside className={`bg-white border-r border-slate-200 flex-shrink-0 hidden md:flex flex-col h-[calc(100vh-112px)] sticky top-28 transition-all duration-200 ${sidebarCollapsed ? 'w-12' : 'w-80'}`}>
               <div className="p-4 border-b border-slate-100 flex items-center justify-between">
@@ -1761,6 +1954,7 @@ const App: React.FC = () => {
                    <CollapsibleFilterGroup title="Discipline" items={['Architecten', 'Bouwbedrijven', 'Aannemers', 'Bouwmaterialen']} selectedItems={selectedTypes} onToggleItem={(item) => toggleFilter(setSelectedTypes, item)} />
                    <CollapsibleFilterGroup title="Werksoort" items={['Nieuwbouw', 'Renovatie', 'Verduurzaming', 'Restauratie', 'Allround']} selectedItems={selectedWerksoort} onToggleItem={(item) => toggleFilter(setSelectedWerksoort, item)} />
                    <CollapsibleFilterGroup title="Contactgegevens" items={['Heeft telefoon', 'Heeft email']} selectedItems={selectedContact} onToggleItem={(item) => toggleFilter(setSelectedContact, item)} />
+                   <CollapsibleFilterGroup title="Lijsten" items={['Van Wijnen']} selectedItems={selectedLijsten} onToggleItem={(item) => toggleFilter(setSelectedLijsten, item)} />
               </div>
               <div className="p-6 border-t border-slate-200 bg-slate-50 space-y-2">
                   <button
@@ -1773,13 +1967,14 @@ const App: React.FC = () => {
                       className="w-full py-3.5 bg-[#009FE3] hover:bg-[#008ac5] disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-bold uppercase tracking-[0.1em] transition-colors shadow-sm flex items-center justify-center gap-2">
                       {viewMode === 'favorites' ? 'Filters Toepassen' : viewMode === 'database' ? 'Filters Toepassen' : 'Update Resultaten'}
                   </button>
-                  {(selectedRegions.length > 0 || selectedTypes.length > 0 || selectedWerksoort.length > 0 || selectedContact.length > 0) && (
+                  {(selectedRegions.length > 0 || selectedTypes.length > 0 || selectedWerksoort.length > 0 || selectedContact.length > 0 || selectedLijsten.length > 0) && (
                       <button
                           onClick={() => {
                               setSelectedRegions([]);
                               setSelectedTypes([]);
                               setSelectedWerksoort([]);
                               setSelectedContact([]);
+                              setSelectedLijsten([]);
                               setCity('');
                               setRadiusKm(null);
                               setFoundCompanies([]);
@@ -1809,19 +2004,22 @@ const App: React.FC = () => {
                  </button>
                  <button onClick={() => { setViewMode('database'); setDbPage(1); }} className={`flex-shrink-0 flex-1 min-w-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'database' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
                      <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
-                     <span className="hidden sm:inline">Bedrijvendatabase (3994)</span>
+                     <span className="hidden sm:inline">Bedrijvendatabase ({(bouwgarantData as any[]).length})</span>
                      <span className="sm:hidden">Database</span>
                  </button>
                  <button onClick={() => setViewMode('map')} className={`flex-shrink-0 flex-1 min-w-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'map' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
                      <MapPin className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" /> Kaart
+                     {mapMarkerCount > 0 && (
+                       <span className="ml-0.5 px-1.5 py-0.5 bg-[#E85E26] text-white rounded-full text-[9px] font-bold leading-none">{mapMarkerCount}</span>
+                     )}
                  </button>
              </div>
 
 
              {viewMode === 'database' && (() => {
-               const provincies = Array.from(new Set((bouwgarantData as any[]).map(b => b.provincie).filter(Boolean))).sort();
+               const provincies = Array.from(new Set(activeData.map(b => b.provincie).filter(Boolean))).sort();
                const sidebarRegions = selectedRegions.filter(r => r !== 'Heel Nederland');
-               const filtered = (bouwgarantData as any[]).filter(b => {
+               const filtered = activeData.filter(b => {
                  if (!(b.naam || '').trim()) return false;
                  const q = dbSearch.toLowerCase().trim();
                  const dbStadN = normalizeStad(b.stad || '');
@@ -1829,7 +2027,12 @@ const App: React.FC = () => {
                  const matchProv = !dbProvincie || b.provincie === dbProvincie;
                  const matchSource = !dbSource || b.source === dbSource;
                  const matchSidebar = sidebarRegions.length === 0 || sidebarRegions.some(r => b.provincie === r || normalizeStad(b.stad) === normalizeStad(r));
-                 return matchSearch && matchProv && matchSource && matchSidebar;
+                 const naam = (b.naam || '').toLowerCase();
+                 const matchLijsten = selectedLijsten.length === 0 || selectedLijsten.some(lijst => {
+                   if (lijst === 'Van Wijnen') return naam.includes('van wijnen');
+                   return false;
+                 });
+                 return matchSearch && matchProv && matchSource && matchSidebar && matchLijsten;
                });
                const totalPages = Math.ceil(filtered.length / DB_PAGE_SIZE);
                const paged = filtered.slice((dbPage - 1) * DB_PAGE_SIZE, dbPage * DB_PAGE_SIZE);
@@ -1849,22 +2052,50 @@ const App: React.FC = () => {
                        <option value="">Alle bronnen</option>
                        <option value="Bouwgarant">Bouwgarant</option>
                        <option value="Architectenweb">Architectenweb</option>
+                      <option value="BNA">BNA</option>
                        <option value="Stiho">Stiho</option>
                        <option value="Jongeneel">Jongeneel</option>
                        <option value="BouwPartner">BouwPartner</option>
                        <option value="PontMeyer">PontMeyer</option>
+                       <option value="vanwijnen">Van Wijnen</option>
                        <option value="Onbekend">Onbekend</option>
                      </select>
                    </div>
-                   <div className="text-xs text-slate-500 mb-4 font-semibold uppercase tracking-wider">
-                     ~{filtered.length} gevonden
+                   <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                     <div className="flex items-center gap-2">
+                       <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">~{filtered.length} gevonden</span>
+                       <button onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setShowAddModal(true); }} className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 rounded-sm text-[10px] font-bold uppercase tracking-wider transition-all"><Plus className="w-3 h-3"/>Toevoegen</button>
+                     </div>
+                     {(() => {
+                       const pageNamen = paged.map((b: any) => b.naam as string);
+                       const allPageSel = pageNamen.length > 0 && pageNamen.every(n => selectedIds.has(n));
+                       return (
+                         <button
+                           onClick={() => {
+                             if (allPageSel) {
+                               setSelectedIds(prev => { const n = new Set(prev); pageNamen.forEach(nm => n.delete(nm)); return n; });
+                               setSelectedRaws(prev => { const n = new Map(prev); pageNamen.forEach(nm => n.delete(nm)); return n; });
+                             } else {
+                               setSelectedIds(prev => { const n = new Set(prev); pageNamen.forEach(nm => n.add(nm)); return n; });
+                               setSelectedRaws(prev => { const n = new Map(prev); paged.forEach((b: any) => n.set(b.naam, b)); return n; });
+                             }
+                           }}
+                           className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 border transition-colors ${allPageSel ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'bg-white text-slate-600 border-slate-300 hover:border-[#E85E26] hover:text-[#E85E26]'}`}
+                         >
+                           <Check className="w-3 h-3" /> {allPageSel ? 'Deselecteer pagina' : 'Selecteer pagina'}
+                         </button>
+                       );
+                     })()}
                    </div>
                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                      {paged.map((b: any, i: number) => (
-                       <div key={i} className="bg-white border border-slate-200 p-5 flex flex-col gap-3 hover:border-[#009FE3] transition-colors cursor-pointer" onClick={() => setSelectedCompany(b)}>
+                       <div key={i} className={`bg-white border p-5 flex flex-col gap-3 transition-colors cursor-pointer ${selectedIds.has(b.naam) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`} onClick={() => setSelectedCompany(b)}>
                          <div className="flex items-start justify-between gap-2">
                            <div className="flex-1 min-w-0">
                              <div className="flex items-center gap-2 flex-wrap">
+                               <div onClick={e => toggleSelect(b.naam, b, e)} className={`flex-shrink-0 w-4 h-4 border-2 rounded-sm flex items-center justify-center transition-colors ${selectedIds.has(b.naam) ? 'bg-[#E85E26] border-[#E85E26]' : 'border-slate-300 hover:border-[#E85E26]'}`}>
+                                 {selectedIds.has(b.naam) && <Check className="w-2.5 h-2.5 text-white" />}
+                               </div>
                                <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wide leading-tight">{b.naam}</h3>
                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${`${srcColor(b.source).bg} ${srcColor(b.source).text}`}`}>{b.source}</span>
                              </div>
@@ -1893,9 +2124,9 @@ const App: React.FC = () => {
                          )}
                          <div className="mt-auto pt-2 border-t border-slate-100 space-y-2" onClick={e => e.stopPropagation()}>
                            <div className="flex gap-2">
-                             {b.website && <a href={b.website} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
+                             {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
                              {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
-                             {b.url && <a href={b.url} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${`${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}`}><ArrowRight className="w-3 h-3"/>{b.source || 'Bronpagina'}</a>}
+                             {b.url && <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${`${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}`}><ArrowRight className="w-3 h-3"/>{b.source || 'Bronpagina'}</a>}
                            </div>
                            <div className="flex gap-2">
                              <button onClick={() => { setSelectedRegions([]); setSelectedTypes([]); setSelectedWerksoort([]); setSelectedContact([]); setRadiusKm(null); setCity(b.naam); setViewMode('search'); executeSearch(undefined, undefined, b.naam, null, null); }} className={`${btnBase} bg-[#E85E26]/5 text-[#E85E26] border-[#E85E26]/30 hover:border-[#E85E26] hover:bg-[#E85E26]/10`}><Search className="w-3 h-3"/>Zoeken in Live</button>
@@ -2009,14 +2240,18 @@ const App: React.FC = () => {
                 <div className="py-16 text-center max-w-2xl mx-auto">
                     <Search className="w-10 h-10 text-slate-200 mx-auto mb-4" />
                     <p className="text-slate-400 text-sm font-medium">Typ een bedrijfsnaam, stad of postcode — of stel een filter in.</p>
-                    <p className="text-slate-300 text-xs mt-1">Alle 3.994 bedrijven staan in de <button onClick={() => { setViewMode('database'); setDbPage(1); }} className="underline hover:text-[#009FE3]">Bedrijvendatabase</button>.</p>
+                    <p className="text-slate-300 text-xs mt-1">Alle {(bouwgarantData as any[]).length.toLocaleString('nl-NL')} bedrijven staan in de <button onClick={() => { setViewMode('database'); setDbPage(1); }} className="underline hover:text-[#009FE3]">Bedrijvendatabase</button>.</p>
                 </div>
             )}
 
             {viewMode === 'map' && (
                 <MapView
-                  allData={bouwgarantData as any[]}
+                  allData={activeData}
                   favorites={favorites}
+                  selectedItems={Array.from(selectedRaws.values())}
+                  selectedIds={selectedIds}
+                  onToggleSelect={(naam, raw) => { setSelectedIds(prev => { const next = new Set(prev); next.has(naam) ? next.delete(naam) : next.add(naam); return next; }); setSelectedRaws(prev => { const next = new Map(prev); next.has(naam) ? next.delete(naam) : next.set(naam, raw); return next; }); }}
+                  onClearSelection={clearSelection}
                   onNavigate={(target, naam) => {
                     if (target === 'database') {
                       setDbSearch(naam);
@@ -2029,6 +2264,9 @@ const App: React.FC = () => {
                       executeSearch(undefined, undefined, naam);
                     }
                   }}
+                  onAddressCorrection={handleAddressCorrection}
+                  onDeleteEntry={handleDeleteEntry}
+                  onMarkerCountChange={setMapMarkerCount}
                 />
             )}
 
@@ -2075,32 +2313,44 @@ const App: React.FC = () => {
                                  >
                                      <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Download
                                  </button>
+                                 <button
+                                     onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setAddTab('bulk'); setShowAddModal(true); }}
+                                     className="px-3 py-1.5 sm:px-4 sm:py-2 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 sm:gap-2 transition-colors"
+                                 >
+                                     <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Toevoegen
+                                 </button>
                              </div>
                         </div>
-                        {viewMode === 'search' && selectedIds.size > 0 && (() => {
-                          const firstSelected = foundCompanies.find(c => selectedIds.has(c.id));
-                          const refRaw = firstSelected ? (firstSelected as any)._raw : null;
-                          const refStad = refRaw?.stad || (firstSelected as any)?.city || '';
+                        {(viewMode === 'search' || viewMode === 'favorites') && (() => {
+                          const pageNamen = currentItems.map((c: any) => (c._raw?.naam || c.name) as string);
+                          const allPageSelected = pageNamen.length > 0 && pageNamen.every(n => selectedIds.has(n));
+                          const firstSelected = Array.from(selectedRaws.values())[0];
+                          const refStad = firstSelected?.stad || '';
                           const refCoords = refStad ? getCityCoords(refStad) : null;
                           return (
-                            <div className="flex items-center gap-2 flex-wrap bg-[#E85E26]/5 border border-[#E85E26]/20 rounded-sm px-3 py-2">
-                              <span className="text-xs font-bold text-[#E85E26]">{selectedIds.size} geselecteerd</span>
-                              {refCoords && (
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <button
+                                onClick={() => {
+                                  if (allPageSelected) {
+                                    setSelectedIds(prev => { const n = new Set(prev); pageNamen.forEach(nm => n.delete(nm)); return n; });
+                                    setSelectedRaws(prev => { const n = new Map(prev); pageNamen.forEach(nm => n.delete(nm)); return n; });
+                                  } else {
+                                    setSelectedIds(prev => { const n = new Set(prev); pageNamen.forEach(nm => n.add(nm)); return n; });
+                                    setSelectedRaws(prev => { const n = new Map(prev); currentItems.forEach((c: any) => { const b = c._raw || c; const nm = b.naam || c.name; n.set(nm, b); }); return n; });
+                                  }
+                                }}
+                                className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 border transition-colors ${allPageSelected ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'bg-white text-slate-600 border-slate-300 hover:border-[#E85E26] hover:text-[#E85E26]'}`}
+                              >
+                                <Check className="w-3 h-3" /> {allPageSelected ? 'Deselecteer pagina' : 'Selecteer pagina'}
+                              </button>
+                              {selectedIds.size > 0 && refCoords && (
                                 <button
-                                  onClick={() => {
-                                    const km = radiusKm ?? 20;
-                                    setRadiusKm(km);
-                                    setCity(refStad);
-                                    setSelectedRegions([]);
-                                    clearSelection();
-                                    executeSearch(undefined, undefined, '', refCoords, km, []);
-                                  }}
+                                  onClick={() => { const km = radiusKm ?? 20; setRadiusKm(km); setCity(refStad); setSelectedRegions([]); executeSearch(undefined, undefined, '', refCoords, km, []); }}
                                   className="px-3 py-1.5 bg-[#009FE3] hover:bg-[#008ac5] text-white text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 transition-colors"
                                 >
                                   <Search className="w-3.5 h-3.5" /> Zoek in de buurt
                                 </button>
                               )}
-                              <button onClick={clearSelection} className="ml-auto px-2 py-1 bg-white text-slate-500 text-[10px] font-bold uppercase tracking-wider rounded-sm hover:bg-slate-100 border border-slate-200 transition-colors">✕ Wis selectie</button>
                             </div>
                           );
                         })()}
@@ -2112,13 +2362,13 @@ const App: React.FC = () => {
                             const distKm: number | undefined = company._hqDistanceKm ?? company._distanceKm;
                             const btnBase = "flex items-center justify-center gap-1.5 px-3 py-2 text-[10px] font-bold uppercase tracking-wider border transition-all flex-1 whitespace-nowrap rounded-sm";
                             return (
-                              <div key={company.id} className={`bg-white border p-5 flex flex-col gap-3 transition-colors cursor-pointer ${selectedIds.has(company.id) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`} onClick={() => setSelectedCompany(b)}>
+                              <div key={company.id} className={`bg-white border p-5 flex flex-col gap-3 transition-colors cursor-pointer ${selectedIds.has(b.naam || company.name) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`} onClick={() => setSelectedCompany(b)}>
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2 flex-wrap">
                                       {/* Selectie checkbox */}
-                                      <div onClick={e => toggleSelect(company.id, e)} className={`flex-shrink-0 w-4 h-4 border-2 rounded-sm flex items-center justify-center transition-colors ${selectedIds.has(company.id) ? 'bg-[#E85E26] border-[#E85E26]' : 'border-slate-300 hover:border-[#E85E26]'}`}>
-                                        {selectedIds.has(company.id) && <Check className="w-2.5 h-2.5 text-white" />}
+                                      <div onClick={e => toggleSelect(b.naam || company.name, b, e)} className={`flex-shrink-0 w-4 h-4 border-2 rounded-sm flex items-center justify-center transition-colors ${selectedIds.has(b.naam || company.name) ? 'bg-[#E85E26] border-[#E85E26]' : 'border-slate-300 hover:border-[#E85E26]'}`}>
+                                        {selectedIds.has(b.naam || company.name) && <Check className="w-2.5 h-2.5 text-white" />}
                                       </div>
                                       <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wide leading-tight">{b.naam || company.name}</h3>
                                       {b.source && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${`${srcColor(b.source).bg} ${srcColor(b.source).text}`}`}>{b.source}</span>}
@@ -2148,9 +2398,9 @@ const App: React.FC = () => {
                                   </div>
                                 )}
                                 <div className="flex flex-wrap gap-2 mt-auto pt-2 border-t border-slate-100" onClick={e => e.stopPropagation()}>
-                                  {b.website && <a href={b.website} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
+                                  {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
                                   {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
-                                  {b.url && <a href={b.url} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${`${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}`}><ArrowRight className="w-3 h-3"/>{b.source || 'Info'}</a>}
+                                  {b.url && <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${`${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}`}><ArrowRight className="w-3 h-3"/>{b.source || 'Info'}</a>}
                                   <FavButton company={company} favorites={favorites} onToggle={toggleFavorite} />
                                 </div>
                               </div>
@@ -2195,8 +2445,20 @@ const App: React.FC = () => {
                 {showRouteMap && viewMode === 'search' && (
                   <div className="md:flex-1 min-w-0 h-[60vw] md:h-full overflow-hidden border-l-0">
                     <RouteMapPanel
-                      companies={itemsToShow.filter(c => selectedIds.has(c.id))}
+                      companies={selectedRaws.size > 0
+                        ? Array.from(selectedRaws.values()).map(r => ({ id: r.naam, name: r.naam, city: r.stad || '', _raw: r }))
+                        : itemsToShow}
+                      allData={activeData}
                       onClose={() => setShowRouteMap(false)}
+                      onAddressCorrection={handleAddressCorrection}
+                      onDeleteEntry={handleDeleteEntry}
+                      onNavigate={(target, naam) => {
+                        if (target === 'database') {
+                          setDbSearch(naam); setDbProvincie(''); setDbSource(''); setDbPage(1); setViewMode('database');
+                        } else {
+                          setCity(naam); executeSearch(undefined, undefined, naam);
+                        }
+                      }}
                     />
                   </div>
                 )}
@@ -2205,6 +2467,128 @@ const App: React.FC = () => {
           </main>
       </div>
 
+
+      {/* ── Bedrijf toevoegen modal ─────────────────────────────────────────── */}
+      {showAddModal && (() => {
+        const fieldCls = "w-full border border-slate-200 rounded-sm px-2 py-1.5 text-sm text-slate-800 focus:outline-none focus:border-[#009FE3]";
+        const labelCls = "text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block";
+        const f = (key: keyof typeof addForm, label: string) => (
+          <div key={key}>
+            <label className={labelCls}>{label}</label>
+            <input className={fieldCls} value={addForm[key]} onChange={e => setAddForm(d => ({ ...d, [key]: e.target.value }))} />
+          </div>
+        );
+        return (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/80 backdrop-blur-sm" onClick={() => setShowAddModal(false)}>
+            <div className="bg-[#F8FAFC] w-full max-w-2xl max-h-[92vh] sm:max-h-[90vh] shadow-2xl flex flex-col rounded-t-xl sm:rounded-none" onClick={e => e.stopPropagation()}>
+              <div className="sm:hidden w-10 h-1 bg-slate-300 rounded-full mx-auto mt-3 mb-1 flex-shrink-0" />
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 sm:p-6 bg-white border-b border-slate-200 flex-shrink-0">
+                <div>
+                  <div className="flex items-center gap-2 text-[#009FE3] text-[10px] font-bold uppercase tracking-[0.2em] mb-1"><Plus className="w-3 h-3"/> Bedrijf toevoegen</div>
+                  <div className="flex gap-1 mt-2">
+                    <button onClick={() => setAddTab('single')} className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-sm border transition-all ${addTab === 'single' ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-300 hover:border-[#009FE3]'}`}>Handmatig</button>
+                    <button onClick={() => setAddTab('bulk')} className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-sm border transition-all ${addTab === 'bulk' ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-300 hover:border-[#009FE3]'}`}>Bulk import</button>
+                  </div>
+                </div>
+                <button onClick={() => setShowAddModal(false)} className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-900"><X className="w-5 h-5" /></button>
+              </div>
+              <div className="flex-grow overflow-y-auto p-4 sm:p-6">
+                {addTab === 'single' ? (
+                  <div className="space-y-3">
+                    {f('naam', 'Bedrijfsnaam *')}
+                    <div className="grid grid-cols-2 gap-3">
+                      {f('straat', 'Straat + huisnr')}
+                      {f('postcode', 'Postcode')}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {f('stad', 'Stad')}
+                      {f('provincie', 'Provincie')}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {f('telefoon', 'Telefoon')}
+                      {f('email', 'Email')}
+                    </div>
+                    {f('website', 'Website')}
+                    <div className="grid grid-cols-3 gap-3">
+                      {f('spec1', 'Specialisatie 1')}
+                      {f('spec2', 'Specialisatie 2')}
+                      {f('spec3', 'Specialisatie 3')}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {f('rechtsvorm', 'Rechtsvorm')}
+                      {f('kvk', 'KvK-nummer')}
+                    </div>
+                    {addDuplicate && (
+                      <div className="bg-amber-50 border border-amber-300 rounded-sm p-3 text-xs text-amber-800">
+                        <p className="font-bold mb-1">⚠ Mogelijk al in database</p>
+                        <p className="mb-2">Gevonden: <span className="font-semibold">{addDuplicate.naam}</span>{addDuplicate.stad ? ` — ${addDuplicate.stad}` : ''}{addDuplicate.straat ? `, ${addDuplicate.straat}` : ''}</p>
+                        <div className="flex gap-2">
+                          <button onClick={() => { addCustomEntries([{ ...addForm, source: 'Handmatig' }]); setAddDuplicate(null); setShowAddModal(false); }} className="flex-1 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-sm">Toch toevoegen</button>
+                          <button onClick={() => setAddDuplicate(null)} className="flex-1 py-1.5 border border-amber-300 text-amber-700 font-bold rounded-sm hover:bg-amber-100">Annuleren</button>
+                        </div>
+                      </div>
+                    )}
+                    {!addDuplicate && (
+                      <button
+                        disabled={!addForm.naam.trim()}
+                        onClick={() => {
+                          if (!addForm.naam.trim()) return;
+                          const dup = findDuplicate(addForm.naam, addForm.straat, addForm.stad);
+                          if (dup) { setAddDuplicate(dup); return; }
+                          addCustomEntries([{ ...addForm, source: 'Handmatig' }]);
+                          setShowAddModal(false);
+                        }}
+                        className="w-full flex items-center justify-center gap-1.5 px-4 py-3 text-xs font-bold uppercase tracking-wider bg-[#009FE3] hover:bg-[#008ac5] disabled:opacity-40 text-white rounded-sm transition-all mt-2"
+                      ><Save className="w-3.5 h-3.5"/>Opslaan</button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-xs text-slate-500 leading-relaxed">Plak bedrijfsgegevens — één bedrijf per alinea (of één per regel). Het systeem herkent automatisch namen, adressen, telefoonnummers, e-mailadressen en websites.</p>
+                    <textarea
+                      rows={10}
+                      className="w-full border border-slate-200 rounded-sm px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-[#009FE3] font-mono resize-y"
+                      placeholder={"Voorbeeld:\n\nBAM Bouw B.V.\nPostbus 12, 3990 AA Houten\n030 123 4567\ninfo@bam.nl\nwww.bam.nl\n\nHeijmans N.V.\nAkkerstraat 10, 5241 PP Rosmalen\n073 543 5000\ninfo@heijmans.nl"}
+                      value={bulkText}
+                      onChange={e => { setBulkText(e.target.value); setBulkParsed([]); setBulkMsg(''); }}
+                    />
+                    {bulkParsed.length === 0 ? (
+                      <button
+                        disabled={!bulkText.trim()}
+                        onClick={() => { const p = parseBulkText(bulkText); setBulkParsed(p); setBulkMsg(`${p.length} bedrijf/bedrijven herkend — controleer en klik Importeren.`); }}
+                        className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold uppercase tracking-wider bg-slate-700 hover:bg-slate-900 disabled:opacity-40 text-white rounded-sm transition-all"
+                      ><Search className="w-3.5 h-3.5"/>Verwerken</button>
+                    ) : (
+                      <>
+                        <p className="text-xs text-[#009FE3] font-semibold">{bulkMsg}</p>
+                        <div className="space-y-2 max-h-48 overflow-y-auto border border-slate-200 rounded-sm p-2">
+                          {bulkParsed.map((e, i) => (
+                            <div key={i} className="flex items-start gap-2 text-xs">
+                              <span className="text-slate-400 w-5 flex-shrink-0 font-mono">{i + 1}.</span>
+                              <div>
+                                <span className="font-semibold text-slate-800">{e.naam || '(geen naam)'}</span>
+                                {(e.stad || e.straat) && <span className="text-slate-500 ml-1">— {[e.straat, e.postcode, e.stad].filter(Boolean).join(' ')}</span>}
+                                {e.telefoon && <span className="text-slate-400 ml-1">· {e.telefoon}</span>}
+                                {e.email && <span className="text-slate-400 ml-1">· {e.email}</span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={() => { setBulkParsed([]); setBulkMsg(''); }} className="flex-1 px-4 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-300 text-slate-600 hover:border-slate-500 rounded-sm bg-white">Aanpassen</button>
+                          <button onClick={() => { addCustomEntries(bulkParsed); setShowAddModal(false); }} className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold uppercase tracking-wider bg-[#009FE3] hover:bg-[#008ac5] text-white rounded-sm transition-all"><Save className="w-3.5 h-3.5"/>Importeren ({bulkParsed.length})</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {selectedCompany && (() => {
         const b = selectedCompany;
         const hasContact = b.telefoon || b.telefoon_sales || b.telefoon_admin || b.email || b.email_sales || b.email_overig;
@@ -2212,7 +2596,7 @@ const App: React.FC = () => {
         const hasSpec = b.spec1 || b.spec2 || b.spec3;
         const hasBedrijf = b.rechtsvorm || b.kvk;
         return (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/80 backdrop-blur-sm" onClick={() => setSelectedCompany(null)}>
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/80 backdrop-blur-sm" onClick={() => { setSelectedCompany(null); setEditMode(false); }}>
             <div className="bg-[#F8FAFC] w-full max-w-2xl max-h-[92vh] sm:max-h-[90vh] shadow-2xl flex flex-col rounded-t-xl sm:rounded-none" onClick={e => e.stopPropagation()}>
               {/* Drag indicator on mobile */}
               <div className="sm:hidden w-10 h-1 bg-slate-300 rounded-full mx-auto mt-3 mb-1 flex-shrink-0" />
@@ -2229,11 +2613,77 @@ const App: React.FC = () => {
                     {b.provincie && <span className="text-[10px] text-slate-400 font-medium">{b.provincie}</span>}
                   </div>
                 </div>
-                <button onClick={() => setSelectedCompany(null)} className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-900 ml-2 flex-shrink-0"><X className="w-5 h-5" /></button>
+                <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                  <button onClick={() => { setEditDraft({ naam: b.naam||'', straat: b.straat||'', postcode: b.postcode||'', stad: b.stad||'', provincie: b.provincie||'', telefoon: b.telefoon||'', telefoon_sales: b.telefoon_sales||'', telefoon_admin: b.telefoon_admin||'', email: b.email||'', email_sales: b.email_sales||'', email_overig: b.email_overig||'', website: b.website||'', spec1: b.spec1||'', spec2: b.spec2||'', spec3: b.spec3||'', rechtsvorm: b.rechtsvorm||'', kvk: b.kvk||'' }); setEditMode(true); }} title="Bewerken" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-[#009FE3]"><Pencil className="w-4 h-4" /></button>
+                  <button onClick={() => { if (window.confirm(`"${b.naam}"${b.straat ? ` (${b.straat})` : ''} verwijderen?`)) { handleDeleteEntry(b.naam, b.straat); setSelectedCompany(null); setEditMode(false); } }} title="Verwijderen" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
+                  <button onClick={() => { setSelectedCompany(null); setEditMode(false); }} className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-900"><X className="w-5 h-5" /></button>
+                </div>
               </div>
 
               <div className="flex-grow overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-5">
-
+                {editMode ? (() => {
+                  const field = (key: string, label: string) => (
+                    <div key={key} className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 text-sm">
+                      <span className="text-slate-400 text-xs sm:w-28 sm:flex-shrink-0">{label}</span>
+                      <input
+                        className="flex-1 border border-slate-200 rounded-sm px-2 py-1.5 text-sm text-slate-800 focus:outline-none focus:border-[#009FE3]"
+                        value={editDraft[key] ?? ''}
+                        onChange={e => setEditDraft(d => ({ ...d, [key]: e.target.value }))}
+                      />
+                    </div>
+                  );
+                  return (
+                    <>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Bedrijfsnaam</p>
+                        <div className="bg-white border border-slate-200 p-3 rounded-sm space-y-2">
+                          {field('naam', 'Naam')}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5"><MapPin className="w-3 h-3"/> Adres</p>
+                        <div className="bg-white border border-slate-200 p-3 rounded-sm space-y-2">
+                          {field('straat', 'Straat')}
+                          {field('postcode', 'Postcode')}
+                          {field('stad', 'Stad')}
+                          {field('provincie', 'Provincie')}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Contact</p>
+                        <div className="bg-white border border-slate-200 p-3 rounded-sm space-y-2">
+                          {field('telefoon', 'Tel. algemeen')}
+                          {field('telefoon_sales', 'Tel. sales')}
+                          {field('telefoon_admin', 'Tel. admin')}
+                          {field('email', 'Email algemeen')}
+                          {field('email_sales', 'Email sales')}
+                          {field('email_overig', 'Email overig')}
+                          {field('website', 'Website')}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Bedrijfsinfo</p>
+                        <div className="bg-white border border-slate-200 p-3 rounded-sm space-y-2">
+                          {field('rechtsvorm', 'Rechtsvorm')}
+                          {field('kvk', 'KvK')}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Specialisaties</p>
+                        <div className="bg-white border border-slate-200 p-3 rounded-sm space-y-2">
+                          {field('spec1', 'Spec. 1')}
+                          {field('spec2', 'Spec. 2')}
+                          {field('spec3', 'Spec. 3')}
+                        </div>
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <button onClick={() => handleSaveEdit(b.naam, editDraft)} className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold uppercase tracking-wider bg-[#009FE3] hover:bg-[#008ac5] text-white rounded-sm transition-all"><Save className="w-3.5 h-3.5"/>Opslaan</button>
+                        <button onClick={() => setEditMode(false)} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-slate-400 text-slate-600 rounded-sm bg-white">Annuleren</button>
+                      </div>
+                    </>
+                  );
+                })() : (
+                  <>
                 {/* Adres */}
                 {hasAddress && (
                   <div>
@@ -2294,10 +2744,12 @@ const App: React.FC = () => {
 
                 {/* Acties */}
                 <div className="flex flex-wrap gap-2 pt-2">
-                  {b.website && <a href={b.website} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-700 rounded-sm transition-all bg-white"><Globe className="w-3.5 h-3.5"/>Website</a>}
+                  {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-700 rounded-sm transition-all bg-white"><Globe className="w-3.5 h-3.5"/>Website</a>}
                   {hasAddress && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26] text-slate-700 rounded-sm transition-all bg-white"><MapPin className="w-3.5 h-3.5"/>Route</a>}
-                  {b.url && <a href={b.url} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${`${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}`}><ArrowRight className="w-3.5 h-3.5"/>Bronpagina</a>}
+                  {b.url && <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${`${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}`}><ArrowRight className="w-3.5 h-3.5"/>Bronpagina</a>}
                 </div>
+                  </>
+                )}
               </div>
             </div>
           </div>

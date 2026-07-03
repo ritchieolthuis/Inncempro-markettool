@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Loader2, Navigation, ListOrdered, RotateCcw, X,
-  Trash2, Save, Check, MapPin,
+  Trash2, Save, Check, MapPin, GripVertical, Globe, Search,
+  ShieldCheck, AlertTriangle, RefreshCw, ChevronDown, ChevronUp,
+  CalendarDays, Building2, HardHat, Pencil, Plus,
 } from 'lucide-react';
+import { scoreBedrijven, BezoekType } from '../utils/dagbezoek';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -13,10 +16,96 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
+const toUrl = (u: string) => u && /^https?:\/\//i.test(u) ? u : `https://${u}`;
 const GEO_KEY    = 'inncempro_geo_cache';
 const ROUTES_KEY = 'inncempro_saved_routes';
 type Coords   = [number, number];
 type GeoCache = Record<string, Coords | null>;
+
+type VerifyStatus = 'idle' | 'checking' | 'ok' | 'suspect' | 'not_found';
+interface AddressSuggestion {
+  straat: string;
+  postcode: string;
+  stad: string;
+  display: string;
+  allStadFields?: string[];
+}
+interface Verification {
+  status: VerifyStatus;
+  suggestion?: AddressSuggestion;
+  reason?: string;
+  accepted?: boolean;
+}
+
+function extractStadFields(a: any): string[] {
+  return [a.city, a.town, a.village, a.suburb, a.hamlet, a.neighbourhood, a.municipality, a.county]
+    .filter(Boolean) as string[];
+}
+
+async function reverseGeocode(lat: number, lon: number): Promise<AddressSuggestion | null> {
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`,
+      { headers: { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' } },
+    );
+    const d = await r.json();
+    if (!d?.address) return null;
+    const a = d.address;
+    const allStadFields = extractStadFields(a);
+    return { straat: [a.road, a.house_number].filter(Boolean).join(' '), postcode: a.postcode || '', stad: allStadFields[0] || '', allStadFields, display: d.display_name || '' };
+  } catch { return null; }
+}
+
+async function searchByName(naam: string, stad: string): Promise<AddressSuggestion | null> {
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(`${naam} ${stad} Nederland`)}&countrycodes=nl&limit=1`,
+      { headers: { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' } },
+    );
+    const d = await r.json();
+    if (!d?.[0]?.address) return null;
+    const a = d[0].address;
+    const allStadFields = extractStadFields(a);
+    return { straat: [a.road, a.house_number].filter(Boolean).join(' '), postcode: a.postcode || '', stad: allStadFields[0] || '', allStadFields, display: d[0].display_name || '' };
+  } catch { return null; }
+}
+
+function normalizePostcode(p: string) { return (p || '').replace(/\s+/g, '').toUpperCase(); }
+function normalizeSad(s: string) { return (s || '').toLowerCase().replace(/[^a-z]/g, ''); }
+
+async function verifyStop(b: any, coords: Coords | null): Promise<Verification> {
+  const storedStraat   = (b.straat || '').toLowerCase().trim();
+  const storedPostcode = normalizePostcode(b.postcode);
+  const storedStad     = normalizeSad(b.stad);
+
+  if (!coords) {
+    const found = await searchByName(b.naam, b.stad || '');
+    if (found) return { status: 'suspect', suggestion: found, reason: 'Adres kon niet worden opgezocht. Gevonden via naam:' };
+    return { status: 'not_found', reason: 'Adres niet gevonden, geen alternatief beschikbaar.' };
+  }
+
+  const canonical = await reverseGeocode(coords[0], coords[1]);
+  if (!canonical) return { status: 'ok' };
+
+  // Check stored city against ALL place-name fields Nominatim returns
+  // (covers villages inside a larger municipality, e.g. Bornerbroek inside Almelo)
+  const canonStadFields = (canonical.allStadFields || [canonical.stad]).map(normalizeSad);
+  const stadMatch = !storedStad || canonStadFields.some(f => f.includes(storedStad) || storedStad.includes(f));
+
+  const canonPost = normalizePostcode(canonical.postcode);
+  const canonStr  = canonical.straat.toLowerCase().trim();
+  const postMismatch = storedPostcode && canonPost && storedPostcode.slice(0, 4) !== canonPost.slice(0, 4);
+  const strMismatch  = storedStraat && canonStr && !canonStr.includes(storedStraat.split(' ')[0]) && !storedStraat.split(' ')[0].includes(canonStr.split(' ')[0]);
+
+  if (!stadMatch || postMismatch || (strMismatch && postMismatch)) {
+    const reason = !stadMatch
+      ? `Opgeslagen stad "${b.stad}" wijkt af van gevonden stad "${canonical.stad}".`
+      : `Postcode/straat wijkt af van geverifieerd adres.`;
+    return { status: 'suspect', suggestion: canonical, reason };
+  }
+
+  return { status: 'ok' };
+}
 
 function loadCache(): GeoCache { try { return JSON.parse(localStorage.getItem(GEO_KEY) || '{}'); } catch { return {}; } }
 function saveCache(c: GeoCache) { localStorage.setItem(GEO_KEY, JSON.stringify(c)); }
@@ -71,14 +160,21 @@ function nearestNeighbour(start: Coords, pts: { id: string; coords: Coords }[]) 
 
 interface Stop { id: string; company: any; coords: Coords | null; marker: L.Marker | null; loading: boolean; }
 
+import cityCoords from '../city_coords.json';
+
 interface Props {
   companies: any[];
+  allData?: any[];
   onClose: () => void;
+  onAddressCorrection?: (naam: string, correction: { straat: string; postcode: string; stad: string }) => void;
+  onDeleteEntry?: (naam: string, straat?: string) => void;
+  onNavigate?: (target: 'database' | 'search', naam: string) => void;
+  onAddCompany?: () => void;
 }
 
 const DEFAULT_START = 'Lansinkesweg 4, 7553 AE Hengelo';
 
-const RouteMapPanel: React.FC<Props> = ({ companies, onClose }) => {
+const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAddressCorrection, onDeleteEntry, onNavigate, onAddCompany }) => {
   const mapDiv   = useRef<HTMLDivElement>(null);
   const mapRef   = useRef<L.Map | null>(null);
   const stopsRef = useRef<Stop[]>([]);
@@ -92,6 +188,69 @@ const RouteMapPanel: React.FC<Props> = ({ companies, onClose }) => {
   const [saving,       setSaving]       = useState(false);
   const [saveName,     setSaveName]     = useState('');
   const [savedMsg,     setSavedMsg]     = useState('');
+  const dragIdx = useRef<number | null>(null);
+
+  // Address verification
+  const [verifications, setVerifications] = useState<Record<string, Verification>>({});
+  const [showVerify,    setShowVerify]    = useState(false);
+  const [isVerifying,   setIsVerifying]   = useState(false);
+  const HANDLED_KEY = 'inncempro_verify_handled';
+  const [handledVerify, setHandledVerify] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('inncempro_verify_handled') || '[]')); } catch { return new Set(); }
+  });
+  const markHandled = (naam: string) => {
+    setHandledVerify(prev => {
+      const next = new Set(prev);
+      next.add(naam);
+      localStorage.setItem(HANDLED_KEY, JSON.stringify(Array.from(next)));
+      return next;
+    });
+  };
+
+  // Dagbezoek planner
+  const [planOpen,       setPlanOpen]       = useState(false);
+  const [planLocatie,    setPlanLocatie]    = useState('');
+  const [planType,       setPlanType]       = useState<BezoekType>('mix');
+  const [planMax,        setPlanMax]        = useState(12);
+  const [planLoading,    setPlanLoading]    = useState(false);
+  const [planMsg,        setPlanMsg]        = useState('');
+
+  const reorderStops = (from: number, to: number) => {
+    if (from === to) return;
+    if (routeMode) {
+      setOrderedStops(prev => {
+        const next = [...prev];
+        const [moved] = next.splice(from, 1);
+        next.splice(to, 0, moved);
+        // Redraw map pins with new numbers
+        next.forEach((s, i) => {
+          if (s.coords && s.marker && mapRef.current) {
+            s.marker.remove();
+            s.marker = L.marker(s.coords, { icon: makePin('#009FE3', i + 1) })
+              .bindPopup(`<b>${(s.company._raw || s.company).naam || s.company.name || ''}</b>`)
+              .addTo(mapRef.current);
+          }
+        });
+        return next;
+      });
+    } else {
+      stopsRef.current = (() => {
+        const next = [...stopsRef.current];
+        const [moved] = next.splice(from, 1);
+        next.splice(to, 0, moved);
+        next.forEach((s, i) => {
+          if (s.coords && s.marker && mapRef.current) {
+            s.marker.remove();
+            s.marker = L.marker(s.coords, { icon: makePin('#E85E26', i + 1) })
+              .bindPopup(`<b>${(s.company._raw || s.company).naam || s.company.name || ''}</b>`)
+              .addTo(mapRef.current!);
+          }
+        });
+        return next;
+      })();
+      setStops([...stopsRef.current]);
+    }
+  };
 
   // Init map
   useEffect(() => {
@@ -202,6 +361,86 @@ const RouteMapPanel: React.FC<Props> = ({ companies, onClose }) => {
     setStops([...stopsRef.current]);
   };
 
+  const runVerification = async () => {
+    if (!stopsRef.current.length) return;
+    setIsVerifying(true);
+    setShowVerify(true);
+    const init: Record<string, Verification> = {};
+    stopsRef.current.forEach(s => { init[s.id] = { status: 'checking' }; });
+    setVerifications(init);
+
+    for (const stop of stopsRef.current) {
+      const raw = stop.company._raw || stop.company;
+      if (handledVerify.has(raw.naam)) {
+        setVerifications(prev => ({ ...prev, [stop.id]: { status: 'ok' } }));
+        continue;
+      }
+      await new Promise(r => setTimeout(r, 1100));
+      const result = await verifyStop(raw, stop.coords);
+      if (result.status === 'ok' || result.status === 'not_found') {
+        markHandled(raw.naam);
+        continue;
+      }
+      setVerifications(prev => ({ ...prev, [stop.id]: result }));
+    }
+    setIsVerifying(false);
+  };
+
+  const acceptCorrection = (stop: Stop) => {
+    const v = verifications[stop.id];
+    if (!v?.suggestion) return;
+    const raw = stop.company._raw || stop.company;
+    onAddressCorrection?.(raw.naam, {
+      straat:   v.suggestion.straat,
+      postcode: v.suggestion.postcode,
+      stad:     v.suggestion.stad,
+    });
+    setVerifications(prev => ({ ...prev, [stop.id]: { ...prev[stop.id], accepted: true, status: 'ok' } }));
+    markHandled(raw.naam);
+  };
+
+  const dismissVerification = (stop: Stop) => {
+    const raw = stop.company._raw || stop.company;
+    setVerifications(prev => ({ ...prev, [stop.id]: { ...prev[stop.id], accepted: true } }));
+    markHandled(raw.naam);
+  };
+
+  const CUSTOM_KEY = 'inncempro_custom_addresses';
+  const deleteStop = (stop: Stop) => {
+    const raw = stop.company._raw || stop.company;
+    onDeleteEntry?.(raw.naam, raw.straat);
+    markHandled(raw.naam);
+    stop.marker?.remove();
+    stopsRef.current = stopsRef.current.filter(s => s.id !== stop.id);
+    setStops([...stopsRef.current]);
+    setVerifications(prev => { const n = { ...prev }; delete n[stop.id]; return n; });
+  };
+
+  const addAsExtraVestiging = (stop: Stop) => {
+    const v = verifications[stop.id];
+    if (!v?.suggestion) return;
+    const raw = stop.company._raw || stop.company;
+    try {
+      const existing = JSON.parse(localStorage.getItem(CUSTOM_KEY) || '[]');
+      existing.push({
+        id: Date.now().toString(),
+        naam: raw.naam,
+        straat: v.suggestion.straat,
+        postcode: v.suggestion.postcode,
+        stad: v.suggestion.stad,
+        provincie: raw.provincie || '',
+        telefoon: raw.telefoon || '',
+        website: raw.website || '',
+        notitie: 'Extra vestiging (gevonden via adresverificatie)',
+        source: 'Mijn Adressen',
+        addedAt: Date.now(),
+      });
+      localStorage.setItem(CUSTOM_KEY, JSON.stringify(existing));
+    } catch {}
+    setVerifications(prev => ({ ...prev, [stop.id]: { ...prev[stop.id], accepted: true } }));
+    markHandled(raw.naam);
+  };
+
   const removeStop = (id: string) => {
     stopsRef.current.find(s => s.id === id)?.marker?.remove();
     stopsRef.current = stopsRef.current.filter(s => s.id !== id);
@@ -229,6 +468,59 @@ const RouteMapPanel: React.FC<Props> = ({ companies, onClose }) => {
     setSaving(false); setSaveName('');
     setSavedMsg('Opgeslagen! Beschikbaar onder Kaart → Opgeslagen.');
     setTimeout(() => setSavedMsg(''), 4000);
+  };
+
+  const planBezoek = async () => {
+    const loc = planLocatie.trim();
+    if (!loc) { setPlanMsg('Vul een stad, dorp of provincie in.'); return; }
+    setPlanLoading(true); setPlanMsg('');
+    try {
+      // Geocode the entered location
+      const r = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(loc + ' Nederland')}&countrycodes=nl&limit=1`,
+        { headers: { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' } },
+      );
+      const d = await r.json();
+      if (!d?.[0]) { setPlanMsg(`"${loc}" niet gevonden. Probeer een andere naam.`); setPlanLoading(false); return; }
+      const lat = parseFloat(d[0].lat);
+      const lon = parseFloat(d[0].lon);
+
+      const scored = scoreBedrijven(allData, lat, lon, planType, cityCoords as any, planMax);
+      if (scored.length === 0) { setPlanMsg('Geen bedrijven gevonden in de buurt. Probeer een grotere stad.'); setPlanLoading(false); return; }
+
+      // Clear existing stops and load the new ones
+      stopsRef.current.forEach(s => s.marker?.remove());
+      stopsRef.current = [];
+      setStops([]);
+      setRouteMode(false);
+      setOrderedStops([]);
+
+      // Add stops (they will be geocoded via the existing addStop flow)
+      const cache = loadCache();
+      for (const { bedrijf } of scored) {
+        const id = `plan_${Date.now()}_${Math.random()}`;
+        const coords = await geocode(bedrijf, cache);
+        await new Promise(res => setTimeout(res, 300));
+        const stop: Stop = { id, company: { id, name: bedrijf.naam, city: bedrijf.stad, _raw: bedrijf }, coords, marker: null, loading: false };
+        if (coords && mapRef.current) {
+          stop.marker = L.marker(coords, { icon: makePin('#E85E26', stopsRef.current.length + 1) })
+            .bindPopup(`<b>${bedrijf.naam || ''}</b><br>${[bedrijf.straat, bedrijf.postcode, bedrijf.stad].filter(Boolean).join(', ')}`)
+            .addTo(mapRef.current);
+        }
+        stopsRef.current = [...stopsRef.current, stop];
+        setStops([...stopsRef.current]);
+      }
+
+      // Fit map to stops
+      const placed = stopsRef.current.filter(s => s.coords);
+      if (placed.length > 0 && mapRef.current) {
+        const bounds = L.latLngBounds(placed.map(s => s.coords!));
+        mapRef.current.fitBounds(bounds, { padding: [30, 30] });
+      }
+      setPlanOpen(false);
+      setPlanMsg('');
+    } catch { setPlanMsg('Er ging iets mis. Probeer opnieuw.'); }
+    setPlanLoading(false);
   };
 
   const displayStops = routeMode ? orderedStops : stops;
@@ -264,9 +556,16 @@ const RouteMapPanel: React.FC<Props> = ({ companies, onClose }) => {
             </p>
           </div>
         </div>
-        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
-          <X className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          {onAddCompany && (
+            <button onClick={onAddCompany} title="Bedrijf toevoegen" className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-[#009FE3] transition-colors">
+              <Plus className="w-4 h-4" />
+            </button>
+          )}
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* ── Map ── */}
@@ -288,24 +587,51 @@ const RouteMapPanel: React.FC<Props> = ({ companies, onClose }) => {
         <div className="flex-shrink-0 bg-white border-t border-slate-200">
 
           {/* Stop list */}
-          <div className="max-h-40 overflow-y-auto px-3 pt-3 space-y-0.5">
+          <div className="max-h-44 overflow-y-auto px-3 pt-3 space-y-0.5">
             {displayStops.map((s, i) => {
               const raw = s.company._raw || s.company;
+              const website = raw.website || raw.url;
+              const googleUrl = `https://www.google.com/search?q=${encodeURIComponent((raw.naam || s.company.name || '') + ' ' + (raw.stad || s.company.city || ''))}`;
               return (
-                <div key={s.id} className="flex items-center gap-2 text-xs py-1.5 px-2 rounded hover:bg-slate-50 group transition-colors">
+                <div
+                  key={s.id}
+                  draggable
+                  onDragStart={() => { dragIdx.current = i; }}
+                  onDragOver={e => { e.preventDefault(); if (dragIdx.current !== null && dragIdx.current !== i) { reorderStops(dragIdx.current, i); dragIdx.current = i; } }}
+                  onDragEnd={() => { dragIdx.current = null; }}
+                  className="flex items-center gap-1.5 text-xs py-1.5 px-2 rounded hover:bg-slate-50 group transition-colors cursor-grab active:cursor-grabbing">
+                  <GripVertical className="w-3 h-3 text-slate-300 flex-shrink-0 group-hover:text-slate-400" />
                   <span
                     className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
                     style={{ background: routeMode ? '#009FE3' : '#E85E26' }}>
                     {i + 1}
                   </span>
                   {s.loading && <Loader2 className="w-3 h-3 animate-spin text-slate-300 flex-shrink-0" />}
-                  <span className="flex-1 font-semibold text-slate-700 truncate">{raw.naam || s.company.name || '—'}</span>
-                  <span className="text-slate-400 flex-shrink-0 text-[10px] truncate max-w-[70px]">{raw.stad || s.company.city || ''}</span>
-                  {!routeMode && (
-                    <button onClick={() => removeStop(s.id)} className="opacity-0 group-hover:opacity-100 p-0.5 text-red-400 hover:text-red-600 flex-shrink-0 transition-opacity">
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  )}
+                  <span
+                    className="flex-1 font-semibold text-slate-700 truncate hover:text-[#009FE3] cursor-pointer"
+                    onClick={e => { e.stopPropagation(); const nm = raw.naam || s.company.name; if (nm) onNavigate?.('database', nm); }}
+                    title="Zoek in database">
+                    {raw.naam || s.company.name || '—'}
+                  </span>
+                  <span className="text-slate-400 flex-shrink-0 text-[10px] truncate max-w-[60px] hidden sm:block">{raw.stad || s.company.city || ''}</span>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {website && (
+                      <a href={toUrl(website)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 text-[#009FE3] hover:text-[#007bbf] transition-opacity" title="Website">
+                        <Globe className="w-3 h-3" />
+                      </a>
+                    )}
+                    <a href={googleUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                      className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-slate-600 transition-opacity" title="Zoek op Google">
+                      <Search className="w-3 h-3" />
+                    </a>
+                    {!routeMode && (
+                      <button onClick={() => removeStop(s.id)}
+                        className="p-0.5 text-red-300 hover:text-red-600 flex-shrink-0 transition-colors">
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -356,6 +682,101 @@ const RouteMapPanel: React.FC<Props> = ({ companies, onClose }) => {
               <p className="text-[10px] text-amber-600 bg-amber-50 px-2 py-1 rounded">Google Maps toont max 10 stops. De eerste 10 worden geopend.</p>
             )}
 
+            {/* Address verification button */}
+            <button
+              onClick={showVerify ? () => setShowVerify(false) : runVerification}
+              disabled={isVerifying}
+              className="w-full py-2 border border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-500 text-xs font-semibold rounded-sm flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50">
+              {isVerifying
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Adressen controleren…</>
+                : showVerify
+                ? <><ChevronUp className="w-3.5 h-3.5" /> Verificatie verbergen</>
+                : <><ShieldCheck className="w-3.5 h-3.5" /> Adressen verifiëren</>}
+            </button>
+
+            {/* Verification panel */}
+            {showVerify && (
+              <div className="border border-slate-200 rounded-sm bg-slate-50 overflow-hidden">
+                <div className="px-3 py-2 bg-slate-100 border-b border-slate-200 flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#009FE3]" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Adresverificatie</span>
+                  {isVerifying && <span className="text-[10px] text-slate-400 ml-auto">Nominatim API · max 1/sec…</span>}
+                </div>
+                <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                  {stopsRef.current.map(stop => {
+                    const raw = stop.company._raw || stop.company;
+                    const v = verifications[stop.id];
+                    if (!v) return null;
+                    return (
+                      <div key={stop.id} className="px-3 py-2 text-xs">
+                        <div className="flex items-center gap-1.5">
+                          {v.status === 'checking' && <Loader2 className="w-3 h-3 animate-spin text-slate-400 flex-shrink-0" />}
+                          {v.status === 'ok'        && <Check className="w-3 h-3 text-emerald-500 flex-shrink-0" />}
+                          {v.status === 'suspect'   && <AlertTriangle className="w-3 h-3 text-amber-500 flex-shrink-0" />}
+                          {v.status === 'not_found' && <AlertTriangle className="w-3 h-3 text-red-400 flex-shrink-0" />}
+                          <span className="font-semibold text-slate-700 truncate flex-1">{raw.naam}</span>
+                          {v.accepted && <span className="text-[10px] text-emerald-600 font-semibold">Bijgewerkt</span>}
+                        </div>
+                        {v.status === 'ok' && !v.accepted && (
+                          <p className="text-slate-400 text-[10px] mt-0.5 pl-4.5">
+                            {[raw.straat, raw.postcode, raw.stad].filter(Boolean).join(', ')} — OK
+                          </p>
+                        )}
+                        {(v.status === 'suspect' || v.status === 'not_found') && v.reason && (
+                          <p className="text-amber-600 text-[10px] mt-0.5 pl-4">{v.reason}</p>
+                        )}
+                        {v.suggestion && !v.accepted && (
+                          <div className="mt-1.5 pl-4 space-y-1">
+                            <div className="bg-white border border-amber-200 rounded p-1.5 text-[10px]">
+                              <p className="text-slate-500 font-semibold mb-0.5">Voorstel:</p>
+                              <p className="text-slate-700">{[v.suggestion.straat, v.suggestion.postcode, v.suggestion.stad].filter(Boolean).join(', ')}</p>
+                              <p className="text-slate-400 truncate text-[9px] mt-0.5">{v.suggestion.display}</p>
+                            </div>
+                            <div className="text-slate-400 text-[10px]">
+                              <span className="font-semibold">Huidig: </span>
+                              {[raw.straat, raw.postcode, raw.stad].filter(Boolean).join(', ')}
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              <button
+                                type="button"
+                                onClick={() => acceptCorrection(stop)}
+                                className="flex items-center gap-1 px-2 py-1 bg-[#009FE3] text-white text-[10px] font-bold rounded hover:bg-[#008ac5] transition-colors">
+                                <Check className="w-2.5 h-2.5" /> Adres corrigeren
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => addAsExtraVestiging(stop)}
+                                className="flex items-center gap-1 px-2 py-1 bg-[#E85E26] text-white text-[10px] font-bold rounded hover:bg-[#d14d1b] transition-colors">
+                                + Extra vestiging
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => dismissVerification(stop)}
+                                className="flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-500 text-[10px] font-bold rounded hover:bg-slate-200 transition-colors">
+                                Afwijzen
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteStop(stop)}
+                                className="flex items-center gap-1 px-2 py-1 bg-red-500 text-white text-[10px] font-bold rounded hover:bg-red-600 transition-colors">
+                                Verwijder
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {v.status === 'checking' && (
+                          <p className="text-slate-400 text-[10px] mt-0.5 pl-4">Controleren…</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {stopsRef.current.length === 0 && (
+                    <p className="px-3 py-4 text-[10px] text-slate-400 text-center">Geen stops om te verifiëren.</p>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Save to Kaart */}
             {saving ? (
               <div className="flex gap-2">
@@ -392,6 +813,76 @@ const RouteMapPanel: React.FC<Props> = ({ companies, onClose }) => {
           </div>
         </div>
       )}
+
+      {/* ── Dagbezoek planner ── */}
+      <div className="flex-shrink-0 bg-white border-t border-slate-200">
+        <button
+          onClick={() => setPlanOpen(v => !v)}
+          className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors">
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wider">
+            <CalendarDays className="w-3.5 h-3.5 text-[#E85E26]" />
+            Plan een bezoek
+          </div>
+          {planOpen ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+        </button>
+        {planOpen && (
+          <div className="px-4 pb-3 space-y-2.5 overflow-y-auto max-h-72">
+            <div>
+              <label className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider block mb-1">Waar naartoe?</label>
+              <input
+                type="text"
+                value={planLocatie}
+                onChange={e => setPlanLocatie(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && planBezoek()}
+                placeholder="stad, dorp of provincie…"
+                className="w-full border border-slate-200 rounded-sm px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#009FE3]"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider block mb-1">Type bedrijven</label>
+              <div className="grid grid-cols-2 gap-1">
+                {([
+                  { val: 'mix',          label: 'Mix',          icon: <Building2 className="w-3 h-3" /> },
+                  { val: 'architecten',  label: 'Architecten',  icon: <Pencil className="w-3 h-3" /> },
+                  { val: 'bouwbedrijven',label: 'Bouwbedrijven',icon: <HardHat className="w-3 h-3" /> },
+                  { val: 'aannemers',    label: 'Aannemers',    icon: <HardHat className="w-3 h-3" /> },
+                ] as { val: BezoekType; label: string; icon: React.ReactNode }[]).map(({ val, label, icon }) => (
+                  <button
+                    key={val}
+                    onClick={() => setPlanType(val)}
+                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded-sm text-[10px] font-bold border transition-colors ${planType === val ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]'}`}>
+                    {icon} {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider block mb-1">Max stops</label>
+              <div className="flex gap-1">
+                {[10, 12, 15].map(n => (
+                  <button key={n} onClick={() => setPlanMax(n)}
+                    className={`flex-1 py-1.5 rounded-sm text-[10px] font-bold border transition-colors ${planMax === n ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {planMsg && (
+              <div className="flex items-start gap-1.5 text-xs text-amber-700 bg-amber-50 p-2 rounded">
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />{planMsg}
+              </div>
+            )}
+            <button
+              onClick={planBezoek}
+              disabled={planLoading || !planLocatie.trim()}
+              className="w-full py-2.5 bg-[#E85E26] hover:bg-[#d14d1b] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold rounded-sm flex items-center justify-center gap-2 transition-colors">
+              {planLoading
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Bedrijven zoeken…</>
+                : <><CalendarDays className="w-3.5 h-3.5" /> Plan bezoek{planLocatie.trim() ? ` → ${planLocatie.trim()}` : ''}</>}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
