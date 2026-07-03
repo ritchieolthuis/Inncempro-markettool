@@ -1066,6 +1066,13 @@ const SOURCE_COLORS: Record<string, { bg: string; text: string; btn: string; btn
   'Onbekend':      { bg: 'bg-slate-100',    text: 'text-slate-500',  btn: 'bg-slate-500',  btnHover: 'hover:bg-slate-600' },
 };
 const srcColor = (source: string) => SOURCE_COLORS[source] || SOURCE_COLORS['Onbekend'];
+const SourceBadges = ({ b, size = 'sm' }: { b: any; size?: 'sm' | 'md' }) => {
+  const sources: string[] = b._sources?.length ? b._sources : b.source ? [b.source] : [];
+  const cls = size === 'md' ? 'text-[10px] px-2 py-0.5' : 'text-[9px] px-1.5 py-0.5';
+  return <>{sources.map((s: string, i: number) => (
+    <span key={i} className={`${cls} font-bold rounded flex-shrink-0 ${srcColor(s).bg} ${srcColor(s).text}`}>{s}</span>
+  ))}</>;
+};
 
 const getGeoScore = (city: string) => {
     const key = city.toLowerCase().trim();
@@ -1787,8 +1794,63 @@ const App: React.FC = () => {
   const sidebarRegionsActive = selectedRegions.filter(r => r !== 'Heel Nederland');
 
   // Active data — bouwgarantData minus manually deleted entries
+  // Merge duplicate entries across sources into one enriched record
+  const mergeEntries = (entries: any[]): any[] => {
+    const normNaam = (s: string) => (s || '').toLowerCase()
+      .replace(/\b(b\.?v\.?|nv|vof|cv|stichting|bna)\b/g, '')
+      .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+    const normPc = (s: string) => (s || '').replace(/\s/g, '').toUpperCase().slice(0, 6);
+
+    const groups = new Map<string, any[]>();
+    for (const e of entries) {
+      const nn = normNaam(e.naam);
+      const pc = normPc(e.postcode);
+      // Key: normalised name + postcode (if available), else name + city
+      const key = pc ? `${nn}||${pc}` : `${nn}||${(e.stad || '').toLowerCase().trim()}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(e);
+    }
+
+    const best = (a: any, b: any, field: string) => a[field] || b[field];
+    const merged: any[] = [];
+    for (const group of groups.values()) {
+      if (group.length === 1) { merged.push(group[0]); continue; }
+      const base = group.reduce((acc, cur) => ({
+        ...acc,
+        naam:       acc.naam || cur.naam,
+        straat:     best(acc, cur, 'straat'),
+        postcode:   best(acc, cur, 'postcode'),
+        stad:       best(acc, cur, 'stad'),
+        provincie:  best(acc, cur, 'provincie'),
+        telefoon:   best(acc, cur, 'telefoon'),
+        email:      best(acc, cur, 'email'),
+        website:    best(acc, cur, 'website'),
+        kvk:        best(acc, cur, 'kvk'),
+        spec1:      best(acc, cur, 'spec1'),
+        spec2:      best(acc, cur, 'spec2'),
+        spec3:      best(acc, cur, 'spec3'),
+        url:        best(acc, cur, 'url'),
+        rechtsvorm: best(acc, cur, 'rechtsvorm'),
+        bna_projecten: best(acc, cur, 'bna_projecten'),
+        _custom:    acc._custom || cur._custom,
+      }));
+      // Collect all unique sources
+      const sources = Array.from(new Set(group.map(e => e.source).filter(Boolean)));
+      base.source = sources[0] || 'Onbekend';
+      base._sources = sources; // all sources as array
+      // Flag address conflict
+      const addrs = Array.from(new Set(group.map(e => (e.straat || '').trim()).filter(Boolean)));
+      if (addrs.length > 1) base._adresConflict = addrs;
+      merged.push(base);
+    }
+    return merged;
+  };
+
   const activeData = React.useMemo(
-    () => (bouwgarantData as any[]).filter(b => !deletedEntries.has(deleteKey(b.naam, b.straat)) && !deletedEntries.has(b.naam)),
+    () => {
+      const filtered = (bouwgarantData as any[]).filter(b => !deletedEntries.has(deleteKey(b.naam, b.straat)) && !deletedEntries.has(b.naam));
+      return mergeEntries(filtered);
+    },
     [deletedEntries],
   );
 
@@ -2097,7 +2159,7 @@ const App: React.FC = () => {
                                  {selectedIds.has(b.naam) && <Check className="w-2.5 h-2.5 text-white" />}
                                </div>
                                <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wide leading-tight">{b.naam}</h3>
-                               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${`${srcColor(b.source).bg} ${srcColor(b.source).text}`}`}>{b.source}</span>
+                               <SourceBadges b={b} />
                              </div>
                              {(b.straat || b.postcode || b.stad) && (
                                <p className="text-slate-500 text-xs mt-1 flex items-start gap-1 flex-wrap">
@@ -2126,7 +2188,12 @@ const App: React.FC = () => {
                            <div className="flex gap-2">
                              {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
                              {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
-                             {b.url && <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${`${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}`}><ArrowRight className="w-3 h-3"/>{b.source || 'Bronpagina'}</a>}
+                             {b.url && (b._sources?.length > 1
+                               ? (b._sources as string[]).map((s: string, si: number) => (
+                                   <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${srcColor(s).btn} ${srcColor(s).btnHover}`}><ArrowRight className="w-3 h-3"/>{s}</a>
+                                 ))
+                               : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}><ArrowRight className="w-3 h-3"/>{b.source || 'Bronpagina'}</a>
+                             )}
                            </div>
                            <div className="flex gap-2">
                              <button onClick={() => { setSelectedRegions([]); setSelectedTypes([]); setSelectedWerksoort([]); setSelectedContact([]); setRadiusKm(null); setCity(b.naam); setViewMode('search'); executeSearch(undefined, undefined, b.naam, null, null); }} className={`${btnBase} bg-[#E85E26]/5 text-[#E85E26] border-[#E85E26]/30 hover:border-[#E85E26] hover:bg-[#E85E26]/10`}><Search className="w-3 h-3"/>Zoeken in Live</button>
@@ -2371,7 +2438,7 @@ const App: React.FC = () => {
                                         {selectedIds.has(b.naam || company.name) && <Check className="w-2.5 h-2.5 text-white" />}
                                       </div>
                                       <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wide leading-tight">{b.naam || company.name}</h3>
-                                      {b.source && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${`${srcColor(b.source).bg} ${srcColor(b.source).text}`}`}>{b.source}</span>}
+                                      <SourceBadges b={b} />
                                       {distKm !== undefined && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`} van Hengelo</span>}
                                     </div>
                                     {(b.straat || b.postcode || b.stad || company.city) && (
@@ -2400,7 +2467,12 @@ const App: React.FC = () => {
                                 <div className="flex flex-wrap gap-2 mt-auto pt-2 border-t border-slate-100" onClick={e => e.stopPropagation()}>
                                   {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
                                   {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
-                                  {b.url && <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${`${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}`}><ArrowRight className="w-3 h-3"/>{b.source || 'Info'}</a>}
+                                  {b.url && (b._sources?.length > 1
+                                    ? (b._sources as string[]).map((s: string, si: number) => (
+                                        <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${srcColor(s).btn} ${srcColor(s).btnHover}`}><ArrowRight className="w-3 h-3"/>{s}</a>
+                                      ))
+                                    : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}><ArrowRight className="w-3 h-3"/>{b.source || 'Info'}</a>
+                                  )}
                                   <FavButton company={company} favorites={favorites} onToggle={toggleFavorite} />
                                 </div>
                               </div>
@@ -2608,7 +2680,7 @@ const App: React.FC = () => {
                   </div>
                   <h2 className="text-lg sm:text-2xl font-bold text-slate-900 uppercase tracking-tight leading-tight break-words">{b.naam}</h2>
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${`${srcColor(b.source).bg} ${srcColor(b.source).text}`}`}>{b.source || 'Onbekend'}</span>
+                    <SourceBadges b={b} size="md" />
                     {b.rechtsvorm && <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-medium">{b.rechtsvorm}</span>}
                     {b.provincie && <span className="text-[10px] text-slate-400 font-medium">{b.provincie}</span>}
                   </div>
@@ -2746,7 +2818,12 @@ const App: React.FC = () => {
                 <div className="flex flex-wrap gap-2 pt-2">
                   {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-700 rounded-sm transition-all bg-white"><Globe className="w-3.5 h-3.5"/>Website</a>}
                   {hasAddress && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26] text-slate-700 rounded-sm transition-all bg-white"><MapPin className="w-3.5 h-3.5"/>Route</a>}
-                  {b.url && <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${`${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}`}><ArrowRight className="w-3.5 h-3.5"/>Bronpagina</a>}
+                  {b.url && (b._sources?.length > 1
+                    ? (b._sources as string[]).map((s: string, si: number) => (
+                        <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${srcColor(s).btn} ${srcColor(s).btnHover}`}><ArrowRight className="w-3.5 h-3.5"/>{s}</a>
+                      ))
+                    : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${srcColor(b.source).btn} ${srcColor(b.source).btnHover}`}><ArrowRight className="w-3.5 h-3.5"/>Bronpagina</a>
+                  )}
                 </div>
                   </>
                 )}
