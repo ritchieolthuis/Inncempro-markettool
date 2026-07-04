@@ -29,6 +29,7 @@ export interface DiscoveredCompany {
     name: string;
     city: string;
     discoveredAt: string; // ISO Date string for reference
+    _distanceKm?: number;
 }
 
 export interface DiscoveryResult {

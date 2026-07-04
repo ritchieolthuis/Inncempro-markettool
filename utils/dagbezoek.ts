@@ -97,7 +97,7 @@ function typeScore(b: any, filter: BezoekType): number {
 }
 
 // ── Distance ───────────────────────────────────────────────────────────────────
-function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+export function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
@@ -134,6 +134,7 @@ export function scoreBedrijven(
   type: BezoekType,
   cityCoords: Record<string, { lat: number; lng: number }>,
   maxResults = 15,
+  maxKm = 60,
 ): ScoredBedrijf[] {
   const scored: ScoredBedrijf[] = [];
 
@@ -143,7 +144,7 @@ export function scoreBedrijven(
     if (!coords) continue;
 
     const km = haversineKm(targetLat, targetLon, coords.lat, coords.lng);
-    if (km > 60) continue; // cut off beyond 60 km
+    if (km > maxKm) continue; // cut off beyond the given radius
 
     const ts = typeScore(b, type);
     if (type !== 'mix' && ts === 0) continue; // wrong type, skip
@@ -169,4 +170,57 @@ export function scoreBedrijven(
     if (deduped.length >= maxResults) break;
   }
   return deduped;
+}
+
+// ── Route insertion scoring ──────────────────────────────────────────────────────
+// Ranks candidates by how little detour they add if inserted between `prev` and `next`
+// (or by plain distance to whichever of the two is given, for start/end slots).
+export interface InsertionCandidate { bedrijf: any; cost: number; km: number; }
+
+export function scoreInsertionCandidates(
+  allData: any[],
+  prev: { lat: number; lng: number } | null,
+  next: { lat: number; lng: number } | null,
+  cityCoords: Record<string, { lat: number; lng: number }>,
+  excludeNames: Set<string>,
+  maxResults = 8,
+  query = '',
+): InsertionCandidate[] {
+  const base = prev && next ? haversineKm(prev.lat, prev.lng, next.lat, next.lng) : 0;
+  const scored: InsertionCandidate[] = [];
+  const q = query.toLowerCase().trim();
+
+  for (const b of allData) {
+    const nn = (b.naam || '').toLowerCase().trim();
+    if (!nn || excludeNames.has(nn)) continue;
+    if (q && !`${nn} ${(b.stad || '').toLowerCase()}`.includes(q)) continue;
+    const stad = (b.stad || '').toUpperCase().trim();
+    const coords = cityCoords[stad] || cityCoords[(b.stad || '').trim()];
+    if (!coords) continue;
+
+    let cost: number, km: number;
+    if (prev && next) {
+      const dPrev = haversineKm(prev.lat, prev.lng, coords.lat, coords.lng);
+      const dNext = haversineKm(coords.lat, coords.lng, next.lat, next.lng);
+      cost = dPrev + dNext - base;
+      km = Math.min(dPrev, dNext);
+    } else {
+      const ref = (prev || next)!;
+      cost = haversineKm(ref.lat, ref.lng, coords.lat, coords.lng);
+      km = cost;
+    }
+    scored.push({ bedrijf: b, cost, km });
+  }
+
+  scored.sort((a, b) => a.cost - b.cost);
+  const seen = new Set<string>();
+  const out: InsertionCandidate[] = [];
+  for (const s of scored) {
+    const key = (s.bedrijf.naam || '').toLowerCase().trim();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+    if (out.length >= maxResults) break;
+  }
+  return out;
 }

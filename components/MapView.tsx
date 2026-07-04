@@ -3,9 +3,9 @@ import {
   Loader2, AlertTriangle, CheckSquare, Square, Navigation, Check,
   ListOrdered, Save, Trash2, RotateCcw, ChevronDown, ChevronUp, X,
   Map, MapPin, Plus, Search, ExternalLink, Pencil, GripVertical, Globe, ShieldCheck,
-  CalendarDays, Building2, HardHat,
+  CalendarDays, Building2, HardHat, Repeat,
 } from 'lucide-react';
-import { scoreBedrijven, BezoekType } from '../utils/dagbezoek';
+import { scoreBedrijven, scoreInsertionCandidates, BezoekType } from '../utils/dagbezoek';
 import cityCoords from '../city_coords.json';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -362,6 +362,25 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
   const mapRef  = useRef<L.Map | null>(null);
   const abortRef = useRef(false);
 
+  // Draggable split between sidebar and map
+  const [sidebarWidth, setSidebarWidth] = useState(420); // px
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const isDraggingMap = useRef(false);
+  const startMapDrag = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingMap.current = true;
+    const onMove = (ev: MouseEvent) => {
+      if (!isDraggingMap.current || !splitContainerRef.current) return;
+      const rect = splitContainerRef.current.getBoundingClientRect();
+      const newWidth = Math.min(520, Math.max(180, ev.clientX - rect.left));
+      setSidebarWidth(newWidth);
+      mapRef.current?.invalidateSize();
+    };
+    const onUp = () => { isDraggingMap.current = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
   // Filters
   const [sources,   setSources]   = useState<string[]>([]);
   const [inclFavs,  setInclFavs]  = useState(false);
@@ -403,8 +422,83 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
   };
   const [startAddr,    setStartAddr]    = useState(DEFAULT_START);
   const [returnHome,   setReturnHome]   = useState(true);
+  const [stopMenuOpen,     setStopMenuOpen]     = useState<number | null>(null);
+  const [replacingStopIdx, setReplacingStopIdx] = useState<number | null>(null);
+  const [replaceStopQuery, setReplaceStopQuery] = useState('');
+
+  const removeRouteStop = (i: number) => {
+    setRouteStops(prev => {
+      prev[i]?.marker?.remove();
+      const next = prev.filter((_, idx) => idx !== i);
+      next.forEach((ge, idx) => {
+        if (ge.coords && ge.marker && mapRef.current) {
+          ge.marker.remove();
+          ge.marker = L.marker(ge.coords, { icon: makePin(ge.color, idx + 1) })
+            .bindPopup(makePopup(ge.entry, ge.color, ge.isFav, idx + 1), { maxWidth: 290 })
+            .addTo(mapRef.current!);
+        }
+      });
+      return next;
+    });
+  };
+
+  const replaceRouteStop = async (i: number, raw: any) => {
+    const cache = loadCache();
+    const { coords } = await geocodeEntry(raw, cache);
+    const color = SRC_COLOR[raw.source] || SRC_COLOR['Onbekend'];
+    setRouteStops(prev => {
+      prev[i]?.marker?.remove();
+      const next = [...prev];
+      const ge: GeoEntry = { entry: raw, coords, color, isFav: false };
+      if (coords && mapRef.current) {
+        ge.marker = L.marker(coords, { icon: makePin(color, i + 1) })
+          .bindPopup(makePopup(raw, color, false, i + 1), { maxWidth: 290 })
+          .addTo(mapRef.current);
+      }
+      next[i] = ge;
+      return next;
+    });
+    setReplacingStopIdx(null);
+    setReplaceStopQuery('');
+  };
+
+  const [insertAfterIdx,  setInsertAfterIdx]  = useState<number | null>(null);
+  const [insertQuery,     setInsertQuery]     = useState('');
+
+  const insertRouteStop = async (afterIdx: number, raw: any) => {
+    const cache = loadCache();
+    const { coords } = await geocodeEntry(raw, cache);
+    const color = SRC_COLOR[raw.source] || SRC_COLOR['Onbekend'];
+    setRouteStops(prev => {
+      const next = [...prev];
+      const ge: GeoEntry = { entry: raw, coords, color, isFav: false };
+      next.splice(afterIdx + 1, 0, ge);
+      next.forEach((s, idx) => {
+        if (s.coords && mapRef.current) {
+          s.marker?.remove();
+          s.marker = L.marker(s.coords, { icon: makePin(s.color, idx + 1) })
+            .bindPopup(makePopup(s.entry, s.color, s.isFav, idx + 1), { maxWidth: 290 })
+            .addTo(mapRef.current);
+        }
+      });
+      return next;
+    });
+    setInsertAfterIdx(null);
+    setInsertQuery('');
+  };
   const [routeStops,   setRouteStops]   = useState<GeoEntry[]>([]);
   const [isOptimising, setIsOptimising] = useState(false);
+
+  // Draw-area mode
+  const [drawMode,     setDrawMode]     = useState(false);
+  const [drawStep,     setDrawStep]     = useState<0|1>(0); // 0=waiting for center, 1=center placed
+  const [drawCenter,   setDrawCenter]   = useState<{lat: number; lng: number} | null>(null);
+  const [drawRadiusM,  setDrawRadiusM]  = useState<number>(0);
+  const [drawPlanType, setDrawPlanType] = useState<BezoekType>('mix');
+  const [drawPlanMax,  setDrawPlanMax]  = useState(10);
+  const drawCircleRef  = useRef<L.Circle | null>(null);
+  const drawMarkerRef  = useRef<L.Marker | null>(null);
+  const drawCenterRef  = useRef<{lat: number; lng: number} | null>(null);
 
   // Dagbezoek planner
   const [planOpen,    setPlanOpen]    = useState(false);
@@ -483,9 +577,10 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
   // ── Init map ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return;
-    mapRef.current = L.map(mapDiv.current, { center: [52.3, 5.3], zoom: 7 });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    mapRef.current = L.map(mapDiv.current, { center: [52.15, 5.2], zoom: 7 });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>',
+      subdomains: 'abcd',
       maxZoom: 19,
     }).addTo(mapRef.current);
     const ro = new ResizeObserver(() => mapRef.current?.invalidateSize());
@@ -510,6 +605,146 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
     try { setSavedMaps(JSON.parse(localStorage.getItem(MAPS_KEY) || '[]')); } catch {}
     try { setSavedRoutes(JSON.parse(localStorage.getItem(ROUTES_KEY) || '[]')); } catch {}
   }, []);
+
+  // ── Haversine distance (meters) ─────────────────────────────────────────────
+  const haversineM = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  };
+
+  // ── Draw-area map event handlers ─────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const container = map.getContainer();
+
+    if (!drawMode) {
+      container.style.cursor = '';
+      // clean up any leftover overlays
+      drawCircleRef.current?.remove(); drawCircleRef.current = null;
+      drawMarkerRef.current?.remove(); drawMarkerRef.current = null;
+      return;
+    }
+
+    container.style.cursor = 'crosshair';
+
+    const onClick = (e: L.LeafletMouseEvent) => {
+      if (!drawCenterRef.current) {
+        // First click → set center
+        drawCenterRef.current = { lat: e.latlng.lat, lng: e.latlng.lng };
+        setDrawStep(1);
+        drawMarkerRef.current?.remove();
+        drawMarkerRef.current = L.marker(e.latlng, {
+          icon: L.divIcon({ className: '', html: '<div style="width:12px;height:12px;border-radius:50%;background:#009FE3;border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,.4)"></div>', iconSize: [12,12], iconAnchor: [6,6] })
+        }).addTo(map);
+        drawCircleRef.current?.remove();
+        drawCircleRef.current = L.circle(e.latlng, { radius: 1, color: '#009FE3', fillColor: '#009FE3', fillOpacity: 0.08, weight: 2 }).addTo(map);
+      } else {
+        // Second click → confirm radius
+        const radiusM = haversineM(drawCenterRef.current.lat, drawCenterRef.current.lng, e.latlng.lat, e.latlng.lng);
+        setDrawCenter({ ...drawCenterRef.current });
+        setDrawRadiusM(radiusM);
+        setDrawMode(false);
+        setDrawStep(0);
+        container.style.cursor = '';
+      }
+    };
+
+    const onMove = (e: L.LeafletMouseEvent) => {
+      if (!drawCenterRef.current || !drawCircleRef.current) return;
+      const radiusM = haversineM(drawCenterRef.current.lat, drawCenterRef.current.lng, e.latlng.lat, e.latlng.lng);
+      drawCircleRef.current.setRadius(radiusM);
+    };
+
+    map.on('click', onClick);
+    map.on('mousemove', onMove);
+    return () => { map.off('click', onClick); map.off('mousemove', onMove); };
+  }, [drawMode]);
+
+  // Dim markers outside the drawn area
+  useEffect(() => {
+    entries.forEach(ge => {
+      if (!ge.marker) return;
+      if (drawCenter && ge.coords) {
+        const inside = haversineM(drawCenter.lat, drawCenter.lng, ge.coords[0], ge.coords[1]) <= drawRadiusM;
+        ge.marker.setOpacity(inside ? 1 : 0.2);
+      } else {
+        ge.marker.setOpacity(1);
+      }
+    });
+  }, [drawCenter, drawRadiusM, entries]);
+
+  const clearDrawArea = () => {
+    drawCircleRef.current?.remove(); drawCircleRef.current = null;
+    drawMarkerRef.current?.remove(); drawMarkerRef.current = null;
+    drawCenterRef.current = null;
+    setDrawCenter(null);
+    setDrawRadiusM(0);
+    setDrawStep(0);
+  };
+
+  // Normalise a company name for dedup comparison (strips legal suffixes/punctuation)
+  const normNaam = (s: string) => (s || '').toLowerCase()
+    .replace(/\b(b\.?v\.?|nv|vof|cv|stichting|bna)\b/g, '')
+    .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+
+  // ── Load best-matching companies in drawn area into the route ─────────────────
+  const planBezoekInArea = async (center: {lat: number; lng: number}, radiusM: number, type: BezoekType, max: number) => {
+    setMsg('');
+    abortRef.current = false;
+    clearMarkers(entries);
+    setEntries([]);
+    setRouteMode(false);
+    setRouteStops([]);
+
+    // Score only companies within the drawn radius — small overfetch buffer for geocode misses
+    const radiusKm = radiusM / 1000;
+    const scored = scoreBedrijven(allData, center.lat, center.lng, type, cityCoords as any, Math.ceil(max * 1.5), radiusKm);
+
+    setProgDone(0);
+    setProgTotal(max);
+    setIsLoading(true);
+
+    const cache = loadCache();
+    const pool: GeoEntry[] = [];
+    const seenNames = new Set<string>();
+    let added = 0;
+
+    for (let i = 0; i < scored.length && added < max; i++) {
+      if (abortRef.current) break;
+      const { bedrijf } = scored[i];
+      const nn = normNaam(bedrijf.naam);
+      if (nn && seenNames.has(nn)) continue; // never place the same company twice
+      const { coords, fresh } = await geocodeEntry(bedrijf, cache);
+      if (fresh) await sleep(1100);
+
+      if (!coords || haversineM(center.lat, center.lng, coords[0], coords[1]) > radiusM) continue;
+
+      seenNames.add(nn);
+      const color = SRC_COLOR[bedrijf.source] || SRC_COLOR['Onbekend'];
+      const ge: GeoEntry = { entry: bedrijf, coords, color, isFav: false };
+      if (mapRef.current) {
+        ge.marker = L.marker(coords, { icon: makePin(color, added + 1) })
+          .bindPopup(makePopup(bedrijf, color, false), { maxWidth: 290 })
+          .addTo(mapRef.current);
+      }
+      pool.push(ge);
+      added++;
+      setProgDone(added);
+    }
+
+    setEntries(pool);
+    setVisibleCount(pool.length);
+    setIsLoading(false);
+
+    if (pool.length > 0 && mapRef.current) {
+      mapRef.current.fitBounds(L.latLngBounds(pool.map(e => e.coords!)), { padding: [30, 30] });
+    }
+    if (pool.length === 0) setMsg('Geen bedrijven gevonden in dit gebied. Probeer een groter gebied of ander type.');
+  };
 
   // ── Clear markers from map ───────────────────────────────────────────────────
   const clearMarkers = (pool: GeoEntry[]) => pool.forEach(e => e.marker?.remove());
@@ -541,11 +776,15 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
 
       const cache = loadCache();
       const pool: GeoEntry[] = [];
+      const seenNames = new Set<string>();
       setProgTotal(scored.length); setProgDone(0); setIsLoading(true);
 
       for (let i = 0; i < scored.length; i++) {
         if (abortRef.current) break;
         const { bedrijf } = scored[i];
+        const nn = normNaam(bedrijf.naam);
+        if (nn && seenNames.has(nn)) { setProgDone(i + 1); continue; } // never place the same company twice
+        seenNames.add(nn);
         const { coords, fresh } = await geocodeEntry(bedrijf, cache);
         if (fresh) await sleep(1100);
         const color = SRC_COLOR[bedrijf.source] || SRC_COLOR['Onbekend'];
@@ -819,16 +1058,26 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
     else                  { const u = savedRoutes.filter(r => r.id !== id); setSavedRoutes(u); localStorage.setItem(ROUTES_KEY, JSON.stringify(u)); }
   };
 
-  const srcCount = (src: string) => allData.filter(b => (b.source || 'Onbekend') === src).length;
+  const srcCount = (src: string) => allData.filter(b => {
+    if ((b.source || 'Onbekend') !== src) return false;
+    if (province && b.provincie !== province) return false;
+    if (city.trim()) {
+      const q  = city.trim().toLowerCase();
+      const st = (b.stad || '').toLowerCase();
+      const pc = (b.postcode || '').toLowerCase().replace(/\s/g, '');
+      if (!st.startsWith(q) && !pc.startsWith(q.replace(/\s/g, ''))) return false;
+    }
+    return true;
+  }).length;
   const mapsUrl  = routeMode && routeStops.length > 0 ? buildMapsUrl(routeStops, startAddr, returnHome) : null;
   const pct      = progTotal > 0 ? Math.round(progDone / progTotal * 100) : 0;
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
-    <div className="flex gap-4 h-[calc(100vh-220px)] min-h-[520px]">
+    <div ref={splitContainerRef} className="flex h-[calc(100vh-220px)] min-h-[520px]">
 
       {/* ── Sidebar ── */}
-      <div className="w-72 flex-shrink-0 flex flex-col gap-3 overflow-y-auto pb-4 pr-1">
+      <div style={{ width: sidebarWidth, minWidth: 180, maxWidth: 520 }} className="flex-shrink-0 flex flex-col gap-3 overflow-y-auto pb-4 pr-1">
 
         {/* Zoeken & Selectie */}
         <div className="bg-white rounded-sm border border-slate-200 p-4 space-y-3">
@@ -934,6 +1183,73 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
               {visibleCount > 0 && (
                 <p className="mt-2 text-center text-xs text-slate-400">{visibleCount} locaties op de kaart</p>
               )}
+              {/* Teken gebied — always visible */}
+              <div className="mt-2 border-t border-slate-100 pt-2 space-y-2">
+                {drawCenter ? (
+                  <>
+                    <div className="flex items-center justify-between text-xs text-[#009FE3] font-semibold">
+                      <span>Gebied getekend</span>
+                      <button onClick={clearDrawArea} className="text-slate-400 hover:text-red-500 transition-colors"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                    {/* Radius slider */}
+                    <div>
+                      <p className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1">Straal: {(drawRadiusM / 1000).toFixed(1)} km</p>
+                      <input
+                        type="range"
+                        min={1}
+                        max={200000}
+                        step={500}
+                        value={drawRadiusM}
+                        onChange={e => {
+                          const r = Number(e.target.value);
+                          setDrawRadiusM(r);
+                          drawCircleRef.current?.setRadius(r);
+                        }}
+                        className="w-full accent-[#009FE3] h-1.5"
+                      />
+                    </div>
+                    {/* Type selector */}
+                    <div>
+                      <p className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1">Type bedrijf</p>
+                      <div className="grid grid-cols-2 gap-1">
+                        {([['mix','Mix'], ['architect','Architecten'], ['aannemer','Aannemers'], ['bouwbedrijf','Bouwbedrijven']] as [BezoekType, string][]).map(([v, l]) => (
+                          <button key={v} onClick={() => setDrawPlanType(v)}
+                            className={`py-1.5 text-[10px] font-bold rounded-sm border transition-colors ${drawPlanType === v ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'border-slate-200 text-slate-600 hover:border-[#009FE3] hover:text-[#009FE3]'}`}>
+                            {l}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Max slider */}
+                    <div>
+                      <p className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1">Max resultaten: {drawPlanMax}</p>
+                      <div className="flex gap-1">
+                        {[5, 10, 20, 50].map(n => (
+                          <button key={n} onClick={() => setDrawPlanMax(n)}
+                            className={`flex-1 py-1 text-[10px] font-bold rounded-sm border transition-colors ${drawPlanMax === n ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'border-slate-200 text-slate-600 hover:border-[#E85E26] hover:text-[#E85E26]'}`}>
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Load button */}
+                    <button
+                      onClick={() => planBezoekInArea(drawCenter, drawRadiusM, drawPlanType, drawPlanMax)}
+                      disabled={isLoading}
+                      className="w-full py-2.5 bg-[#E85E26] hover:bg-[#d14d1b] disabled:opacity-50 text-white text-xs font-bold rounded-sm flex items-center justify-center gap-1.5 transition-colors">
+                      <MapPin className="w-3.5 h-3.5" />
+                      {isLoading ? 'Laden…' : `Laad ${drawPlanMax} bedrijven in dit gebied`}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => { drawCenterRef.current = null; setDrawMode(true); }}
+                    className={`w-full py-2 text-xs font-semibold rounded-sm flex items-center justify-center gap-1.5 transition-colors border ${drawMode ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'border-slate-300 text-slate-600 hover:border-[#009FE3] hover:text-[#009FE3]'}`}>
+                    <MapPin className="w-3.5 h-3.5" />
+                    {drawMode ? 'Klik op kaart voor middelpunt…' : 'Teken gebied'}
+                  </button>
+                )}
+              </div>
             </>
           )}
           {msg && (
@@ -1259,10 +1575,28 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
 
       </div>
 
+      {/* ── Drag handle ── */}
+      <div
+        onMouseDown={startMapDrag}
+        className="w-1.5 flex-shrink-0 mx-1 cursor-col-resize hover:bg-[#009FE3]/40 bg-slate-200 rounded-full transition-colors"
+        title="Slepen om formaat aan te passen"
+      />
+
       {/* ── Map + route list ── */}
       <div className="flex-1 flex flex-col gap-3 min-w-0">
         <div className="flex-1 rounded-sm border border-slate-200 overflow-hidden relative min-h-[300px]">
           <div ref={mapDiv} className="w-full h-full" />
+          {drawMode && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] pointer-events-none">
+              <div className="bg-[#009FE3] text-white text-xs font-semibold px-4 py-2 rounded-sm shadow-lg flex items-center gap-2">
+                <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
+                {drawStep === 0 ? 'Klik op de kaart voor het middelpunt' : 'Klik nogmaals om de straal te bevestigen'}
+                <button className="pointer-events-auto ml-2 opacity-70 hover:opacity-100" onClick={() => { setDrawMode(false); setDrawStep(0); drawCenterRef.current = null; drawCircleRef.current?.remove(); drawCircleRef.current = null; drawMarkerRef.current?.remove(); drawMarkerRef.current = null; }}>
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
           {entries.length === 0 && !isLoading && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="text-center bg-white/90 rounded-sm p-8 border border-slate-200 shadow-sm max-w-xs">
@@ -1296,14 +1630,97 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
               {routeStops.map((ge, i) => {
                 const website = ge.entry.website || ge.entry.url;
                 const googleUrl = `https://www.google.com/search?q=${encodeURIComponent((ge.entry.naam || '') + ' ' + (ge.entry.stad || ''))}`;
+
+                if (replacingStopIdx === i) {
+                  const q = replaceStopQuery.toLowerCase().trim();
+                  const existingNames = new Set<string>(routeStops.filter((_, idx) => idx !== i).map(s => (s.entry.naam || '').toLowerCase()));
+                  const prevCoords = routeStops[i - 1]?.coords;
+                  const nextCoords = routeStops[i + 1]?.coords;
+                  const candidates = (prevCoords || nextCoords)
+                    ? scoreInsertionCandidates(allData, prevCoords ? { lat: prevCoords[0], lng: prevCoords[1] } : null, nextCoords ? { lat: nextCoords[0], lng: nextCoords[1] } : null, cityCoords as any, existingNames, 8, q).map(c => c.bedrijf)
+                    : q.length >= 2
+                      ? allData.filter((cand: any) => !existingNames.has((cand.naam || '').toLowerCase()) && [cand.naam, cand.stad].join(' ').toLowerCase().includes(q)).slice(0, 8)
+                      : [];
+                  return (
+                    <div key={i} className="border border-[#009FE3] rounded-sm p-2 my-1">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Vervang "{ge.entry.naam}"</span>
+                        <button onClick={() => { setReplacingStopIdx(null); setReplaceStopQuery(''); }} className="text-slate-400 hover:text-slate-700"><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                      {!q && (prevCoords || nextCoords) && <p className="text-[10px] text-slate-400 mb-1">Beste tussenopties op deze plek in de route:</p>}
+                      <input
+                        autoFocus
+                        type="text"
+                        value={replaceStopQuery}
+                        onChange={e => setReplaceStopQuery(e.target.value)}
+                        placeholder="Of zoek zelf op naam/stad..."
+                        className="w-full border border-slate-200 rounded-sm px-2 py-1.5 text-xs focus:outline-none focus:border-[#009FE3] mb-1"
+                      />
+                      <div className="max-h-40 overflow-y-auto space-y-0.5">
+                        {candidates.map((cand: any, ci: number) => (
+                          <button key={ci} onClick={() => replaceRouteStop(i, cand)}
+                            className="w-full text-left px-2 py-1.5 text-xs rounded-sm hover:bg-slate-50 border border-slate-100 flex flex-col">
+                            <span className="font-semibold text-slate-700">{cand.naam}</span>
+                            <span className="text-slate-400 text-[10px]">{[cand.straat, cand.stad].filter(Boolean).join(', ')}</span>
+                          </button>
+                        ))}
+                        {candidates.length === 0 && (
+                          <p className="text-[10px] text-slate-400 py-1">Geen bedrijven gevonden.</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (insertAfterIdx === i) {
+                  const q = insertQuery.toLowerCase().trim();
+                  const existingNames = new Set<string>(routeStops.map(s => (s.entry.naam || '').toLowerCase()));
+                  const prevCoords = routeStops[i]?.coords;
+                  const nextCoords = routeStops[i + 1]?.coords;
+                  const candidates = (prevCoords || nextCoords)
+                    ? scoreInsertionCandidates(allData, prevCoords ? { lat: prevCoords[0], lng: prevCoords[1] } : null, nextCoords ? { lat: nextCoords[0], lng: nextCoords[1] } : null, cityCoords as any, existingNames, 8, q).map(c => c.bedrijf)
+                    : q.length >= 2
+                      ? allData.filter((cand: any) => !existingNames.has((cand.naam || '').toLowerCase()) && [cand.naam, cand.stad].join(' ').toLowerCase().includes(q)).slice(0, 8)
+                      : [];
+                  return (
+                    <div key={`insert-${i}`} className="border border-[#E85E26] rounded-sm p-2 my-1">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Nieuwe stop na "{ge.entry.naam}"</span>
+                        <button onClick={() => { setInsertAfterIdx(null); setInsertQuery(''); }} className="text-slate-400 hover:text-slate-700"><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                      {!q && (prevCoords || nextCoords) && <p className="text-[10px] text-slate-400 mb-1">Beste tussenopties op deze plek in de route:</p>}
+                      <input
+                        autoFocus
+                        type="text"
+                        value={insertQuery}
+                        onChange={e => setInsertQuery(e.target.value)}
+                        placeholder="Of zoek zelf op naam/stad..."
+                        className="w-full border border-slate-200 rounded-sm px-2 py-1.5 text-xs focus:outline-none focus:border-[#E85E26] mb-1"
+                      />
+                      <div className="max-h-40 overflow-y-auto space-y-0.5">
+                        {candidates.map((cand: any, ci: number) => (
+                          <button key={ci} onClick={() => insertRouteStop(i, cand)}
+                            className="w-full text-left px-2 py-1.5 text-xs rounded-sm hover:bg-slate-50 border border-slate-100 flex flex-col">
+                            <span className="font-semibold text-slate-700">{cand.naam}</span>
+                            <span className="text-slate-400 text-[10px]">{[cand.straat, cand.stad].filter(Boolean).join(', ')}</span>
+                          </button>
+                        ))}
+                        {candidates.length === 0 && (
+                          <p className="text-[10px] text-slate-400 py-1">Geen bedrijven gevonden.</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
+                  <React.Fragment key={i}>
                   <div
-                    key={i}
                     draggable
                     onDragStart={() => { dragIdx.current = i; }}
                     onDragOver={e => { e.preventDefault(); if (dragIdx.current !== null && dragIdx.current !== i) { reorderRouteStops(dragIdx.current, i); dragIdx.current = i; } }}
                     onDragEnd={() => { dragIdx.current = null; }}
-                    className="flex items-center gap-1.5 text-xs text-slate-700 py-1 rounded hover:bg-slate-50 group cursor-grab active:cursor-grabbing">
+                    className="relative flex items-center gap-1.5 text-xs text-slate-700 py-1 rounded hover:bg-slate-50 group cursor-grab active:cursor-grabbing">
                     <GripVertical className="w-3 h-3 text-slate-200 group-hover:text-slate-400 flex-shrink-0" />
                     <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 text-white" style={{ background: ge.color }}>{i + 1}</span>
                     <span className="font-medium flex-1 truncate">{ge.entry.naam}</span>
@@ -1319,8 +1736,25 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
                         className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-slate-600 transition-opacity" title="Zoek op Google">
                         <Search className="w-3 h-3" />
                       </a>
+                      <button onClick={e => { e.stopPropagation(); setStopMenuOpen(stopMenuOpen === i ? null : i); }}
+                        className="p-0.5 text-slate-300 hover:text-slate-600 transition-colors" title="Opties">
+                        <X className="w-3 h-3" />
+                      </button>
                     </div>
+                    {stopMenuOpen === i && (
+                      <div className="absolute right-0 top-6 z-10 w-32 bg-white border border-slate-200 rounded-sm shadow-lg overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <button onClick={() => { removeRouteStop(i); setStopMenuOpen(null); }} className="w-full text-left px-2.5 py-1.5 text-[11px] font-semibold text-red-500 hover:bg-red-50 flex items-center gap-1.5"><Trash2 className="w-3 h-3" />Verwijderen</button>
+                        <button onClick={() => { setReplacingStopIdx(i); setReplaceStopQuery(''); setStopMenuOpen(null); }} className="w-full text-left px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 flex items-center gap-1.5 border-t border-slate-100"><Repeat className="w-3 h-3" />Vervangen</button>
+                      </div>
+                    )}
                   </div>
+                  <div className="flex justify-center -my-0.5">
+                    <button onClick={() => { setInsertAfterIdx(i); setInsertQuery(''); setStopMenuOpen(null); }}
+                      title="Stop invoegen op deze plek" className="opacity-40 hover:opacity-100 p-0.5 text-slate-300 hover:text-[#E85E26] transition-opacity">
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </div>
+                  </React.Fragment>
                 );
               })}
               {returnHome && (

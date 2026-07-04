@@ -40,7 +40,7 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, user, onLogout, onOpenSett
                 <div className="relative">
                     <button 
                         onClick={() => setShowDropdown(!showDropdown)}
-                        className="flex items-center gap-3 hover:bg-slate-50 p-2 rounded-lg transition-colors border border-transparent hover:border-slate-100"
+                        className="flex items-center gap-3 hover:bg-slate-50 p-2 rounded-sm transition-colors border border-transparent hover:border-slate-200"
                     >
                         <div className="flex flex-col text-right hidden sm:flex">
                             <span className="text-sm font-bold text-slate-900 leading-tight">{user.username}</span>

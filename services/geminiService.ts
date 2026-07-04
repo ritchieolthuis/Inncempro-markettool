@@ -5,11 +5,14 @@ import { PlaceResult } from "./googleMapsService";
 
 const apiKey = process.env.API_KEY;
 
-if (!apiKey) {
-  console.error("API_KEY is not defined in the environment variables.");
-}
-
-const ai = new GoogleGenAI({ apiKey: apiKey || '' });
+let _ai: GoogleGenAI | null = null;
+const getAI = (): GoogleGenAI => {
+  if (!_ai) {
+    if (!apiKey) console.warn("API_KEY is not set — AI search unavailable.");
+    _ai = new GoogleGenAI({ apiKey: apiKey || 'no-key' });
+  }
+  return _ai;
+};
 
 // Helper for delay
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -70,7 +73,7 @@ export const performDiscoverySearch = async (
         }
         `;
 
-        const response = await generateWithRetry(() => ai.models.generateContent({
+        const response = await generateWithRetry(() => getAI().models.generateContent({
             model: 'gemini-2.5-flash',
             contents: prompt,
             config: {
@@ -135,7 +138,7 @@ export const enrichBatchCompanies = async (companies: {name: string, city: strin
             ]
         `;
 
-        const response = await generateWithRetry(() => ai.models.generateContent({
+        const response = await generateWithRetry(() => getAI().models.generateContent({
             model: 'gemini-2.5-flash',
             contents: prompt,
             config: {
@@ -226,7 +229,7 @@ export const generateDeepScan = async (companyName: string, city: string): Promi
           }
           `;
 
-      const response = await generateWithRetry(() => ai.models.generateContent({
+      const response = await generateWithRetry(() => getAI().models.generateContent({
           model: 'gemini-2.5-flash',
           contents: prompt,
           config: {

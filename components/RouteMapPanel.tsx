@@ -3,9 +3,9 @@ import {
   Loader2, Navigation, ListOrdered, RotateCcw, X,
   Trash2, Save, Check, MapPin, GripVertical, Globe, Search,
   ShieldCheck, AlertTriangle, RefreshCw, ChevronDown, ChevronUp,
-  CalendarDays, Building2, HardHat, Pencil, Plus,
+  CalendarDays, Building2, HardHat, Pencil, Plus, Repeat,
 } from 'lucide-react';
-import { scoreBedrijven, BezoekType } from '../utils/dagbezoek';
+import { scoreBedrijven, scoreInsertionCandidates, BezoekType } from '../utils/dagbezoek';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -158,7 +158,7 @@ function nearestNeighbour(start: Coords, pts: { id: string; coords: Coords }[]) 
   return out;
 }
 
-interface Stop { id: string; company: any; coords: Coords | null; marker: L.Marker | null; loading: boolean; }
+interface Stop { id: string; company: any; coords: Coords | null; marker: L.Marker | null; loading: boolean; origin?: 'selection' | 'manual'; }
 
 import cityCoords from '../city_coords.json';
 
@@ -188,6 +188,12 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
   const [saving,       setSaving]       = useState(false);
   const [saveName,     setSaveName]     = useState('');
   const [savedMsg,     setSavedMsg]     = useState('');
+  const [removedIds,   setRemovedIds]   = useState<Set<string>>(new Set());
+  const [stopMenuOpen,     setStopMenuOpen]     = useState<string | null>(null);
+  const [replacingStopId,  setReplacingStopId]  = useState<string | null>(null);
+  const [replaceStopQuery, setReplaceStopQuery] = useState('');
+  const [insertAfterId,   setInsertAfterId]     = useState<string | 'start' | null>(null);
+  const [insertQuery,     setInsertQuery]       = useState('');
   const dragIdx = useRef<number | null>(null);
 
   // Address verification
@@ -214,6 +220,27 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
   const [planMax,        setPlanMax]        = useState(12);
   const [planLoading,    setPlanLoading]    = useState(false);
   const [planMsg,        setPlanMsg]        = useState('');
+
+  // Draw-area mode (circle on map → load companies in that area)
+  const [drawMode,      setDrawMode]      = useState(false);
+  const [drawStep,      setDrawStep]      = useState<0|1>(0);
+  const [drawCenter,    setDrawCenter]    = useState<[number,number] | null>(null);
+  const [drawRadiusM,   setDrawRadiusM]   = useState(0);
+  const [drawPlanType,  setDrawPlanType]  = useState<BezoekType>('mix');
+  const [drawPlanMax,   setDrawPlanMax]   = useState(10);
+  const [drawLoading,   setDrawLoading]   = useState(false);
+  const drawCircleRef   = useRef<L.Circle | null>(null);
+  const drawMarkerRef   = useRef<L.Marker | null>(null);
+  const drawCenterRef   = useRef<[number,number] | null>(null);
+
+  const haversineM = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  };
+
 
   const reorderStops = (from: number, to: number) => {
     if (from === to) return;
@@ -268,17 +295,19 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
   // Sync companies → stops
   useEffect(() => {
     const cache = loadCache();
-    const companyIds = new Set(companies.map(c => c.id));
+    const companyIds = new Set(companies.map(c => c.id).filter(id => !removedIds.has(id)));
 
-    // Remove stops no longer in selection
-    stopsRef.current.filter(s => !companyIds.has(s.id)).forEach(s => s.marker?.remove());
-    const kept = stopsRef.current.filter(s => companyIds.has(s.id));
+    // Remove stops no longer in selection — but never drop manually-added stops
+    // (draw-area / plan-bezoek / dagbezoek-planner), those aren't tracked by the checkbox selection.
+    const toDrop = stopsRef.current.filter(s => s.origin !== 'manual' && !companyIds.has(s.id));
+    toDrop.forEach(s => s.marker?.remove());
+    const kept = stopsRef.current.filter(s => s.origin === 'manual' || companyIds.has(s.id));
     const keptIds = new Set(kept.map(s => s.id));
-    const newCompanies = companies.filter(c => !keptIds.has(c.id));
+    const newCompanies = companies.filter(c => !keptIds.has(c.id) && companyIds.has(c.id));
 
     const newStops: Stop[] = [
       ...kept,
-      ...newCompanies.map(c => ({ id: c.id, company: c, coords: null, marker: null, loading: true })),
+      ...newCompanies.map(c => ({ id: c.id, company: c, coords: null, marker: null, loading: true, origin: 'selection' as const })),
     ];
     stopsRef.current = newStops;
     setStops([...newStops]);
@@ -311,7 +340,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
       setStops([...stopsRef.current]);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companies]);
+  }, [companies, removedIds]);
 
   // Renumber pins when stops change (normal mode)
   useEffect(() => {
@@ -441,12 +470,168 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
     markHandled(raw.naam);
   };
 
+  // Draw-area event handlers
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const container = map.getContainer();
+    if (!drawMode) {
+      container.style.cursor = '';
+      drawCircleRef.current?.remove(); drawCircleRef.current = null;
+      drawMarkerRef.current?.remove(); drawMarkerRef.current = null;
+      return;
+    }
+    container.style.cursor = 'crosshair';
+    const onClick = (e: L.LeafletMouseEvent) => {
+      if (!drawCenterRef.current) {
+        drawCenterRef.current = [e.latlng.lat, e.latlng.lng];
+        setDrawStep(1);
+        drawMarkerRef.current?.remove();
+        drawMarkerRef.current = L.marker(e.latlng, {
+          icon: L.divIcon({ className: '', html: '<div style="width:12px;height:12px;border-radius:50%;background:#E85E26;border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,.4)"></div>', iconSize: [12,12], iconAnchor: [6,6] })
+        }).addTo(map);
+        drawCircleRef.current?.remove();
+        drawCircleRef.current = L.circle(e.latlng, { radius: 1, color: '#E85E26', fillColor: '#E85E26', fillOpacity: 0.08, weight: 2 }).addTo(map);
+      } else {
+        const [clat, clng] = drawCenterRef.current;
+        const radiusM = haversineM(clat, clng, e.latlng.lat, e.latlng.lng);
+        setDrawCenter([clat, clng]);
+        setDrawRadiusM(radiusM);
+        setDrawMode(false);
+        setDrawStep(0);
+        container.style.cursor = '';
+      }
+    };
+    const onMove = (e: L.LeafletMouseEvent) => {
+      if (!drawCenterRef.current || !drawCircleRef.current) return;
+      const [clat, clng] = drawCenterRef.current;
+      drawCircleRef.current.setRadius(haversineM(clat, clng, e.latlng.lat, e.latlng.lng));
+    };
+    map.on('click', onClick);
+    map.on('mousemove', onMove);
+    return () => { map.off('click', onClick); map.off('mousemove', onMove); };
+  }, [drawMode]);
+
+  const clearDrawArea = () => {
+    drawCircleRef.current?.remove(); drawCircleRef.current = null;
+    drawMarkerRef.current?.remove(); drawMarkerRef.current = null;
+    drawCenterRef.current = null;
+    setDrawCenter(null); setDrawRadiusM(0); setDrawStep(0);
+  };
+
+  const normNaam = (s: string) => (s || '').toLowerCase()
+    .replace(/\b(b\.?v\.?|nv|vof|cv|stichting|bna)\b/g, '')
+    .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+
+  const planBezoekInArea = async (center: [number,number], radiusM: number, type: BezoekType, max: number) => {
+    setDrawLoading(true);
+    const radiusKm = radiusM / 1000;
+    const scored = scoreBedrijven(allData, center[0], center[1], type, cityCoords as any, Math.ceil(max * 1.5), radiusKm);
+    const cache = loadCache();
+    const seenNames = new Set(stopsRef.current.map(s => normNaam(s.company._raw?.naam || s.company.name)));
+    let added = 0;
+    for (let i = 0; i < scored.length && added < max; i++) {
+      const { bedrijf } = scored[i];
+      const nn = normNaam(bedrijf.naam);
+      if (nn && seenNames.has(nn)) continue; // never place the same company twice
+      const coords = await geocode(bedrijf, cache);
+      await new Promise(res => setTimeout(res, 300));
+      if (!coords || haversineM(center[0], center[1], coords[0], coords[1]) > radiusM) continue;
+      seenNames.add(nn);
+      const id = `area_${Date.now()}_${Math.random()}`;
+      const stop: Stop = { id, company: { id, name: bedrijf.naam, city: bedrijf.stad || '', _raw: bedrijf }, coords, marker: null, loading: false, origin: 'manual' };
+      if (mapRef.current) {
+        stop.marker = L.marker(coords, { icon: makePin('#E85E26', stopsRef.current.length + 1) })
+          .bindPopup(`<b>${bedrijf.naam}</b><br>${[bedrijf.straat, bedrijf.postcode, bedrijf.stad].filter(Boolean).join(', ')}`)
+          .addTo(mapRef.current);
+      }
+      stopsRef.current = [...stopsRef.current, stop];
+      setStops([...stopsRef.current]);
+      added++;
+    }
+    const allCoords = stopsRef.current.filter(s => s.coords).map(s => s.coords!);
+    if (allCoords.length > 0 && mapRef.current) {
+      mapRef.current.fitBounds(L.latLngBounds(allCoords), { padding: [30, 30] });
+    }
+    setDrawLoading(false);
+    setRouteMode(false); setOrderedStops([]);
+  };
+
+  const addCompanyToRoute = async (company: any) => {
+    const raw = company._raw || company;
+    const naam = raw.naam || company.name || '';
+    if (!naam) return;
+    if (stopsRef.current.some(s => (s.company._raw?.naam || s.company.name) === naam)) return; // already added
+    const id = `drop_${Date.now()}_${Math.random()}`;
+    const stop: Stop = { id, company: { id, name: naam, city: raw.stad || company.city || '', _raw: raw }, coords: null, marker: null, loading: true, origin: 'manual' };
+    stopsRef.current = [...stopsRef.current, stop];
+    setStops([...stopsRef.current]);
+    const cache = loadCache();
+    const coords = await geocode(raw, cache);
+    const idx = stopsRef.current.findIndex(s => s.id === id);
+    if (idx === -1) return;
+    stopsRef.current[idx].coords = coords;
+    stopsRef.current[idx].loading = false;
+    if (coords && mapRef.current) {
+      stopsRef.current[idx].marker = L.marker(coords, { icon: makePin('#E85E26', idx + 1) })
+        .bindPopup(`<b>${naam}</b><br>${[raw.straat, raw.postcode, raw.stad].filter(Boolean).join(', ')}`)
+        .addTo(mapRef.current);
+      const allCoords = stopsRef.current.filter(s => s.coords).map(s => s.coords!);
+      if (allCoords.length > 1) mapRef.current.fitBounds(L.latLngBounds(allCoords), { padding: [30, 30] });
+      else mapRef.current.setView(coords, 13);
+    }
+    setStops([...stopsRef.current]);
+    setRouteMode(false); setOrderedStops([]);
+  };
+
   const removeStop = (id: string) => {
     stopsRef.current.find(s => s.id === id)?.marker?.remove();
     stopsRef.current = stopsRef.current.filter(s => s.id !== id);
     stopsRef.current.forEach((s, i) => { if (s.marker && s.coords) s.marker.setIcon(makePin('#E85E26', i + 1)); });
     setStops([...stopsRef.current]);
+    setRemovedIds(prev => new Set(prev).add(id));
     setRouteMode(false); setOrderedStops([]);
+  };
+
+  const replaceStop = async (id: string, raw: any) => {
+    const cache = loadCache();
+    const coords = await geocode(raw, cache);
+    const idx = stopsRef.current.findIndex(s => s.id === id);
+    if (idx === -1) return;
+    stopsRef.current[idx]?.marker?.remove();
+    const newId = `manual_${Date.now()}_${Math.random()}`;
+    const newStop: Stop = { id: newId, company: { id: newId, name: raw.naam, city: raw.stad || '', _raw: raw }, coords, marker: null, loading: false, origin: 'manual' };
+    if (coords && mapRef.current) {
+      newStop.marker = L.marker(coords, { icon: makePin('#E85E26', idx + 1) })
+        .bindPopup(`<b>${raw.naam || ''}</b><br>${[raw.straat, raw.postcode, raw.stad].filter(Boolean).join(', ')}`)
+        .addTo(mapRef.current);
+    }
+    stopsRef.current[idx] = newStop;
+    stopsRef.current.forEach((s, i) => { if (s.marker && s.coords) s.marker.setIcon(makePin('#E85E26', i + 1)); });
+    setStops([...stopsRef.current]);
+    setRemovedIds(prev => new Set(prev).add(id));
+    setRouteMode(false); setOrderedStops([]);
+    setReplacingStopId(null); setReplaceStopQuery('');
+  };
+
+  const insertStopAfter = async (afterId: string | 'start', raw: any) => {
+    const cache = loadCache();
+    const coords = await geocode(raw, cache);
+    const newId = `manual_${Date.now()}_${Math.random()}`;
+    const newStop: Stop = { id: newId, company: { id: newId, name: raw.naam, city: raw.stad || '', _raw: raw }, coords, marker: null, loading: false, origin: 'manual' };
+    const insertIdx = afterId === 'start' ? 0 : stopsRef.current.findIndex(s => s.id === afterId) + 1;
+    stopsRef.current = [...stopsRef.current.slice(0, insertIdx), newStop, ...stopsRef.current.slice(insertIdx)];
+    stopsRef.current.forEach((s, i) => {
+      if (s.coords && mapRef.current) {
+        s.marker?.remove();
+        s.marker = L.marker(s.coords, { icon: makePin('#E85E26', i + 1) })
+          .bindPopup(`<b>${(s.company._raw || s.company).naam || s.company.name || ''}</b>`)
+          .addTo(mapRef.current);
+      }
+    });
+    setStops([...stopsRef.current]);
+    setRouteMode(false); setOrderedStops([]);
+    setInsertAfterId(null); setInsertQuery('');
   };
 
   const doSave = () => {
@@ -497,11 +682,15 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
 
       // Add stops (they will be geocoded via the existing addStop flow)
       const cache = loadCache();
+      const seenNames = new Set<string>();
       for (const { bedrijf } of scored) {
+        const nn = normNaam(bedrijf.naam);
+        if (nn && seenNames.has(nn)) continue; // never place the same company twice
+        seenNames.add(nn);
         const id = `plan_${Date.now()}_${Math.random()}`;
         const coords = await geocode(bedrijf, cache);
         await new Promise(res => setTimeout(res, 300));
-        const stop: Stop = { id, company: { id, name: bedrijf.naam, city: bedrijf.stad, _raw: bedrijf }, coords, marker: null, loading: false };
+        const stop: Stop = { id, company: { id, name: bedrijf.naam, city: bedrijf.stad, _raw: bedrijf }, coords, marker: null, loading: false, origin: 'manual' };
         if (coords && mapRef.current) {
           stop.marker = L.marker(coords, { icon: makePin('#E85E26', stopsRef.current.length + 1) })
             .bindPopup(`<b>${bedrijf.naam || ''}</b><br>${[bedrijf.straat, bedrijf.postcode, bedrijf.stad].filter(Boolean).join(', ')}`)
@@ -557,8 +746,8 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
           </div>
         </div>
         <div className="flex items-center gap-1">
-          {onAddCompany && (
-            <button onClick={onAddCompany} title="Bedrijf toevoegen" className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-[#009FE3] transition-colors">
+          {!routeMode && (
+            <button onClick={() => { onAddCompany?.(); setInsertAfterId('start'); setInsertQuery(''); }} title="Bedrijf toevoegen" className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-[#009FE3] transition-colors">
               <Plus className="w-4 h-4" />
             </button>
           )}
@@ -570,7 +759,27 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
 
       {/* ── Map ── */}
       <div className="relative flex-1 min-h-0">
-        <div ref={mapDiv} className="w-full h-full" />
+        <div
+          ref={mapDiv}
+          className="w-full h-full"
+          onDragOver={e => e.preventDefault()}
+          onDrop={e => {
+            e.preventDefault();
+            const raw = e.dataTransfer.getData('application/company');
+            if (raw) { try { addCompanyToRoute(JSON.parse(raw)); } catch {} }
+          }}
+        />
+        {drawMode && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] pointer-events-none">
+            <div className="bg-[#E85E26] text-white text-xs font-semibold px-4 py-2 rounded-sm shadow-lg flex items-center gap-2">
+              <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
+              {drawStep === 0 ? 'Klik op de kaart voor het middelpunt' : 'Klik nogmaals om de straal te bevestigen'}
+              <button className="pointer-events-auto ml-2 opacity-70 hover:opacity-100" onClick={() => { setDrawMode(false); setDrawStep(0); drawCenterRef.current = null; drawCircleRef.current?.remove(); drawCircleRef.current = null; drawMarkerRef.current?.remove(); drawMarkerRef.current = null; }}>
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
         {stops.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="bg-white border border-slate-200 rounded-sm p-8 text-center shadow-sm mx-4">
@@ -583,23 +792,131 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
       </div>
 
       {/* ── Controls (alleen als er stops zijn) ── */}
-      {stops.length > 0 && (
+      {(stops.length > 0 || insertAfterId === 'start') && (
         <div className="flex-shrink-0 bg-white border-t border-slate-200">
 
-          {/* Stop list */}
-          <div className="max-h-44 overflow-y-auto px-3 pt-3 space-y-0.5">
+          {/* Stop list — also a drop zone for dragged company cards */}
+          <div
+            className="max-h-44 overflow-y-auto px-3 pt-3 space-y-0.5"
+            onDragOver={e => e.preventDefault()}
+            onDrop={e => {
+              e.preventDefault();
+              const raw = e.dataTransfer.getData('application/company');
+              if (raw) { try { addCompanyToRoute(JSON.parse(raw)); } catch {} }
+            }}>
+            {insertAfterId === 'start' && (() => {
+              const q = insertQuery.toLowerCase().trim();
+              const existingNames = new Set<string>(displayStops.map(o => ((o.company._raw || o.company).naam || o.company.name || '').toLowerCase()));
+              const nextCoords = displayStops[0]?.coords;
+              const candidates = nextCoords
+                ? scoreInsertionCandidates(allData, null, { lat: nextCoords[0], lng: nextCoords[1] }, cityCoords as any, existingNames, 8, q).map(c => c.bedrijf)
+                : q.length >= 2
+                  ? allData.filter((cand: any) => !existingNames.has((cand.naam || '').toLowerCase()) && [cand.naam, cand.stad].join(' ').toLowerCase().includes(q)).slice(0, 8)
+                  : [];
+              return (
+                <div className="border border-[#E85E26] rounded-sm p-2 my-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Nieuwe stop toevoegen</span>
+                    <button onClick={() => { setInsertAfterId(null); setInsertQuery(''); }} className="text-slate-400 hover:text-slate-700 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                  {!q && nextCoords && <p className="text-[10px] text-slate-400 mb-1">Beste opties om mee te beginnen:</p>}
+                  <input autoFocus type="text" value={insertQuery} onChange={e => setInsertQuery(e.target.value)}
+                    placeholder="Zoek op naam/stad..."
+                    className="w-full border border-slate-200 rounded-sm px-2 py-1.5 text-xs focus:outline-none focus:border-[#E85E26] mb-1" />
+                  <div className="max-h-40 overflow-y-auto space-y-0.5">
+                    {candidates.map((cand: any, ci: number) => (
+                      <button key={ci} onClick={() => insertStopAfter('start', cand)}
+                        className="w-full text-left px-2 py-1.5 text-xs rounded-sm hover:bg-slate-50 border border-slate-100 flex flex-col">
+                        <span className="font-semibold text-slate-700">{cand.naam}</span>
+                        <span className="text-slate-400 text-[10px]">{[cand.straat, cand.stad].filter(Boolean).join(', ')}</span>
+                      </button>
+                    ))}
+                    {candidates.length === 0 && <p className="text-[10px] text-slate-400 py-1">Geen bedrijven gevonden.</p>}
+                  </div>
+                </div>
+              );
+            })()}
             {displayStops.map((s, i) => {
               const raw = s.company._raw || s.company;
               const website = raw.website || raw.url;
               const googleUrl = `https://www.google.com/search?q=${encodeURIComponent((raw.naam || s.company.name || '') + ' ' + (raw.stad || s.company.city || ''))}`;
+
+              if (!routeMode && replacingStopId === s.id) {
+                const q = replaceStopQuery.toLowerCase().trim();
+                const existingNames = new Set<string>(displayStops.filter(o => o.id !== s.id).map(o => ((o.company._raw || o.company).naam || o.company.name || '').toLowerCase()));
+                const prevCoords = displayStops[i - 1]?.coords;
+                const nextCoords = displayStops[i + 1]?.coords;
+                const candidates = (prevCoords || nextCoords)
+                  ? scoreInsertionCandidates(allData, prevCoords ? { lat: prevCoords[0], lng: prevCoords[1] } : null, nextCoords ? { lat: nextCoords[0], lng: nextCoords[1] } : null, cityCoords as any, existingNames, 8, q).map(c => c.bedrijf)
+                  : q.length >= 2
+                    ? allData.filter((cand: any) => !existingNames.has((cand.naam || '').toLowerCase()) && [cand.naam, cand.stad].join(' ').toLowerCase().includes(q)).slice(0, 8)
+                    : [];
+                return (
+                  <div key={s.id} className="border border-[#009FE3] rounded-sm p-2 my-1 mx-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">Vervang "{raw.naam || s.company.name}"</span>
+                      <button onClick={() => { setReplacingStopId(null); setReplaceStopQuery(''); }} className="text-slate-400 hover:text-slate-700 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                    {!q && (prevCoords || nextCoords) && <p className="text-[10px] text-slate-400 mb-1">Beste tussenopties op deze plek in de route:</p>}
+                    <input autoFocus type="text" value={replaceStopQuery} onChange={e => setReplaceStopQuery(e.target.value)}
+                      placeholder="Of zoek zelf op naam/stad..."
+                      className="w-full border border-slate-200 rounded-sm px-2 py-1.5 text-xs focus:outline-none focus:border-[#009FE3] mb-1" />
+                    <div className="max-h-40 overflow-y-auto space-y-0.5">
+                      {candidates.map((cand: any, ci: number) => (
+                        <button key={ci} onClick={() => replaceStop(s.id, cand)}
+                          className="w-full text-left px-2 py-1.5 text-xs rounded-sm hover:bg-slate-50 border border-slate-100 flex flex-col">
+                          <span className="font-semibold text-slate-700">{cand.naam}</span>
+                          <span className="text-slate-400 text-[10px]">{[cand.straat, cand.stad].filter(Boolean).join(', ')}</span>
+                        </button>
+                      ))}
+                      {candidates.length === 0 && <p className="text-[10px] text-slate-400 py-1">Geen bedrijven gevonden.</p>}
+                    </div>
+                  </div>
+                );
+              }
+
+              if (!routeMode && insertAfterId === s.id) {
+                const q = insertQuery.toLowerCase().trim();
+                const existingNames = new Set<string>(displayStops.map(o => ((o.company._raw || o.company).naam || o.company.name || '').toLowerCase()));
+                const prevCoords = s.coords;
+                const nextCoords = displayStops[i + 1]?.coords;
+                const candidates = (prevCoords || nextCoords)
+                  ? scoreInsertionCandidates(allData, prevCoords ? { lat: prevCoords[0], lng: prevCoords[1] } : null, nextCoords ? { lat: nextCoords[0], lng: nextCoords[1] } : null, cityCoords as any, existingNames, 8, q).map(c => c.bedrijf)
+                  : q.length >= 2
+                    ? allData.filter((cand: any) => !existingNames.has((cand.naam || '').toLowerCase()) && [cand.naam, cand.stad].join(' ').toLowerCase().includes(q)).slice(0, 8)
+                    : [];
+                return (
+                  <div key={`insert-${s.id}`} className="border border-[#E85E26] rounded-sm p-2 my-1 mx-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">Nieuwe stop na "{raw.naam || s.company.name}"</span>
+                      <button onClick={() => { setInsertAfterId(null); setInsertQuery(''); }} className="text-slate-400 hover:text-slate-700 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                    {!q && (prevCoords || nextCoords) && <p className="text-[10px] text-slate-400 mb-1">Beste tussenopties op deze plek in de route:</p>}
+                    <input autoFocus type="text" value={insertQuery} onChange={e => setInsertQuery(e.target.value)}
+                      placeholder="Of zoek zelf op naam/stad..."
+                      className="w-full border border-slate-200 rounded-sm px-2 py-1.5 text-xs focus:outline-none focus:border-[#E85E26] mb-1" />
+                    <div className="max-h-40 overflow-y-auto space-y-0.5">
+                      {candidates.map((cand: any, ci: number) => (
+                        <button key={ci} onClick={() => insertStopAfter(s.id, cand)}
+                          className="w-full text-left px-2 py-1.5 text-xs rounded-sm hover:bg-slate-50 border border-slate-100 flex flex-col">
+                          <span className="font-semibold text-slate-700">{cand.naam}</span>
+                          <span className="text-slate-400 text-[10px]">{[cand.straat, cand.stad].filter(Boolean).join(', ')}</span>
+                        </button>
+                      ))}
+                      {candidates.length === 0 && <p className="text-[10px] text-slate-400 py-1">Geen bedrijven gevonden.</p>}
+                    </div>
+                  </div>
+                );
+              }
+
               return (
+                <React.Fragment key={s.id}>
                 <div
-                  key={s.id}
                   draggable
                   onDragStart={() => { dragIdx.current = i; }}
                   onDragOver={e => { e.preventDefault(); if (dragIdx.current !== null && dragIdx.current !== i) { reorderStops(dragIdx.current, i); dragIdx.current = i; } }}
                   onDragEnd={() => { dragIdx.current = null; }}
-                  className="flex items-center gap-1.5 text-xs py-1.5 px-2 rounded hover:bg-slate-50 group transition-colors cursor-grab active:cursor-grabbing">
+                  className="relative flex items-center gap-1.5 text-xs py-1.5 px-2 rounded hover:bg-slate-50 group transition-colors cursor-grab active:cursor-grabbing">
                   <GripVertical className="w-3 h-3 text-slate-300 flex-shrink-0 group-hover:text-slate-400" />
                   <span
                     className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
@@ -626,13 +943,28 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
                       <Search className="w-3 h-3" />
                     </a>
                     {!routeMode && (
-                      <button onClick={() => removeStop(s.id)}
-                        className="p-0.5 text-red-300 hover:text-red-600 flex-shrink-0 transition-colors">
-                        <Trash2 className="w-3 h-3" />
+                      <button onClick={e => { e.stopPropagation(); setStopMenuOpen(stopMenuOpen === s.id ? null : s.id); }}
+                        className="p-0.5 text-slate-300 hover:text-slate-600 flex-shrink-0 transition-colors" title="Opties">
+                        <X className="w-3 h-3" />
                       </button>
                     )}
                   </div>
+                  {stopMenuOpen === s.id && (
+                    <div className="absolute right-1 top-7 z-10 w-32 bg-white border border-slate-200 rounded-sm shadow-lg overflow-hidden" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => { removeStop(s.id); setStopMenuOpen(null); }} className="w-full text-left px-2.5 py-1.5 text-[11px] font-semibold text-red-500 hover:bg-red-50 flex items-center gap-1.5"><Trash2 className="w-3 h-3" />Verwijderen</button>
+                      <button onClick={() => { setReplacingStopId(s.id); setReplaceStopQuery(''); setStopMenuOpen(null); }} className="w-full text-left px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 flex items-center gap-1.5 border-t border-slate-100"><Repeat className="w-3 h-3" />Vervangen</button>
+                    </div>
+                  )}
                 </div>
+                {!routeMode && (
+                  <div className="flex justify-center -my-0.5">
+                    <button onClick={() => { setInsertAfterId(s.id); setInsertQuery(''); setStopMenuOpen(null); }}
+                      title="Stop invoegen op deze plek" className="opacity-40 hover:opacity-100 p-0.5 text-slate-300 hover:text-[#E85E26] transition-opacity">
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+                </React.Fragment>
               );
             })}
           </div>
@@ -813,6 +1145,64 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
           </div>
         </div>
       )}
+
+      {/* ── Teken gebied ── */}
+      <div className="flex-shrink-0 bg-white border-t border-slate-200 px-4 py-2.5">
+        {drawCenter ? (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs text-[#E85E26] font-semibold">
+              <span>Gebied getekend</span>
+              <button onClick={clearDrawArea} className="text-slate-400 hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1">Straal: {(drawRadiusM / 1000).toFixed(1)} km</p>
+              <input
+                type="range"
+                min={1}
+                max={200000}
+                step={500}
+                value={drawRadiusM}
+                onChange={e => {
+                  const r = Number(e.target.value);
+                  setDrawRadiusM(r);
+                  drawCircleRef.current?.setRadius(r);
+                }}
+                className="w-full accent-[#E85E26] h-1.5"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-1">
+              {([['mix','Mix'],['architect','Architecten'],['aannemer','Aannemers'],['bouwbedrijf','Bouwbedrijven']] as [BezoekType,string][]).map(([v,l]) => (
+                <button key={v} onClick={() => setDrawPlanType(v)}
+                  className={`py-1 text-[10px] font-bold rounded-sm border transition-colors ${drawPlanType === v ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'border-slate-200 text-slate-600 hover:border-[#E85E26]'}`}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-1">
+              {[5,10,20,50].map(n => (
+                <button key={n} onClick={() => setDrawPlanMax(n)}
+                  className={`flex-1 py-1 text-[10px] font-bold rounded-sm border transition-colors ${drawPlanMax === n ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'border-slate-200 text-slate-600 hover:border-[#009FE3]'}`}>
+                  {n}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => planBezoekInArea(drawCenter, drawRadiusM, drawPlanType, drawPlanMax)}
+              disabled={drawLoading}
+              className="w-full py-2 bg-[#E85E26] hover:bg-[#d14d1b] disabled:opacity-50 text-white text-xs font-bold rounded-sm flex items-center justify-center gap-1.5 transition-colors">
+              <MapPin className="w-3.5 h-3.5" />
+              {drawLoading ? 'Laden…' : `Laad ${drawPlanMax} bedrijven in route`}
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => { drawCenterRef.current = null; setDrawMode(true); }}
+            className={`w-full py-2 text-xs font-semibold rounded-sm flex items-center justify-center gap-1.5 transition-colors border ${drawMode ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'border-slate-300 text-slate-600 hover:border-[#E85E26] hover:text-[#E85E26]'}`}>
+            <MapPin className="w-3.5 h-3.5" />
+            {drawMode ? 'Klik op kaart voor middelpunt…' : 'Teken gebied'}
+          </button>
+        )}
+      </div>
 
       {/* ── Dagbezoek planner ── */}
       <div className="flex-shrink-0 bg-white border-t border-slate-200">
