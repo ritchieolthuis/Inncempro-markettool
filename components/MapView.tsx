@@ -710,7 +710,8 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
 
     // Score only companies within the drawn radius — small overfetch buffer for geocode misses
     const radiusKm = radiusM / 1000;
-    const scored = scoreBedrijven(allData, center.lat, center.lng, type, cityCoords as any, Math.ceil(max * 1.5), radiusKm);
+    const types: BezoekType[] = type === 'mix' ? [] : [type];
+    const scored = scoreBedrijven(allData, center.lat, center.lng, types, cityCoords as any, Math.ceil(max * 1.5), radiusKm);
 
     setProgDone(0);
     setProgTotal(max);
@@ -1222,7 +1223,7 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
                     <div>
                       <p className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1">Type bedrijf</p>
                       <div className="grid grid-cols-2 gap-1">
-                        {([['mix','Mix'], ['architect','Architecten'], ['aannemer','Aannemers'], ['bouwbedrijf','Bouwbedrijven']] as [BezoekType, string][]).map(([v, l]) => (
+                        {([['mix','Mix'], ['architecten','Architecten'], ['aannemers','Aannemers'], ['bouwbedrijven','Bouwbedrijven']] as [BezoekType, string][]).map(([v, l]) => (
                           <button key={v} onClick={() => setDrawPlanType(v)}
                             className={`py-1.5 text-[10px] font-bold rounded-sm border transition-colors ${drawPlanType === v ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'border-slate-200 text-slate-600 hover:border-[#009FE3] hover:text-[#009FE3]'}`}>
                             {l}
