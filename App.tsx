@@ -2130,21 +2130,50 @@ const App: React.FC = () => {
     const normNaam = (s: string) => (s || '').toLowerCase()
       .replace(/\b(b\.?v\.?|nv|vof|cv|stichting|bna)\b/g, '')
       .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+    // Same company is often scraped a second time with a marketing tagline bolted on
+    // ("&WA architecten" vs "&WA architecten - ontwerpen is luisteren") — strip anything
+    // after a dash/pipe separator before comparing base names.
+    const normNaamBase = (s: string) => normNaam((s || '').split(/\s[-–|]\s/)[0]);
+    const normStreet = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
     const normPc = (s: string) => (s || '').replace(/\s/g, '').toUpperCase().slice(0, 6);
 
-    const groups = new Map<string, any[]>();
-    for (const e of entries) {
+    // Union-Find: two entries belong to the same company if they share a postcode-based
+    // key OR a street+city-based key (catches postcode typos / tagline-decorated duplicates
+    // that a single exact key would miss).
+    const parent = entries.map((_, i) => i);
+    const find = (x: number): number => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+    const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+
+    const byPrimaryKey = new Map<string, number[]>();
+    const bySecondaryKey = new Map<string, number[]>();
+    entries.forEach((e, i) => {
       const nn = normNaam(e.naam);
       const pc = normPc(e.postcode);
-      // Key: normalised name + postcode (if available), else name + city
-      const key = pc ? `${nn}||${pc}` : `${nn}||${(e.stad || '').toLowerCase().trim()}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(e);
-    }
+      const pkey = pc ? `${nn}||${pc}` : `${nn}||${(e.stad || '').toLowerCase().trim()}`;
+      (byPrimaryKey.get(pkey) || byPrimaryKey.set(pkey, []).get(pkey)!).push(i);
+
+      const base = normNaamBase(e.naam);
+      const street = normStreet(e.straat);
+      const city = (e.stad || '').toLowerCase().trim();
+      if (base && street && city) {
+        const skey = `${base}||${street}||${city}`;
+        (bySecondaryKey.get(skey) || bySecondaryKey.set(skey, []).get(skey)!).push(i);
+      }
+    });
+    for (const idxs of byPrimaryKey.values()) for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
+    for (const idxs of bySecondaryKey.values()) for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
+
+    const groups = new Map<number, any[]>();
+    entries.forEach((e, i) => {
+      const root = find(i);
+      (groups.get(root) || groups.set(root, []).get(root)!).push(e);
+    });
 
     const best = (a: any, b: any, field: string) => a[field] || b[field];
     const merged: any[] = [];
     for (const group of groups.values()) {
+      // Prefer a properly-sourced entry's fields (naam, etc.) over an "Onbekend" duplicate
+      group.sort((a, b) => (a.source && a.source !== 'Onbekend' ? 0 : 1) - (b.source && b.source !== 'Onbekend' ? 0 : 1));
       if (group.length === 1) { merged.push(group[0]); continue; }
       const base = group.reduce((acc, cur) => ({
         ...acc,
