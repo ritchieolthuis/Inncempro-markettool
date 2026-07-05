@@ -2813,10 +2813,6 @@ const App: React.FC = () => {
 
             {viewMode === 'dashboard' && (() => {
               const total = activeData.length;
-              const withEmail = activeData.filter(b => b.email || b.email_sales || b.email_overig).length;
-              const withPhone = activeData.filter(b => b.telefoon || b.telefoon_sales || b.telefoon_admin).length;
-              const withWebsite = activeData.filter(b => b.website || b.url).length;
-              const newCount = activeData.filter(b => isNew(b)).length;
               const bySource: Record<string, number> = {};
               activeData.forEach(b => { const srcs: string[] = b._sources?.length ? b._sources : [b.source || 'Onbekend']; srcs.forEach(s => { bySource[s] = (bySource[s] || 0) + 1; }); });
               const byType: Record<string, number> = { Architecten: 0, Bouwbedrijven: 0, Aannemers: 0, Materialen: 0, Overig: 0 };
@@ -2844,26 +2840,64 @@ const App: React.FC = () => {
               const srcSorted = Object.entries(bySource).sort((a, b) => b[1] - a[1]);
               const maxSrc = srcSorted[0]?.[1] || 1;
               const typeColors: Record<string, string> = { Architecten: '#E85E26', Bouwbedrijven: '#009FE3', Aannemers: '#1B4F72', Materialen: '#16a34a', Overig: '#94a3b8' };
-              const statCard = (label: string, value: number | string, sub: string, color = '#009FE3') => (
-                <div className="bg-white border border-slate-200 rounded-sm p-5 flex flex-col gap-1">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</p>
-                  <p className="text-3xl font-black text-slate-900 font-condensed" style={{color}}>{typeof value === 'number' ? value.toLocaleString('nl-NL') : value}</p>
-                  <p className="text-xs text-slate-400">{sub}</p>
-                </div>
-              );
+              // Schematische tegelkaart van NL — kleurintensiteit = aantal bedrijven t.o.v. de drukste provincie
+              const NL_GRID: { naam: string; col: number; row: number; colSpan?: number; rowSpan?: number }[] = [
+                { naam: 'Friesland',     col: 2, row: 1 },
+                { naam: 'Groningen',     col: 3, row: 1 },
+                { naam: 'Noord-Holland', col: 1, row: 2 },
+                { naam: 'Drenthe',       col: 3, row: 2 },
+                { naam: 'Overijssel',    col: 4, row: 2 },
+                { naam: 'Flevoland',     col: 2, row: 3 },
+                { naam: 'Gelderland',    col: 3, row: 3, colSpan: 2, rowSpan: 2 },
+                { naam: 'Zuid-Holland',  col: 1, row: 4 },
+                { naam: 'Utrecht',       col: 2, row: 4 },
+                { naam: 'Zeeland',       col: 1, row: 5 },
+                { naam: 'Noord-Brabant', col: 2, row: 5, colSpan: 2 },
+                { naam: 'Limburg',       col: 4, row: 5 },
+              ];
+              const overigProv = provSorted.filter(([prov]) => !NL_GRID.some(g => g.naam === prov));
+              const goToProv = (prov: string) => { setSelectedRegions([prov]); setViewMode('database'); setDbPage(1); };
               return (
                 <div className="max-w-5xl mx-auto w-full space-y-8 pb-10">
                   <div>
                     <h2 className="text-2xl font-bold uppercase font-condensed tracking-tight text-slate-900 mb-1">Marktoverzicht</h2>
                     <p className="text-xs text-slate-400">Live statistieken over alle {total.toLocaleString('nl-NL')} bedrijven in de database</p>
                   </div>
-                  {/* Stat cards */}
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                    {statCard('Totaal', total, 'bedrijven in database', '#009FE3')}
-                    {statCard('Nieuw', newCount, `toegevoegd afgelopen ${NEW_BADGE_DAYS} dagen`, '#16a34a')}
-                    {statCard('Met e-mail', withEmail, `${Math.round(withEmail/total*100)}% heeft e-mailadres`, '#E85E26')}
-                    {statCard('Met telefoon', withPhone, `${Math.round(withPhone/total*100)}% heeft telefoonnummer`, '#1B4F72')}
-                    {statCard('Met website', withWebsite, `${Math.round(withWebsite/total*100)}% heeft website`, '#7c3aed')}
+                  {/* NL tegelkaart — dekking per provincie in één oogopslag */}
+                  <div className="bg-white border border-slate-200 rounded-sm p-5">
+                    <div className="flex items-baseline justify-between mb-4">
+                      <h3 className="text-xs font-black uppercase tracking-widest text-slate-600">Dekking op de kaart</h3>
+                      <p className="text-[10px] text-slate-400">Klik een provincie voor de bedrijven daarin</p>
+                    </div>
+                    <div className="grid gap-1.5 mx-auto max-w-md" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gridTemplateRows: 'repeat(6, 56px)' }}>
+                      {NL_GRID.map(({ naam, col, row, colSpan, rowSpan }) => {
+                        const cnt = byProv[naam] || 0;
+                        const intensity = cnt / maxProv; // 0..1
+                        const bg = `rgba(0, 159, 227, ${0.12 + intensity * 0.88})`;
+                        const light = intensity < 0.45;
+                        return (
+                          <button
+                            key={naam}
+                            onClick={() => goToProv(naam)}
+                            title={`${naam}: ${cnt.toLocaleString('nl-NL')} bedrijven`}
+                            style={{ gridColumn: `${col} / span ${colSpan || 1}`, gridRow: `${row} / span ${rowSpan || 1}`, backgroundColor: bg }}
+                            className="rounded-sm flex flex-col items-center justify-center gap-0.5 p-1 transition-transform hover:scale-[1.03] hover:z-10 hover:shadow-md"
+                          >
+                            <span className={`text-[9px] font-bold uppercase tracking-tight text-center leading-tight ${light ? 'text-slate-600' : 'text-white'}`}>{naam}</span>
+                            <span className={`text-sm font-black font-condensed ${light ? 'text-slate-900' : 'text-white'}`}>{cnt.toLocaleString('nl-NL')}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {overigProv.length > 0 && (
+                      <div className="flex flex-wrap justify-center gap-2 mt-3 pt-3 border-t border-slate-100">
+                        {overigProv.map(([prov, cnt]) => (
+                          <button key={prov} onClick={() => goToProv(prov)} className="text-[10px] text-slate-400 hover:text-[#009FE3] transition-colors">
+                            {prov}: <span className="font-bold">{cnt.toLocaleString('nl-NL')}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {/* Bron + Discipline naast elkaar */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
