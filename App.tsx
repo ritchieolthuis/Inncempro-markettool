@@ -2744,8 +2744,24 @@ const App: React.FC = () => {
               activeData.forEach(b => { const t = detectType(b); if (t === 'architect') byType.Architecten++; else if (t === 'bouwbedrijf') byType.Bouwbedrijven++; else if (t === 'aannemer') byType.Aannemers++; else if (t === 'materialen') byType.Materialen++; else byType.Overig++; });
               const byProv: Record<string, number> = {};
               activeData.forEach(b => { if (b.provincie) byProv[b.provincie] = (byProv[b.provincie] || 0) + 1; });
-              const provSorted = Object.entries(byProv).sort((a, b) => b[1] - a[1]).slice(0, 12);
+              const provSorted = Object.entries(byProv).sort((a, b) => b[1] - a[1]);
               const maxProv = provSorted[0]?.[1] || 1;
+              // Plaatsen (steden + dorpen) per provincie, voor het "Bedrijven per plaats" overzicht
+              const byProvPlace: Record<string, Record<string, number>> = {};
+              activeData.forEach(b => {
+                const stad = (b.stad || '').trim();
+                if (!stad) return;
+                const prov = b.provincie || 'Onbekend';
+                if (!byProvPlace[prov]) byProvPlace[prov] = {};
+                byProvPlace[prov][stad] = (byProvPlace[prov][stad] || 0) + 1;
+              });
+              const provPlaceSorted = Object.entries(byProvPlace)
+                .map(([prov, places]) => ({
+                  prov,
+                  places: Object.entries(places).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'nl')),
+                  total: Object.values(places).reduce((s, c) => s + c, 0),
+                }))
+                .sort((a, b) => b.total - a.total);
               const srcSorted = Object.entries(bySource).sort((a, b) => b[1] - a[1]);
               const maxSrc = srcSorted[0]?.[1] || 1;
               const typeColors: Record<string, string> = { Architecten: '#E85E26', Bouwbedrijven: '#009FE3', Aannemers: '#1B4F72', Materialen: '#16a34a', Overig: '#94a3b8' };
@@ -2821,6 +2837,36 @@ const App: React.FC = () => {
                             <div className="h-full bg-[#009FE3] rounded-full transition-all" style={{width: `${cnt/maxProv*100}%`}}></div>
                           </div>
                         </div>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Plaatsen (steden + dorpen) overzicht, per provincie */}
+                  <div className="bg-white border border-slate-200 rounded-sm p-5">
+                    <h3 className="text-xs font-black uppercase tracking-widest text-slate-600 mb-1">Bedrijven per plaats</h3>
+                    <p className="text-[10px] text-slate-400 mb-4">Klik op een provincie voor alle steden en dorpen daarin. Klik op een plaats om er direct op te filteren in de database.</p>
+                    <div className="space-y-2">
+                      {provPlaceSorted.map(({ prov, places, total: provTotal }) => (
+                        <details key={prov} className="border border-slate-100 rounded-sm">
+                          <summary className="flex items-center justify-between px-3 py-2.5 cursor-pointer select-none hover:bg-slate-50 list-none">
+                            <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedRegions([prov]); setViewMode('database'); setDbPage(1); }}
+                              className="text-xs font-bold text-slate-700 hover:text-[#009FE3] transition-colors"
+                            >{prov}</button>
+                            <span className="text-[10px] text-slate-400 font-medium">{places.length.toLocaleString('nl-NL')} plaatsen · {provTotal.toLocaleString('nl-NL')} bedrijven</span>
+                          </summary>
+                          <div className="px-3 pb-3 pt-1 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 max-h-72 overflow-y-auto border-t border-slate-100">
+                            {places.map(([place, cnt]) => (
+                              <button
+                                key={place}
+                                onClick={() => { setSelectedRegions([place]); setViewMode('database'); setDbPage(1); }}
+                                className="flex items-center justify-between gap-2 text-left text-xs py-1 text-slate-600 hover:text-[#009FE3] transition-colors"
+                              >
+                                <span className="truncate">{place}</span>
+                                <span className="text-slate-300 flex-shrink-0">{cnt.toLocaleString('nl-NL')}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </details>
                       ))}
                     </div>
                   </div>
