@@ -3656,55 +3656,57 @@ const App: React.FC = () => {
             })()}
 
             {viewMode === 'map' && (
-                <MapView
-                  allData={activeData}
-                  favorites={favorites}
-                  selectedItems={Array.from(selectedRaws.values())}
-                  selectedIds={selectedIds}
-                  selectedCompany={selectedCompany}
-                  onToggleSelect={(naam, raw) => { setSelectedIds(prev => { const next = new Set(prev); next.has(naam) ? next.delete(naam) : next.add(naam); return next; }); setSelectedRaws(prev => { const next = new Map(prev); next.has(naam) ? next.delete(naam) : next.set(naam, raw); return next; }); }}
-                  onClearSelection={clearSelection}
-                  onNavigate={(target, naam) => {
-                    if (target === 'database') {
-                      setDbSearch(naam);
-                      setDbPage(1);
-                      setViewMode('database');
-                    } else {
-                      setCity(naam);
-                      executeSearch(undefined, undefined, naam);
-                    }
-                  }}
-                  onAddressCorrection={handleAddressCorrection}
-                  onDeleteEntry={handleDeleteEntry}
-                  onMarkerCountChange={setMapMarkerCount}
-                />
+                <div className="w-full flex flex-col">
+                  <MapView
+                    allData={activeData}
+                    favorites={favorites}
+                    selectedItems={Array.from(selectedRaws.values())}
+                    selectedIds={selectedIds}
+                    selectedCompany={selectedCompany}
+                    onToggleSelect={(naam, raw) => { setSelectedIds(prev => { const next = new Set(prev); next.has(naam) ? next.delete(naam) : next.add(naam); return next; }); setSelectedRaws(prev => { const next = new Map(prev); next.has(naam) ? next.delete(naam) : next.set(naam, raw); return next; }); }}
+                    onClearSelection={clearSelection}
+                    onNavigate={(target, naam) => {
+                      if (target === 'database') {
+                        setDbSearch(naam);
+                        setDbPage(1);
+                        setViewMode('database');
+                      } else {
+                        setCity(naam);
+                        executeSearch(undefined, undefined, naam);
+                      }
+                    }}
+                    onAddressCorrection={handleAddressCorrection}
+                    onDeleteEntry={handleDeleteEntry}
+                    onMarkerCountChange={setMapMarkerCount}
+                  />
 
-                {/* Routes onder kaart */}
-                {savedRoutes.length > 0 && (
-                  <div className="mt-8 max-w-6xl mx-auto">
-                    <h3 className="text-lg font-bold text-slate-900 mb-3">Opgeslagen Routes ({savedRoutes.length})</h3>
-                    <div className="grid gap-3">
-                      {savedRoutes.map((route: any) => (
-                        <div key={route.id} className="bg-white border border-slate-200 rounded-sm p-4">
-                          <div className="flex items-start justify-between mb-2">
-                            <div>
-                              <h4 className="font-bold text-slate-900">{route.name}</h4>
-                              <p className="text-xs text-slate-500">{new Date(route.createdAt).toLocaleString('nl-NL')} • {route.bedrijven.length} bedrijven</p>
+                  {/* Routes onder kaart */}
+                  {savedRoutes.length > 0 && (
+                    <div className="mt-8 max-w-6xl mx-auto w-full">
+                      <h3 className="text-lg font-bold text-slate-900 mb-3 px-4">Opgeslagen Routes ({savedRoutes.length})</h3>
+                      <div className="grid gap-3 px-4">
+                        {savedRoutes.map((route: any) => (
+                          <div key={route.id} className="bg-white border border-slate-200 rounded-sm p-4">
+                            <div className="flex items-start justify-between mb-2">
+                              <div>
+                                <h4 className="font-bold text-slate-900">{route.name}</h4>
+                                <p className="text-xs text-slate-500">{new Date(route.createdAt).toLocaleString('nl-NL')} • {route.bedrijven.length} bedrijven</p>
+                              </div>
+                              <button onClick={() => { setSavedRoutes(savedRoutes.filter((r: any) => r.id !== route.id)); localStorage.setItem('inncempro_saved_routes', JSON.stringify(savedRoutes.filter((r: any) => r.id !== route.id))); }} className="text-slate-400 hover:text-red-500">
+                                <Trash2 className="w-4 h-4" />
+                              </button>
                             </div>
-                            <button onClick={() => { setSavedRoutes(savedRoutes.filter((r: any) => r.id !== route.id)); localStorage.setItem('inncempro_saved_routes', JSON.stringify(savedRoutes.filter((r: any) => r.id !== route.id))); }} className="text-slate-400 hover:text-red-500">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              {route.bedrijven.map((b: any, i: number) => (
+                                <span key={i} className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded-sm">{i+1}. {b.naam}</span>
+                              ))}
+                            </div>
                           </div>
-                          <div className="flex flex-wrap gap-2 mt-2">
-                            {route.bedrijven.map((b: any, i: number) => (
-                              <span key={i} className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded-sm">{i+1}. {b.naam}</span>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
             )}
 
             {viewMode === 'favorites' && favorites.length === 0 && (
