@@ -1670,6 +1670,7 @@ const App: React.FC = () => {
   // SEARCH STATES
   const [city, setCity] = useState('');
   const [radiusKm, setRadiusKm] = useState<number | null>(null);
+  const [advancedSearch, setAdvancedSearch] = useState(false);
   const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [selectedWerksoort, setSelectedWerksoort] = useState<string[]>([]);
@@ -2018,6 +2019,13 @@ const App: React.FC = () => {
       // en mag hij de resultaten niet óók nog eens dichttimmeren als naam/stad-tekstfilter.
       const queryIsRadiusOrigin = !!(activeRadiusKm && radiusCenter);
 
+      // Geavanceerd zoeken: alleen actief als de toggle aan staat én de query echt
+      // AND/OR/NOT-operatoren of aanhalingstekens bevat (anders gewoon normaal zoeken).
+      const useAdvancedQuery = advancedSearch && !!q && !queryIsRadiusOrigin && /(\band\b|\bor\b|\bnot\b|")/i.test(q);
+      const advancedMatchKeys = useAdvancedQuery
+        ? new Set(parseAdvancedQuery(q, activeData).map(advancedQueryKey))
+        : null;
+
       const PROVINCES = ['Drenthe','Flevoland','Friesland','Gelderland','Groningen','Limburg','Noord-Brabant','Noord-Holland','Overijssel','Utrecht','Zeeland','Zuid-Holland'];
 
       const TYPE_PRIORITY: Record<string, number> = { architect: 0, bouwbedrijf: 1, aannemer: 2, overig: 3 };
@@ -2117,6 +2125,10 @@ const App: React.FC = () => {
               if (!match) return false;
           }
 
+          // Geavanceerd zoeken (AND/OR/NOT) overschrijft de normale tekstfilter volledig.
+          if (useAdvancedQuery) {
+              if (!advancedMatchKeys!.has(advancedQueryKey(b))) return false;
+          } else
           // Tekst filtert altijd op bedrijfsnaam/velden.
           // Radius is een extra afstandsfilter bovenop de tekstfilter.
           // Als de tekst een bekende stad is én radius actief, werkt het als locatiezoeken.
@@ -2263,13 +2275,13 @@ const App: React.FC = () => {
     setReplaceQuery('');
   };
 
-  // Live zoeken: debounce 350ms op city- of straal-wijziging
+  // Live zoeken: debounce 350ms op city-, straal- of geavanceerd-zoeken-wijziging
   useEffect(() => {
     if (!didMountRef.current) { didMountRef.current = true; return; }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => { executeSearch(); }, 350);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [city, radiusKm]);
+  }, [city, radiusKm, advancedSearch]);
 
   const handleManualSearch = (e?: React.FormEvent) => {
       if (e) e.preventDefault();
@@ -3229,6 +3241,21 @@ const App: React.FC = () => {
                          Zoek bedrijven binnen <strong>{radiusKm} km</strong> van de ingevoerde locatie
                        </span>
                      </>
+                   )}
+                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex-shrink-0 ml-2">Geavanceerd:</span>
+                   <label className="flex items-center gap-1.5 flex-shrink-0">
+                     <input
+                       type="checkbox"
+                       checked={advancedSearch}
+                       onChange={e => setAdvancedSearch(e.target.checked)}
+                       className="w-3.5 h-3.5 accent-[#009FE3]"
+                     />
+                     <span className="text-[10px] text-slate-500">Aan</span>
+                   </label>
+                   {advancedSearch && (
+                     <span className="text-[10px] text-slate-400">
+                       Gebruik <code className="bg-slate-100 px-1 rounded">AND</code> / <code className="bg-slate-100 px-1 rounded">OR</code> / <code className="bg-slate-100 px-1 rounded">NOT</code> en <code className="bg-slate-100 px-1 rounded">"exacte term"</code> in het zoekveld
+                     </span>
                    )}
                  </div>
                  {/* Zoekgeschiedenis */}
@@ -4468,35 +4495,44 @@ const CollapsibleFilterGroup: React.FC<any> = ({ title, items, selectedItems, on
 export default App;
 
 // ADVANCED SEARCH PARSER
+const advancedQueryKey = (b: any) => `${b.naam || ''}||${b.straat || ''}||${b.stad || ''}`;
+
 const parseAdvancedQuery = (query: string, bedrijven: any[]) => {
   if (!query.trim()) return bedrijven;
-  
+
   const tokens = query.toLowerCase().match(/(".*?"|[^\s]+)/g) || [];
   let results = [...bedrijven];
   let currentOp = 'AND';
-  
+  let firstTerm = true;
+
   tokens.forEach((token) => {
     const isPhrase = token.startsWith('"');
     const searchTerm = isPhrase ? token.slice(1, -1) : token;
-    const isNot = searchTerm === 'not' || searchTerm === '-';
-    
-    let matches = bedrijven.filter(b => {
-      const searchStr = [b.naam, b.stad, b.straat, b.postcode, b.email, b.telefoon, b.spec1, b.spec2, b.spec3, b.website, b.bron].join(' ').toLowerCase();
+    const isNot = !isPhrase && (searchTerm === 'not' || searchTerm === '-');
+
+    if (isNot) { currentOp = 'NOT'; return; }
+    if (!isPhrase && searchTerm === 'or') { currentOp = 'OR'; return; }
+    if (!isPhrase && searchTerm === 'and') { currentOp = 'AND'; return; }
+
+    const matches = bedrijven.filter(b => {
+      const searchStr = [b.naam, b.stad, b.straat, b.postcode, b.email, b.telefoon, b.spec1, b.spec2, b.spec3, b.website, b.source].join(' ').toLowerCase();
       return searchStr.includes(searchTerm);
     });
-    
-    if (isNot) {
-      currentOp = 'NOT';
-    } else if (searchTerm === 'or') {
-      currentOp = 'OR';
-    } else if (searchTerm === 'and') {
-      currentOp = 'AND';
-    } else {
-      if (currentOp === 'AND') results = results.filter(b => matches.some(m => m.id === b.id));
-      else if (currentOp === 'OR') results = [...results, ...matches.filter(m => !results.some(r => r.id === m.id))];
-      else if (currentOp === 'NOT') results = results.filter(b => !matches.some(m => m.id === b.id));
-      currentOp = 'AND';
+    const matchKeys = new Set(matches.map(advancedQueryKey));
+
+    if (firstTerm) {
+      // Eerste term bepaalt de startset (ongeacht een eventueel voorloop-operator).
+      results = matches;
+    } else if (currentOp === 'AND') {
+      results = results.filter(b => matchKeys.has(advancedQueryKey(b)));
+    } else if (currentOp === 'OR') {
+      const resultKeys = new Set(results.map(advancedQueryKey));
+      results = [...results, ...matches.filter(m => !resultKeys.has(advancedQueryKey(m)))];
+    } else if (currentOp === 'NOT') {
+      results = results.filter(b => !matchKeys.has(advancedQueryKey(b)));
     }
+    currentOp = 'AND';
+    firstTerm = false;
   });
   
   return results;
