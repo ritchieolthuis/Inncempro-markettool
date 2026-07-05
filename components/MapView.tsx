@@ -35,10 +35,18 @@ const SRC_COLOR: Record<string, string> = {
 const ALL_SOURCES = ['Bouwgarant', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Handmatig', 'Onbekend'];
 
 // ─── Vestigingen (branch locations van hetzelfde bedrijf) ─────────────────────
+// Bronnen die zelf één landelijke keten zijn (elke entry is een vestiging van dezelfde
+// onderneming) — de brand-naam alleen volstaat niet altijd (bv. "Stiho Amsterdam Amstel",
+// "PontMeyer Rotterdam Noord" hebben een extra locatie-detail na de stad), dus voor deze
+// bronnen groeperen we simpelweg op bron in plaats van op naam.
+const VESTIGING_CHAIN_SOURCES = new Set(['stiho', 'jongeneel', 'pontmeyer', 'van wijnen']);
+
 // Herleidt de "kernnaam" van een bedrijf door rechtsvorm-suffixen en, als de
 // naam eindigt op de eigen plaatsnaam (bv. "INBO Amsterdam"), ook die plaats
 // te strippen — zo groeperen "INBO Amsterdam" en "INBO Rotterdam" onder "inbo".
-function coreCompanyName(naam: string, stad: string): string {
+function coreCompanyName(naam: string, stad: string, source?: string): string {
+  const src = (source || '').toLowerCase().trim();
+  if (VESTIGING_CHAIN_SOURCES.has(src)) return `keten:${src}`;
   let n = (naam || '').toLowerCase()
     .replace(/\b(b\.?v\.?|nv|vof|cv|stichting|bna)\b/g, '')
     .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
@@ -62,7 +70,7 @@ function addrKey(b: any): string {
 // Zoekt andere vestigingen (andere adressen) van hetzelfde bedrijf op via een
 // vooraf gebouwde index (coreCompanyName -> alle bedrijven met die kernnaam).
 function getVestigingen(entry: any, coreIndex: Map<string, any[]>): any[] {
-  const core = coreCompanyName(entry.naam, entry.stad);
+  const core = coreCompanyName(entry.naam, entry.stad, entry.source);
   if (!core || core.length < 3) return [];
   const group = coreIndex.get(core);
   if (!group || group.length < 2) return [];
@@ -614,7 +622,7 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
   const coreIndex = useMemo(() => {
     const idx = new Map<string, any[]>();
     for (const b of allData) {
-      const core = coreCompanyName(b.naam, b.stad);
+      const core = coreCompanyName(b.naam, b.stad, b.source);
       if (!core || core.length < 3) continue;
       if (!idx.has(core)) idx.set(core, []);
       idx.get(core)!.push(b);

@@ -1221,10 +1221,18 @@ const visibleSources = (b: any): string[] => {
   return real.length ? real : all;
 };
 
+// Bronnen die zelf één landelijke keten zijn (elke entry is een vestiging van dezelfde
+// onderneming) — hier volstaat de brand-naam soms niet (bv. "Stiho Amsterdam Amstel",
+// "PontMeyer Rotterdam Noord" hebben een extra locatie-detail na de stad), dus voor deze
+// bronnen groeperen we simpelweg op bron in plaats van op naam.
+const VESTIGING_CHAIN_SOURCES = new Set(['stiho', 'jongeneel', 'pontmeyer', 'van wijnen']);
+
 // Kernnaam voor het groeperen van vestigingen (zelfde logica als in MapView.tsx): strip
 // rechtsvorm-suffixen en, als de naam eindigt op de eigen plaatsnaam ("INBO Rotterdam"),
 // ook die plaats — zo groeperen "INBO Rotterdam" en "INBO Eindhoven" onder de kern "inbo".
-const vestigingCoreNaam = (naam: string, stad: string): string => {
+const vestigingCoreNaam = (naam: string, stad: string, source?: string): string => {
+  const src = (source || '').toLowerCase().trim();
+  if (VESTIGING_CHAIN_SOURCES.has(src)) return `keten:${src}`;
   let n = (naam || '').toLowerCase()
     .replace(/\b(b\.?v\.?|nv|vof|cv|stichting|bna)\b/g, '')
     .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
@@ -1238,13 +1246,13 @@ const vestigingCoreNaam = (naam: string, stad: string): string => {
 const vestigingAddrKey = (b: any): string => `${(b.straat || '').toLowerCase().trim()}|${(b.postcode || '').toLowerCase().replace(/\s/g, '')}`;
 // Andere adressen van hetzelfde bedrijf (andere vestigingen), voor het bedrijfsprofiel-paneel.
 const getAndereVestigingen = (b: any, allData: any[]): any[] => {
-  const core = vestigingCoreNaam(b.naam, b.stad);
+  const core = vestigingCoreNaam(b.naam, b.stad, b.source);
   if (!core || core.length < 3) return [];
   const seen = new Set<string>([vestigingAddrKey(b)]);
   const out: any[] = [];
   for (const other of allData) {
     if (other === b) continue;
-    if (vestigingCoreNaam(other.naam, other.stad) !== core) continue;
+    if (vestigingCoreNaam(other.naam, other.stad, other.source) !== core) continue;
     const k = vestigingAddrKey(other);
     if (seen.has(k)) continue;
     seen.add(k);
