@@ -32,7 +32,7 @@ const SRC_COLOR: Record<string, string> = {
   'Mijn Adressen':      '#7C3AED',
   'Geselecteerde items': '#E85E26',
 };
-const ALL_SOURCES = ['Bouwgarant', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Handmatig', 'Onbekend'];
+const ALL_SOURCES = ['Bouwgarant', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Onbekend'];
 
 // ─── Vestigingen (branch locations van hetzelfde bedrijf) ─────────────────────
 // Bronnen die zelf één landelijke keten zijn (elke entry is een vestiging van dezelfde

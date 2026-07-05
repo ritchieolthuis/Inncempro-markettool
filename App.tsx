@@ -1409,7 +1409,18 @@ const App: React.FC = () => {
   const [editDraft, setEditDraft] = useState<Record<string, string>>({});
   const MANUAL_EDITS_KEY = 'inncempro_manual_edits';
   const [manualEdits, setManualEdits] = useState<Record<string, Record<string, string>>>(() => {
-    try { return JSON.parse(localStorage.getItem('inncempro_manual_edits') || '{}'); } catch { return {}; }
+    try {
+      const raw = JSON.parse(localStorage.getItem('inncempro_manual_edits') || '{}');
+      // Migratie: eventuele bewerkte source="Handmatig" hernoemen naar "Onbekend"
+      let migrated = false;
+      Object.keys(raw).forEach(naam => {
+        const e = raw[naam];
+        if (e?.source === 'Handmatig') { e.source = 'Onbekend'; migrated = true; }
+        if (e?.bron === 'Handmatig')   { e.bron   = 'Onbekend'; migrated = true; }
+      });
+      if (migrated) localStorage.setItem('inncempro_manual_edits', JSON.stringify(raw));
+      return raw;
+    } catch { return {}; }
   });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set()); // key = b.naam (stabiel over alle tabs)
   const [selectedRaws, setSelectedRaws] = useState<Map<string, any>>(new Map()); // naam → raw bedrijfsdata
@@ -1428,7 +1439,21 @@ const App: React.FC = () => {
 
   const CUSTOM_ENTRIES_KEY = 'inncempro_custom_entries';
   const [customEntries, setCustomEntries] = useState<any[]>(() => {
-    try { return JSON.parse(localStorage.getItem('inncempro_custom_entries') || '[]'); } catch { return []; }
+    try {
+      const raw = JSON.parse(localStorage.getItem('inncempro_custom_entries') || '[]');
+      // Migratie: oudere versies zetten default source="Handmatig". Handmatig is geen echte
+      // bron — normaliseer stille naar "Onbekend" bij het laden, zodat filters/badges kloppen.
+      let migrated = false;
+      const cleaned = raw.map((e: any) => {
+        if (e && (e.source === 'Handmatig' || e.bron === 'Handmatig')) {
+          migrated = true;
+          return { ...e, source: e.source === 'Handmatig' ? 'Onbekend' : e.source, bron: e.bron === 'Handmatig' ? 'Onbekend' : e.bron };
+        }
+        return e;
+      });
+      if (migrated) localStorage.setItem('inncempro_custom_entries', JSON.stringify(cleaned));
+      return cleaned;
+    } catch { return []; }
   });
   const [showAddModal, setShowAddModal] = useState(false);
   const [addTab, setAddTab] = useState<'single' | 'bulk'>('single');
@@ -2554,9 +2579,24 @@ const App: React.FC = () => {
     return merged;
   };
 
+  // Bedrijven buiten Nederland (Caribisch deel, België, etc.) horen niet in deze tool
+  // — filter ze hier één keer weg, zodat álle downstream views (filters, kaarten,
+  // dashboard, marktoverzicht) automatisch NL-only zijn zonder aparte checks.
+  const isNederlandBedrijf = (b: any) => {
+    const stad = (b.stad || '').toLowerCase().trim();
+    const prov = (b.provincie || '').toLowerCase().trim();
+    if (prov === 'belgië' || prov === 'belgie' || prov === 'belgium') return false;
+    if (['willemstad','kralendijk','oranjestad','philipsburg','the bottom','sint-eustatius','saba'].includes(stad)) return false;
+    return true;
+  };
+
   const activeData = React.useMemo(
     () => {
-      const filtered = (bouwgarantData as any[]).filter(b => !deletedEntries.has(deleteKey(b.naam, b.straat)) && !deletedEntries.has(b.naam));
+      const filtered = (bouwgarantData as any[]).filter(b =>
+        isNederlandBedrijf(b) &&
+        !deletedEntries.has(deleteKey(b.naam, b.straat)) &&
+        !deletedEntries.has(b.naam)
+      );
       return mergeEntries(filtered);
     },
     // Every action that mutates the underlying bouwgarantData array in place (add, address
@@ -3253,8 +3293,8 @@ const App: React.FC = () => {
                      <span className="text-[10px] text-slate-500">Aan</span>
                    </label>
                    {advancedSearch && (
-                     <span className="text-[10px] text-slate-400">
-                       Gebruik <code className="bg-slate-100 px-1 rounded">AND</code> / <code className="bg-slate-100 px-1 rounded">OR</code> / <code className="bg-slate-100 px-1 rounded">NOT</code> en <code className="bg-slate-100 px-1 rounded">"exacte term"</code> in het zoekveld
+                     <span className="text-[10px] text-slate-400 basis-full sm:basis-auto">
+                       Bijv: <code className="bg-slate-100 px-1 rounded">architect OR bouwbedrijf</code>, <code className="bg-slate-100 px-1 rounded">rotterdam NOT bv</code>, <code className="bg-slate-100 px-1 rounded">"van der"</code>. AND vereist beide termen, OR één van beide, NOT sluit uit.
                      </span>
                    )}
                  </div>
@@ -4537,18 +4577,27 @@ const parseAdvancedQuery = (query: string, bedrijven: any[]) => {
   if (!query.trim()) return bedrijven;
 
   const tokens = query.toLowerCase().match(/(".*?"|[^\s]+)/g) || [];
-  let results = [...bedrijven];
-  let currentOp = 'AND';
+  let results: any[] = [];
+  let currentOp: 'AND' | 'OR' | 'NOT' = 'AND';
   let firstTerm = true;
+
+  const OP_TOKENS = new Set(['and', 'or', 'not', '-']);
+  // Tel echte zoektermen (niet AND/OR/NOT) — hiermee weten we of de gebruiker
+  // eigenlijk niks concreets typte behalve operatoren.
+  const contentTokenCount = tokens.filter(t => {
+    const term = t.startsWith('"') ? t.slice(1, -1) : t;
+    return !OP_TOKENS.has(term) && term.length > 0;
+  }).length;
+  if (contentTokenCount === 0) return bedrijven;
 
   tokens.forEach((token) => {
     const isPhrase = token.startsWith('"');
     const searchTerm = isPhrase ? token.slice(1, -1) : token;
-    const isNot = !isPhrase && (searchTerm === 'not' || searchTerm === '-');
 
-    if (isNot) { currentOp = 'NOT'; return; }
-    if (!isPhrase && searchTerm === 'or') { currentOp = 'OR'; return; }
+    if (!isPhrase && (searchTerm === 'not' || searchTerm === '-')) { currentOp = 'NOT'; return; }
+    if (!isPhrase && searchTerm === 'or')  { currentOp = 'OR';  return; }
     if (!isPhrase && searchTerm === 'and') { currentOp = 'AND'; return; }
+    if (!searchTerm) return;
 
     const matches = bedrijven.filter(b => {
       const searchStr = [b.naam, b.stad, b.straat, b.postcode, b.email, b.telefoon, b.spec1, b.spec2, b.spec3, b.website, b.source].join(' ').toLowerCase();
@@ -4557,8 +4606,12 @@ const parseAdvancedQuery = (query: string, bedrijven: any[]) => {
     const matchKeys = new Set(matches.map(advancedQueryKey));
 
     if (firstTerm) {
-      // Eerste term bepaalt de startset (ongeacht een eventueel voorloop-operator).
-      results = matches;
+      // Eerste term: als er een leidende NOT stond ("NOT BV") starten we vanuit
+      // de volledige set en trekken we de match eraf; anders is de match zelf de startset.
+      results = currentOp === 'NOT'
+        ? bedrijven.filter(b => !matchKeys.has(advancedQueryKey(b)))
+        : matches;
+      firstTerm = false;
     } else if (currentOp === 'AND') {
       results = results.filter(b => matchKeys.has(advancedQueryKey(b)));
     } else if (currentOp === 'OR') {
@@ -4568,8 +4621,7 @@ const parseAdvancedQuery = (query: string, bedrijven: any[]) => {
       results = results.filter(b => !matchKeys.has(advancedQueryKey(b)));
     }
     currentOp = 'AND';
-    firstTerm = false;
   });
-  
+
   return results;
 };
