@@ -60,6 +60,35 @@ function canonicalStad(raw: string): string {
 }
 (bouwgarantData as any[]).forEach((b: any) => { if (b.stad) b.stad = canonicalStad(b.stad); });
 
+// Provincie ontbreekt bij een deel van de bedrijven, terwijl bekende plaatsen (Amsterdam,
+// Rotterdam, Utrecht, ...) al bij tientallen andere bedrijven wél een provincie hebben.
+// Vul de ontbrekende provincie in op basis van de meest voorkomende provincie voor die plaats,
+// zodat ze niet langer nutteloos onder "Onbekend" belanden.
+const stadProvincieMap = new Map<string, string>();
+(() => {
+  const counts = new Map<string, Map<string, number>>();
+  (bouwgarantData as any[]).forEach((b: any) => {
+    const stad = (b.stad || '').trim();
+    const prov = (b.provincie || '').trim();
+    if (!stad || !prov) return;
+    const key = stad.toLowerCase();
+    if (!counts.has(key)) counts.set(key, new Map());
+    const m = counts.get(key)!;
+    m.set(prov, (m.get(prov) || 0) + 1);
+  });
+  counts.forEach((provCounts, key) => {
+    let best = ''; let bestCount = -1;
+    provCounts.forEach((cnt, prov) => { if (cnt > bestCount) { best = prov; bestCount = cnt; } });
+    if (best) stadProvincieMap.set(key, best);
+  });
+})();
+(bouwgarantData as any[]).forEach((b: any) => {
+  if (!b.provincie && b.stad) {
+    const fallback = stadProvincieMap.get(b.stad.trim().toLowerCase());
+    if (fallback) b.provincie = fallback;
+  }
+});
+
 const DUTCH_LOCATIONS = [
     "Heel Nederland",
     "Drenthe", "Flevoland", "Friesland", "Gelderland", "Groningen", "Limburg", "Noord-Brabant", "Noord-Holland", "Overijssel", "Utrecht", "Zeeland", "Zuid-Holland",
