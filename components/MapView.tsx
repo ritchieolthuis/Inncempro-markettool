@@ -362,6 +362,14 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
   const mapRef  = useRef<L.Map | null>(null);
   const abortRef = useRef(false);
 
+  // Responsive: collapse the split-screen (sidebar + map) into a stacked layout on mobile
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   // Draggable split between sidebar and map
   const [sidebarWidth, setSidebarWidth] = useState(420); // px
   const splitContainerRef = useRef<HTMLDivElement>(null);
@@ -1074,10 +1082,12 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
-    <div ref={splitContainerRef} className="flex h-[calc(100vh-220px)] min-h-[520px]">
+    <div ref={splitContainerRef} className="flex flex-col md:flex-row h-auto md:h-[calc(100dvh-220px)] min-h-0 md:min-h-[520px]">
 
       {/* ── Sidebar ── */}
-      <div style={{ width: sidebarWidth, minWidth: 180, maxWidth: 520 }} className="flex-shrink-0 flex flex-col gap-3 overflow-y-auto pb-4 pr-1">
+      <div
+        style={isMobile ? undefined : { width: sidebarWidth, minWidth: 180, maxWidth: 520 }}
+        className="flex-shrink-0 flex flex-col gap-3 overflow-y-auto pb-4 pr-1 w-full max-h-[42vh] md:max-h-none md:w-auto">
 
         {/* Zoeken & Selectie */}
         <div className="bg-white rounded-sm border border-slate-200 p-4 space-y-3">
@@ -1575,16 +1585,16 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
 
       </div>
 
-      {/* ── Drag handle ── */}
+      {/* ── Drag handle (desktop only — mobile stacks sidebar above map) ── */}
       <div
         onMouseDown={startMapDrag}
-        className="w-1.5 flex-shrink-0 mx-1 cursor-col-resize hover:bg-[#009FE3]/40 bg-slate-200 rounded-full transition-colors"
+        className="hidden md:block w-1.5 flex-shrink-0 mx-1 cursor-col-resize hover:bg-[#009FE3]/40 bg-slate-200 rounded-full transition-colors"
         title="Slepen om formaat aan te passen"
       />
 
       {/* ── Map + route list ── */}
       <div className="flex-1 flex flex-col gap-3 min-w-0">
-        <div className="flex-1 rounded-sm border border-slate-200 overflow-hidden relative min-h-[300px]">
+        <div className="flex-1 rounded-sm border border-slate-200 overflow-hidden relative min-h-[420px] md:min-h-[300px]">
           <div ref={mapDiv} className="w-full h-full" />
           {drawMode && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] pointer-events-none">

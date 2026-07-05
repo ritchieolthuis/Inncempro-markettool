@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => {
     return {
       base: '/Inncempro-markettool/',
       server: {
-        port: parseInt(process.env.PORT || '3000'),
+        port: parseInt(process.env.PORT || '5173'),
         host: '0.0.0.0',
       },
       plugins: [react()],

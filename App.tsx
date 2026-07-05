@@ -3105,7 +3105,7 @@ const App: React.FC = () => {
                 )}
                 {/* Right: RouteMapPanel */}
                 {showRouteMap && viewMode === 'search' && (
-                  <div className="md:flex-1 min-w-0 h-[60vw] md:h-full overflow-hidden border-l-0">
+                  <div className="md:flex-1 min-w-0 h-[55vh] min-h-[360px] md:h-full md:min-h-0 overflow-hidden border-l-0">
                     <RouteMapPanel
                       companies={(Array.from(selectedRaws.values()) as any[]).map(r => ({ id: r.naam, name: r.naam, city: r.stad || '', _raw: r }))}
                       allData={activeData}
