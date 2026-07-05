@@ -4464,3 +4464,38 @@ const CollapsibleFilterGroup: React.FC<any> = ({ title, items, selectedItems, on
 };
 
 export default App;
+
+// ADVANCED SEARCH PARSER
+const parseAdvancedQuery = (query: string, bedrijven: any[]) => {
+  if (!query.trim()) return bedrijven;
+  
+  const tokens = query.toLowerCase().match(/(".*?"|[^\s]+)/g) || [];
+  let results = [...bedrijven];
+  let currentOp = 'AND';
+  
+  tokens.forEach((token) => {
+    const isPhrase = token.startsWith('"');
+    const searchTerm = isPhrase ? token.slice(1, -1) : token;
+    const isNot = searchTerm === 'not' || searchTerm === '-';
+    
+    let matches = bedrijven.filter(b => {
+      const searchStr = [b.naam, b.stad, b.straat, b.postcode, b.email, b.telefoon, b.spec1, b.spec2, b.spec3, b.website, b.bron].join(' ').toLowerCase();
+      return searchStr.includes(searchTerm);
+    });
+    
+    if (isNot) {
+      currentOp = 'NOT';
+    } else if (searchTerm === 'or') {
+      currentOp = 'OR';
+    } else if (searchTerm === 'and') {
+      currentOp = 'AND';
+    } else {
+      if (currentOp === 'AND') results = results.filter(b => matches.some(m => m.id === b.id));
+      else if (currentOp === 'OR') results = [...results, ...matches.filter(m => !results.some(r => r.id === m.id))];
+      else if (currentOp === 'NOT') results = results.filter(b => !matches.some(m => m.id === b.id));
+      currentOp = 'AND';
+    }
+  });
+  
+  return results;
+};
