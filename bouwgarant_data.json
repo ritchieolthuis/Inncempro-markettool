@@ -5496,7 +5496,7 @@
     "instagram_handle": ""
   },
   {
-    "source": "Bouwgarant",
+    "source": "Handmatig",
     "naam": "Bouwmij Weboma BV",
     "straat": "Stoelmatter 16",
     "postcode": "2292 JL",
@@ -5517,7 +5517,8 @@
     "url": "https://www.bouwgarant.nl/vind-een-aannemer/bouwmij-weboma-bv",
     "linkedin_url": "",
     "twitter_handle": "",
-    "instagram_handle": ""
+    "instagram_handle": "",
+    "bron": "Handmatig"
   },
   {
     "source": "Bouwgarant",
