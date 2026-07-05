@@ -2138,14 +2138,17 @@ const App: React.FC = () => {
     const normPc = (s: string) => (s || '').replace(/\s/g, '').toUpperCase().slice(0, 6);
 
     // Union-Find: two entries belong to the same company if they share a postcode-based
-    // key OR a street+city-based key (catches postcode typos / tagline-decorated duplicates
-    // that a single exact key would miss).
+    // key, a street+city-based key, or (for specific-enough names) just a name+city key —
+    // an "Onbekend" scrape often has a stale/relocated address while a real bron (Bouwgarant,
+    // BNA, Architectenweb) has the current one, so requiring the street to match too would
+    // keep missing them.
     const parent = entries.map((_, i) => i);
     const find = (x: number): number => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
     const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
 
     const byPrimaryKey = new Map<string, number[]>();
     const bySecondaryKey = new Map<string, number[]>();
+    const byNameCityKey = new Map<string, number[]>();
     entries.forEach((e, i) => {
       const nn = normNaam(e.naam);
       const pc = normPc(e.postcode);
@@ -2159,9 +2162,16 @@ const App: React.FC = () => {
         const skey = `${base}||${street}||${city}`;
         (bySecondaryKey.get(skey) || bySecondaryKey.set(skey, []).get(skey)!).push(i);
       }
+      // Name+city only (no street) — restricted to reasonably specific names so generic
+      // ones ("de vries bouw") can't accidentally merge two different companies.
+      if (base.length >= 8 && city) {
+        const nckey = `${base}||${city}`;
+        (byNameCityKey.get(nckey) || byNameCityKey.set(nckey, []).get(nckey)!).push(i);
+      }
     });
     for (const idxs of byPrimaryKey.values()) for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
     for (const idxs of bySecondaryKey.values()) for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
+    for (const idxs of byNameCityKey.values()) for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
 
     const groups = new Map<number, any[]>();
     entries.forEach((e, i) => {
