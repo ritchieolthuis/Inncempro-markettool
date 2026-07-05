@@ -1208,7 +1208,9 @@ const SOURCE_COLORS: Record<string, { bg: string; text: string; btn: string; btn
   'Jongeneel':     { bg: 'bg-green-100',    text: 'text-green-700',  btn: 'bg-green-600',  btnHover: 'hover:bg-green-700' },
   'BouwPartner':   { bg: 'bg-yellow-100',   text: 'text-yellow-700', btn: 'bg-yellow-600', btnHover: 'hover:bg-yellow-700' },
   'PontMeyer':     { bg: 'bg-red-100',      text: 'text-red-700',    btn: 'bg-red-600',    btnHover: 'hover:bg-red-700' },
+  'Van Wijnen':    { bg: 'bg-teal-100',     text: 'text-teal-700',   btn: 'bg-teal-600',   btnHover: 'hover:bg-teal-700' },
   'Onbekend':      { bg: 'bg-slate-100',    text: 'text-slate-500',  btn: 'bg-slate-500',  btnHover: 'hover:bg-slate-600' },
+  'Handmatig':     { bg: 'bg-purple-100',   text: 'text-purple-700', btn: 'bg-purple-600', btnHover: 'hover:bg-purple-700' },
 };
 const srcColor = (source: string) => SOURCE_COLORS[source] || SOURCE_COLORS['Onbekend'];
 // A "real" source (Bouwgarant, Architectenweb, ...) always outranks "Onbekend" —
@@ -1217,6 +1219,38 @@ const visibleSources = (b: any): string[] => {
   const all: string[] = b._sources?.length ? b._sources : b.source ? [b.source] : [];
   const real = all.filter((s: string) => s !== 'Onbekend');
   return real.length ? real : all;
+};
+
+// Kernnaam voor het groeperen van vestigingen (zelfde logica als in MapView.tsx): strip
+// rechtsvorm-suffixen en, als de naam eindigt op de eigen plaatsnaam ("INBO Rotterdam"),
+// ook die plaats — zo groeperen "INBO Rotterdam" en "INBO Eindhoven" onder de kern "inbo".
+const vestigingCoreNaam = (naam: string, stad: string): string => {
+  let n = (naam || '').toLowerCase()
+    .replace(/\b(b\.?v\.?|nv|vof|cv|stichting|bna)\b/g, '')
+    .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+  const s = (stad || '').toLowerCase().trim();
+  if (s) {
+    if (n === s) n = '';
+    else if (n.endsWith(' ' + s)) n = n.slice(0, -(s.length + 1)).trim();
+  }
+  return n;
+};
+const vestigingAddrKey = (b: any): string => `${(b.straat || '').toLowerCase().trim()}|${(b.postcode || '').toLowerCase().replace(/\s/g, '')}`;
+// Andere adressen van hetzelfde bedrijf (andere vestigingen), voor het bedrijfsprofiel-paneel.
+const getAndereVestigingen = (b: any, allData: any[]): any[] => {
+  const core = vestigingCoreNaam(b.naam, b.stad);
+  if (!core || core.length < 3) return [];
+  const seen = new Set<string>([vestigingAddrKey(b)]);
+  const out: any[] = [];
+  for (const other of allData) {
+    if (other === b) continue;
+    if (vestigingCoreNaam(other.naam, other.stad) !== core) continue;
+    const k = vestigingAddrKey(other);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(other);
+  }
+  return out.sort((a, b2) => (a.stad || '').localeCompare(b2.stad || '', 'nl'));
 };
 
 const SourceBadges = ({ b, size = 'sm' }: { b: any; size?: 'sm' | 'md' }) => {
@@ -1419,6 +1453,11 @@ const App: React.FC = () => {
         localStorage.setItem('inncempro_custom_entries', JSON.stringify(stored));
       }
     }
+    // bouwgarantData was mutated in place above (push), which activeData's useMemo can't see
+    // via its dependency array alone — customEntries keeps the same reference across reloads
+    // since nothing here calls setCustomEntries. Force a new reference so activeData recomputes
+    // and persisted/seeded custom entries actually show up after a page reload.
+    setCustomEntries(prev => [...prev]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2154,6 +2193,17 @@ const App: React.FC = () => {
     // list "cepezed", another "architectenbureau cepezed" for the exact same company.
     const stripGenericPrefix = (s: string) => s.replace(/^(architectenbureau|architectenburo|architektenburo|architectuurbureau|bureau|aannemersbedrijf|aannemingsbedrijf|bouwbedrijf|bouwonderneming|bouwgroep|bouwprojekten|timmerbedrijf|klussenbedrijf|installatiebedrijf)\s+/, '');
     const coreNaam = (s: string) => stripGenericPrefix(normNaamBase(s));
+    // Some scrapers bolt the vestiging's own city onto the brand name ("INBO Rotterdam"),
+    // others don't ("INBO"). Stripping the entry's own city from its core name lets both
+    // forms normalize to the same key so they can be recognised as the same vestiging.
+    const coreNaamCityFree = (naam: string, stad: string) => {
+      let n = coreNaam(naam);
+      const city = (stad || '').toLowerCase().trim();
+      if (!city) return n;
+      if (n === city) return '';
+      if (n.endsWith(' ' + city)) return n.slice(0, -(city.length + 1)).trim();
+      return n;
+    };
 
     // Union-Find: two entries belong to the same company if they share a postcode-based
     // key, a street+city-based key, or (for specific-enough names) just a name+city key —
@@ -2167,6 +2217,7 @@ const App: React.FC = () => {
     const byPrimaryKey = new Map<string, number[]>();
     const bySecondaryKey = new Map<string, number[]>();
     const byNameCityKey = new Map<string, number[]>();
+    const byCoreCityKey = new Map<string, number[]>();
     entries.forEach((e, i) => {
       const nn = normNaam(e.naam);
       const pc = normPc(e.postcode);
@@ -2186,10 +2237,19 @@ const App: React.FC = () => {
         const nckey = `${base}||${city}`;
         (byNameCityKey.get(nckey) || byNameCityKey.set(nckey, []).get(nckey)!).push(i);
       }
+      // Same as above but with the entry's own city stripped from the core name first, so a
+      // bare brand name ("INBO") and a city-suffixed one ("INBO Eindhoven") key the same way
+      // even when one source has a stale/different street for that vestiging.
+      const cnc = coreNaamCityFree(e.naam, e.stad);
+      if (cnc.length >= 4 && city) {
+        const cckey = `${cnc}||${city}`;
+        (byCoreCityKey.get(cckey) || byCoreCityKey.set(cckey, []).get(cckey)!).push(i);
+      }
     });
     for (const idxs of byPrimaryKey.values()) for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
     for (const idxs of bySecondaryKey.values()) for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
     for (const idxs of byNameCityKey.values()) for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
+    for (const idxs of byCoreCityKey.values()) for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
 
     // Same exact address (postcode+street), name only loosely related — this catches an
     // "Onbekend" entry whose name differs more than a suffix/tagline (e.g. "cepezed" vs.
@@ -2220,6 +2280,24 @@ const App: React.FC = () => {
         const exact = hits.filter(ri => coreNaam(entries[ri].naam) === oCore);
         const pick = exact.length === 1 ? exact[0] : (exact.length === 0 && hits.length === 1 ? hits[0] : null);
         if (pick != null) union(oi, pick);
+      }
+    }
+
+    // Same exact address, same core name once each entry's own city is stripped from it —
+    // this catches two *different* real sources (e.g. BNA "INBO" vs. Architectenweb "INBO
+    // Rotterdam") scraping the exact same vestiging under differently-formatted names.
+    // Pairwise within a small address bucket, so a shared office building housing several
+    // distinct companies only merges the ones whose (city-free) core name actually matches.
+    for (const idxs of byAddrKey.values()) {
+      if (idxs.length < 2) continue;
+      for (let a = 0; a < idxs.length; a++) {
+        for (let b = a + 1; b < idxs.length; b++) {
+          const ia = idxs[a], ib = idxs[b];
+          if (find(ia) === find(ib)) continue;
+          const coreA = coreNaamCityFree(entries[ia].naam, entries[ia].stad);
+          const coreB = coreNaamCityFree(entries[ib].naam, entries[ib].stad);
+          if (coreA.length >= 3 && coreA === coreB) union(ia, ib);
+        }
       }
     }
 
@@ -2254,11 +2332,29 @@ const App: React.FC = () => {
         bna_projecten: best(acc, cur, 'bna_projecten'),
         _custom:    acc._custom || cur._custom,
       }));
+      // Prefer the most descriptive name in the group — one that already includes the city
+      // (e.g. "INBO Rotterdam") reads better than a bare brand name ("INBO") once several
+      // same-vestiging duplicates from different sources are merged into one record.
+      const stadLower = (base.stad || '').toLowerCase().trim();
+      const namesWithCity = group.map(e => e.naam).filter(n => n && stadLower && n.toLowerCase().includes(stadLower));
+      if (namesWithCity.length > 0) {
+        base.naam = namesWithCity.reduce((shortest, n) => n.length < shortest.length ? n : shortest);
+      }
       // Collect all unique sources. A duplicate scraped without attribution (raw source
       // literally "Onbekend") shouldn't count as a separate bron once a real bron is known
       // for the same company — drop it whenever at least one real source is present.
+      // Among the real sources, the most complete underlying record (most filled fields)
+      // leads — that's the one shown as the primary badge on the main list.
+      const completeness = (e: any) => ['telefoon', 'email', 'website', 'spec1', 'spec2', 'spec3', 'kvk', 'rechtsvorm'].filter(f => e[f]).length;
+      const completenessBySource = new Map<string, number>();
+      for (const e of group) {
+        const src = e.source || 'Onbekend';
+        const score = completeness(e);
+        if (!completenessBySource.has(src) || score > completenessBySource.get(src)!) completenessBySource.set(src, score);
+      }
       const rawSources = group.map(e => e.source).filter(Boolean);
-      const realSources = Array.from(new Set(rawSources.filter(s => s !== 'Onbekend')));
+      const realSources = Array.from(new Set(rawSources.filter(s => s !== 'Onbekend')))
+        .sort((a, b) => (completenessBySource.get(b) || 0) - (completenessBySource.get(a) || 0));
       const sources = realSources.length > 0 ? realSources : (rawSources.length > 0 ? ['Onbekend'] : []);
       base.source = sources[0] || 'Onbekend';
       base._sources = sources; // all sources as array
@@ -2553,7 +2649,7 @@ const App: React.FC = () => {
                    <ProvinceFilter selectedRegions={selectedRegions} onToggle={(item: string) => toggleFilter(setSelectedRegions, item)} dataset={sidebarDataset} />
                    <CollapsibleFilterGroup title="Discipline" items={['Architecten', 'Bouwbedrijven', 'Aannemers', 'Bouwmaterialen']} selectedItems={selectedTypes} onToggleItem={(item) => toggleFilter(setSelectedTypes, item)} dataset={activeData} countFn={(item: string, b: any) => { const t = detectType(b); if (item === 'Architecten') return t === 'architect'; if (item === 'Bouwbedrijven') return t === 'bouwbedrijf'; if (item === 'Aannemers') return t === 'aannemer'; if (item === 'Bouwmaterialen') return t === 'materialen'; return false; }} />
                    <CollapsibleFilterGroup title="Werksoort" items={['Nieuwbouw', 'Renovatie', 'Verduurzaming', 'Restauratie', 'Onderhoud', 'Interieur', 'Utiliteitsbouw', 'Allround']} selectedItems={selectedWerksoort} onToggleItem={(item) => toggleFilter(setSelectedWerksoort, item)} dataset={activeData} countFn={(item: string, b: any) => { const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase(); if (item === 'Nieuwbouw') return specs.includes('nieuwbouw'); if (item === 'Renovatie') return specs.includes('renovatie') || specs.includes('verbouw') || specs.includes('aanbouw') || specs.includes('transformatie'); if (item === 'Verduurzaming') return specs.includes('verduurzam') || specs.includes('isoler') || specs.includes('duurzaam') || specs.includes('energie') || specs.includes('warmtepomp') || specs.includes('zonnepanelen'); if (item === 'Restauratie') return specs.includes('restauratie') || specs.includes('monument'); if (item === 'Onderhoud') return specs.includes('onderhoud') || specs.includes('beheer') || specs.includes('service'); if (item === 'Interieur') return specs.includes('interieur') || specs.includes('afbouw') || specs.includes('binneninrichting'); if (item === 'Utiliteitsbouw') return specs.includes('utiliteit') || specs.includes('kantoor') || specs.includes('bedrijfsgebouw') || specs.includes('zakelijk'); if (item === 'Allround') return specs.includes('allround'); return false; }} />
-                   <CollapsibleFilterGroup title="Bron" items={['Bouwgarant', 'BNA', 'Architectenweb', 'Stiho', 'Jongeneel', 'Onbekend']} selectedItems={selectedBron} onToggleItem={(item) => toggleFilter(setSelectedBron, item)} dataset={activeData} countFn={(item: string, b: any) => { const srcs = b._sources?.length ? b._sources : [b.source || 'Onbekend']; return srcs.includes(item); }} />
+                   <CollapsibleFilterGroup title="Bron" items={['Bouwgarant', 'BNA', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Handmatig', 'Onbekend']} selectedItems={selectedBron} onToggleItem={(item) => toggleFilter(setSelectedBron, item)} dataset={activeData} countFn={(item: string, b: any) => { const srcs = b._sources?.length ? b._sources : [b.source || 'Onbekend']; return srcs.includes(item); }} />
                    <CollapsibleFilterGroup title="Rechtsvorm" items={['B.V.', 'V.O.F.', 'Eenmanszaak', 'Stichting', 'N.V.']} selectedItems={selectedRechtsvorm} onToggleItem={(item) => toggleFilter(setSelectedRechtsvorm, item)} dataset={activeData} countFn={(item: string, b: any) => { const rv = (b.rechtsvorm || '').toLowerCase(); const naam = (b.naam || '').toLowerCase(); if (item === 'B.V.') return rv.includes('b.v') || rv.includes('bv') || naam.includes(' bv') || naam.endsWith(' b.v.') || naam.endsWith(' bv'); if (item === 'V.O.F.') return rv.includes('vof') || rv.includes('v.o.f') || naam.includes(' vof'); if (item === 'Eenmanszaak') return rv.includes('eenmanszaak') || rv.includes('zzp'); if (item === 'Stichting') return rv.includes('stichting') || naam.startsWith('stichting'); if (item === 'N.V.') return rv.includes('n.v') || rv.includes('nv') || naam.includes(' nv'); return false; }} />
                    <CollapsibleFilterGroup title="Contactgegevens" items={['Heeft telefoon', 'Heeft e-mail', 'Heeft website', 'Heeft KVK']} selectedItems={selectedContact} onToggleItem={(item) => toggleFilter(setSelectedContact, item)} dataset={activeData} countFn={(item: string, b: any) => { if (item === 'Heeft telefoon') return !!(b.telefoon || b.telefoon_sales || b.telefoon_admin); if (item === 'Heeft e-mail') return !!(b.email || b.email_sales || b.email_overig); if (item === 'Heeft website') return !!(b.website || b.url); if (item === 'Heeft KVK') return !!(b.kvk); return false; }} />
               </div>
@@ -3714,6 +3810,32 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 )}
+
+                {/* Andere vestigingen van hetzelfde bedrijf */}
+                {(() => {
+                  const vestigingen = getAndereVestigingen(b, activeData);
+                  if (vestigingen.length === 0) return null;
+                  return (
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5"><MapPin className="w-3 h-3"/> Andere vestigingen ({vestigingen.length})</p>
+                      <div className="bg-white border border-slate-200 rounded-sm divide-y divide-slate-100">
+                        {vestigingen.map((v: any, vi: number) => (
+                          <button
+                            key={vi}
+                            onClick={() => { setSelectedCompany(v); setEditMode(false); }}
+                            className="w-full text-left p-3 flex items-start gap-2 hover:bg-slate-50 transition-colors"
+                          >
+                            <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
+                            <div className="min-w-0">
+                              <p className="text-slate-800 font-medium text-sm truncate">{v.naam}</p>
+                              <p className="text-slate-500 text-xs">{[v.straat, [v.postcode, v.stad].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Contactgegevens */}
                 {hasContact && (

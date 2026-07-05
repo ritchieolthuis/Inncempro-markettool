@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   Loader2, AlertTriangle, CheckSquare, Square, Navigation, Check,
   ListOrdered, Save, Trash2, RotateCcw, ChevronDown, ChevronUp, X,
-  Map, MapPin, Plus, Search, ExternalLink, Pencil, GripVertical, Globe, ShieldCheck,
+  Map as MapIcon, MapPin, Plus, Search, ExternalLink, Pencil, GripVertical, Globe, ShieldCheck,
   CalendarDays, Building2, HardHat, Repeat,
 } from 'lucide-react';
 import { scoreBedrijven, scoreInsertionCandidates, BezoekType } from '../utils/dagbezoek';
@@ -25,12 +25,69 @@ const SRC_COLOR: Record<string, string> = {
   Jongeneel:            '#16A34A',
   BouwPartner:          '#CA8A04',
   PontMeyer:            '#DC2626',
+  'Van Wijnen':         '#0D9488',
   Onbekend:             '#64748B',
+  Handmatig:            '#9333EA',
   Favorieten:           '#E11D48',
   'Mijn Adressen':      '#7C3AED',
   'Geselecteerde items': '#E85E26',
 };
-const ALL_SOURCES = ['Bouwgarant', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Onbekend'];
+const ALL_SOURCES = ['Bouwgarant', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Handmatig', 'Onbekend'];
+
+// ─── Vestigingen (branch locations van hetzelfde bedrijf) ─────────────────────
+// Herleidt de "kernnaam" van een bedrijf door rechtsvorm-suffixen en, als de
+// naam eindigt op de eigen plaatsnaam (bv. "INBO Amsterdam"), ook die plaats
+// te strippen — zo groeperen "INBO Amsterdam" en "INBO Rotterdam" onder "inbo".
+function coreCompanyName(naam: string, stad: string): string {
+  let n = (naam || '').toLowerCase()
+    .replace(/\b(b\.?v\.?|nv|vof|cv|stichting|bna)\b/g, '')
+    .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+  const s = (stad || '').toLowerCase().trim();
+  if (s) {
+    if (n === s) n = '';
+    else if (n.endsWith(' ' + s)) n = n.slice(0, -(s.length + 1)).trim();
+  }
+  return n;
+}
+
+// Unieke sleutel per fysieke vestiging (naam + adres), gebruikt om markers terug te vinden.
+function vestigingKey(b: any): string {
+  return `${(b.naam || '').toLowerCase().trim()}|${(b.straat || '').toLowerCase().trim()}|${(b.stad || '').toLowerCase().trim()}`;
+}
+
+function addrKey(b: any): string {
+  return `${(b.straat || '').toLowerCase().trim()}|${(b.postcode || '').toLowerCase().replace(/\s/g, '')}`;
+}
+
+// Zoekt andere vestigingen (andere adressen) van hetzelfde bedrijf op via een
+// vooraf gebouwde index (coreCompanyName -> alle bedrijven met die kernnaam).
+function getVestigingen(entry: any, coreIndex: Map<string, any[]>): any[] {
+  const core = coreCompanyName(entry.naam, entry.stad);
+  if (!core || core.length < 3) return [];
+  const group = coreIndex.get(core);
+  if (!group || group.length < 2) return [];
+  const seen = new Set<string>([addrKey(entry)]);
+  const out: any[] = [];
+  for (const b of group) {
+    const k = addrKey(b);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(b);
+  }
+  return out.sort((a, b) => (a.stad || '').localeCompare(b.stad || '', 'nl'));
+}
+
+// Globaal register zodat de (platte HTML) popup-knoppen een zustermarker kunnen
+// terugvinden en de kaart ernaartoe kunnen laten vliegen — werkt over alle
+// laadflows heen omdat het register buiten de component-instantie leeft.
+const vestigingRegistry = new Map<string, L.Marker>();
+(window as any)._inncemGoToVestiging = (key: string) => {
+  const m = vestigingRegistry.get(key);
+  if (!m) return;
+  const map = (m as any)._map;
+  if (map) map.flyTo(m.getLatLng(), Math.max(map.getZoom(), 14));
+  m.openPopup();
+};
 
 // ─── Geo cache ────────────────────────────────────────────────────────────────
 const toUrl = (u: string) => u && /^https?:\/\//i.test(u) ? u : `https://${u}`;
@@ -111,12 +168,19 @@ function makePin(color: string, label?: string | number) {
   });
 }
 
-function makePopup(b: any, color: string, isFav: boolean, stopNum?: number) {
+function makePopup(b: any, color: string, isFav: boolean, stopNum?: number, vestigingen: any[] = []) {
   const q = encodeURIComponent([b.naam, b.straat, b.postcode, b.stad].filter(Boolean).join(', '));
   const naam = (b.naam || '').replace(/'/g, "\\'");
   const badge = stopNum != null
     ? `<span style="background:${color};color:white;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px">Stop ${stopNum}</span>`
     : `<span style="background:${color}22;color:${color};font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px">${isFav ? 'Favoriet' : (b.source || 'Onbekend')}</span>`;
+  const vestigingenHtml = vestigingen.length ? `
+    <div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0">
+      <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">Andere vestigingen (${vestigingen.length})</div>
+      <div style="display:flex;flex-direction:column;gap:3px">
+        ${vestigingen.map(v => `<button onclick="window._inncemGoToVestiging('${vestigingKey(v).replace(/'/g, "\\'")}')" style="font-size:11px;color:#1e293b;background:#f8fafc;border:1px solid #e2e8f0;padding:4px 8px;border-radius:4px;cursor:pointer;text-align:left">📍 ${(v.stad || v.naam || '')}${v.straat ? ` <span style="color:#94a3b8">· ${v.straat}</span>` : ''}</button>`).join('')}
+      </div>
+    </div>` : '';
   return `<div style="font-family:system-ui,sans-serif;min-width:220px;max-width:280px">
     <b style="font-size:13px;color:#1e293b">${b.naam || ''}</b>
     ${b.straat ? `<div style="color:#64748b;font-size:12px;margin-top:2px">${b.straat}</div>` : ''}
@@ -131,6 +195,7 @@ function makePopup(b: any, color: string, isFav: boolean, stopNum?: number) {
       <button onclick="window._inncemNav('database','${naam}')" style="font-size:11px;color:#1e293b;background:#f1f5f9;border:1px solid #cbd5e1;padding:3px 8px;border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:4px"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>Database</button>
       <button onclick="window._inncemNav('search','${naam}')" style="font-size:11px;color:#E85E26;background:#fff7f5;border:1px solid #E85E26;padding:3px 8px;border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:4px"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>Live Zoeken</button>
     </div>
+    ${vestigingenHtml}
     <div style="margin-top:8px">${badge}</div>
   </div>`;
 }
@@ -545,6 +610,18 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
     [allData],
   );
 
+  // Index van kernnaam -> alle bedrijven met die kernnaam, voor het vinden van vestigingen.
+  const coreIndex = useMemo(() => {
+    const idx = new Map<string, any[]>();
+    for (const b of allData) {
+      const core = coreCompanyName(b.naam, b.stad);
+      if (!core || core.length < 3) continue;
+      if (!idx.has(core)) idx.set(core, []);
+      idx.get(core)!.push(b);
+    }
+    return idx;
+  }, [allData]);
+
   // ── Filtered count (no geocoding needed) ────────────────────────────────────
   const filteredCount = useMemo(() => {
     const inclSel = sources.includes('Geselecteerde items');
@@ -737,8 +814,9 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
       const ge: GeoEntry = { entry: bedrijf, coords, color, isFav: false };
       if (mapRef.current) {
         ge.marker = L.marker(coords, { icon: makePin(color, added + 1) })
-          .bindPopup(makePopup(bedrijf, color, false), { maxWidth: 290 })
+          .bindPopup(makePopup(bedrijf, color, false, undefined, getVestigingen(bedrijf, coreIndex)), { maxWidth: 290 })
           .addTo(mapRef.current);
+        vestigingRegistry.set(vestigingKey(bedrijf), ge.marker);
       }
       pool.push(ge);
       added++;
@@ -800,8 +878,9 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
         const ge: GeoEntry = { entry: bedrijf, coords, color, isFav: false };
         if (coords && mapRef.current) {
           ge.marker = L.marker(coords, { icon: makePin(color) })
-            .bindPopup(makePopup(bedrijf, color, false), { maxWidth: 290 })
+            .bindPopup(makePopup(bedrijf, color, false, undefined, getVestigingen(bedrijf, coreIndex)), { maxWidth: 290 })
             .addTo(mapRef.current);
+          vestigingRegistry.set(vestigingKey(bedrijf), ge.marker);
         }
         pool.push(ge);
         setProgDone(i + 1);
@@ -964,8 +1043,9 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
       const ge: GeoEntry = { entry, coords, color, isFav };
       if (coords && mapRef.current) {
         ge.marker = L.marker(coords, { icon: makePin(color) })
-          .bindPopup(makePopup(entry, color, isFav), { maxWidth: 290 })
+          .bindPopup(makePopup(entry, color, isFav, undefined, getVestigingen(entry, coreIndex)), { maxWidth: 290 })
           .addTo(mapRef.current);
+        vestigingRegistry.set(vestigingKey(entry), ge.marker);
         placed++;
       }
       pool.push(ge);
@@ -1022,8 +1102,9 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
       e.marker?.remove();
       if (e.coords && mapRef.current) {
         e.marker = L.marker(e.coords, { icon: makePin(e.color) })
-          .bindPopup(makePopup(e.entry, e.color, e.isFav), { maxWidth: 290 })
+          .bindPopup(makePopup(e.entry, e.color, e.isFav, undefined, getVestigingen(e.entry, coreIndex)), { maxWidth: 290 })
           .addTo(mapRef.current!);
+        vestigingRegistry.set(vestigingKey(e.entry), e.marker);
       }
     });
   };
@@ -1488,7 +1569,7 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
               <div className="mt-2 space-y-1">
                 {savedMaps.map(m => (
                   <button key={m.id} onClick={() => loadMap(m)} className="w-full text-left px-2 py-2 rounded hover:bg-slate-50 group flex items-start gap-2">
-                    <Map className="w-3.5 h-3.5 text-[#009FE3] flex-shrink-0 mt-0.5" />
+                    <MapIcon className="w-3.5 h-3.5 text-[#009FE3] flex-shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-slate-700 truncate">{m.name}</div>
                       <div className="text-xs text-slate-400 truncate">{[...m.sources, m.includeFavorites ? 'Favorieten' : ''].filter(Boolean).join(', ')}{m.province ? ` · ${m.province}` : ''}{m.city ? ` · ${m.city}` : ''}</div>
