@@ -1400,7 +1400,7 @@ const App: React.FC = () => {
   // APP STATE
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'dashboard' | 'routes'>('search');
+  const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'dashboard'>('search');
 
   // BATCH IMPORT
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -3143,11 +3143,6 @@ const App: React.FC = () => {
                      <span className="hidden sm:inline">Marktoverzicht</span>
                      <span className="sm:hidden">Markt</span>
                  </button>
-                 <button onClick={() => setViewMode('routes')} className={`flex-1 min-w-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'routes' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <Repeat className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
-                     <span className="hidden sm:inline">Routes ({savedRoutes.length})</span>
-                     <span className="sm:hidden">Routes</span>
-                 </button>
              </div>
 
              {/* Mobiel: filters-knop + slide-up drawer (de aside hierboven is hidden md:flex, dus onzichtbaar op mobiel) */}
@@ -3683,43 +3678,33 @@ const App: React.FC = () => {
                   onDeleteEntry={handleDeleteEntry}
                   onMarkerCountChange={setMapMarkerCount}
                 />
-            )}
 
-            {viewMode === 'routes' && (
-                <div className="w-full max-w-6xl mx-auto py-6">
-                    <h2 className="text-2xl font-bold text-slate-900 mb-4">Opgeslagen Routes</h2>
-                    {savedRoutes.length === 0 ? (
-                        <div className="py-20 text-center">
-                            <Repeat className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-                            <p className="text-slate-500">Geen routes opgeslagen. Maak er een via AI Route Maker!</p>
-                        </div>
-                    ) : (
-                        <div className="grid gap-4">
-                            {savedRoutes.map((route: any) => (
-                                <div key={route.id} className="bg-white border border-slate-200 rounded-sm p-4">
-                                    <div className="flex items-start justify-between mb-3">
-                                        <div>
-                                            <h3 className="font-bold text-slate-900">{route.name}</h3>
-                                            <p className="text-xs text-slate-500 mt-1">{new Date(route.createdAt).toLocaleString('nl-NL')}</p>
-                                        </div>
-                                        <button onClick={() => { setSavedRoutes(savedRoutes.filter((r: any) => r.id !== route.id)); localStorage.setItem('inncempro_saved_routes', JSON.stringify(savedRoutes.filter((r: any) => r.id !== route.id))); }} className="text-slate-400 hover:text-red-500">
-                                            <Trash2 className="w-4 h-4" />
-                                        </button>
-                                    </div>
-                                    <div className="space-y-1 text-sm">
-                                        {route.bedrijven.map((b: any, i: number) => (
-                                            <div key={i} className="flex items-center gap-2 text-slate-700">
-                                                <span className="text-xs font-bold text-slate-400 w-5">{i + 1}.</span>
-                                                <span>{b.naam}</span>
-                                                <span className="text-xs text-slate-500">({b.stad})</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
+                {/* Routes onder kaart */}
+                {savedRoutes.length > 0 && (
+                  <div className="mt-8 max-w-6xl mx-auto">
+                    <h3 className="text-lg font-bold text-slate-900 mb-3">Opgeslagen Routes ({savedRoutes.length})</h3>
+                    <div className="grid gap-3">
+                      {savedRoutes.map((route: any) => (
+                        <div key={route.id} className="bg-white border border-slate-200 rounded-sm p-4">
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <h4 className="font-bold text-slate-900">{route.name}</h4>
+                              <p className="text-xs text-slate-500">{new Date(route.createdAt).toLocaleString('nl-NL')} • {route.bedrijven.length} bedrijven</p>
+                            </div>
+                            <button onClick={() => { setSavedRoutes(savedRoutes.filter((r: any) => r.id !== route.id)); localStorage.setItem('inncempro_saved_routes', JSON.stringify(savedRoutes.filter((r: any) => r.id !== route.id))); }} className="text-slate-400 hover:text-red-500">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {route.bedrijven.map((b: any, i: number) => (
+                              <span key={i} className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded-sm">{i+1}. {b.naam}</span>
                             ))}
+                          </div>
                         </div>
-                    )}
-                </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
             )}
 
             {viewMode === 'favorites' && favorites.length === 0 && (
