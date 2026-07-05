@@ -3465,7 +3465,7 @@ const App: React.FC = () => {
                     <Search className="w-10 h-10 text-slate-200 mx-auto mb-4" />
                     <p className="text-slate-400 text-sm font-medium">Typ een bedrijfsnaam, stad of postcode — of stel een filter in.</p>
                     <p className="text-slate-400 text-xs mt-1">Alle {activeData.length.toLocaleString('nl-NL')} bedrijven staan in de <button onClick={() => { setViewMode('database'); setDbPage(1); }} className="underline hover:text-[#009FE3]">Bedrijvendatabase</button>.</p>
-                    <button onClick={() => setShowAIHelper(true)} className="mt-4 px-4 py-2 bg-[#009FE3] hover:bg-[#0088c8] text-white text-sm font-bold rounded-sm flex items-center gap-2 transition-colors"><Bot className="w-4 h-4" /> AI Route Helper</button>
+                    <button onClick={() => setShowAIHelper(true)} className="mt-4 mx-auto px-4 py-2 bg-[#009FE3] hover:bg-[#0088c8] text-white text-sm font-bold rounded-sm flex items-center gap-2 transition-colors"><Bot className="w-4 h-4" /> AI Route Helper</button>
                 </div>
             )}
 
