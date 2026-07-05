@@ -1916,19 +1916,33 @@ const App: React.FC = () => {
           // Als de tekst een bekende stad is én radius actief, werkt het als locatiezoeken.
           if (q && !queryIsRadiusOrigin) {
               const naam = (b.naam || '').toLowerCase();
-              const terms = expandQuery(q);
+              const isKnownAlias = q in NAAM_ALIASSEN || q.length <= 4;
+
+              // Splits query in afzonderlijke zoekwoorden (ook alias-geëxpandeerd)
+              const expandedTerms = expandQuery(q); // kan meerdere termen retourneren via aliassen
+              const allSearchWords = new Set<string>();
+              for (const t of expandedTerms) {
+                t.split(/[\s\-\/&,.()+]+/).filter(Boolean).forEach(w => allSearchWords.add(w));
+              }
+              const searchWordList = Array.from(allSearchWords);
+
               // Splits naam in losse woorden (op spatie, koppelteken, slash, &, etc.)
               const naamWords = naam.split(/[\s\-\/&,.()+]+/).filter(Boolean);
-              // Match alleen als een heel woord in de naam gelijk is of begint met de zoekterm
-              const matchNaam = terms.some(t =>
-                naam === t ||
-                naamWords.some(w => w === t || w.startsWith(t))
+
+              // Match: ALLE zoekwoorden moeten ergens in de naam voorkomen (niet noodzakelijk naast elkaar).
+              // Elk zoekwoord wordt gematcht als exact heel woord of als begin van woord.
+              const matchNaam = searchWordList.length > 0 && searchWordList.every(searchTerm =>
+                naam === searchTerm ||
+                naamWords.some(naamWord => naamWord === searchTerm || naamWord.startsWith(searchTerm))
               );
+
               // Ook zoeken in stad, postcode, straat — maar NIET in email/website bij bekende afkortingen
-              const isKnownAlias = q in NAAM_ALIASSEN || q.length <= 4;
               const locationStr = [dbStad, b.straat, b.postcode].filter(Boolean).join(' ').toLowerCase();
               const locationWords = locationStr.split(/[\s\-\/&,.()+]+/).filter(Boolean);
-              const matchLocation = terms.some(t => locationWords.some(w => w === t || w.startsWith(t)));
+              const matchLocation = searchWordList.length > 0 && searchWordList.every(searchTerm =>
+                locationWords.some(locWord => locWord === searchTerm || locWord.startsWith(searchTerm))
+              );
+
               const contactFields = isKnownAlias ? '' : [b.email, b.email_sales, b.email_overig, b.website].filter(Boolean).join(' ').toLowerCase();
               const matchFields = matchLocation || (!isKnownAlias && contactFields.includes(q));
               if (!matchNaam && !matchFields) return false;
