@@ -3,9 +3,9 @@ import {
   Loader2, Navigation, ListOrdered, RotateCcw, X,
   Trash2, Save, Check, MapPin, GripVertical, Globe, Search,
   ShieldCheck, AlertTriangle, RefreshCw, ChevronDown, ChevronUp,
-  CalendarDays, Building2, HardHat, Pencil, Plus, Repeat,
+  CalendarDays, Plus, Repeat,
 } from 'lucide-react';
-import { scoreBedrijven, scoreInsertionCandidates, BezoekType } from '../utils/dagbezoek';
+import { scoreBedrijven, scoreInsertionCandidates, detectType, BezoekType } from '../utils/dagbezoek';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -216,7 +216,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
   // Dagbezoek planner
   const [planOpen,       setPlanOpen]       = useState(false);
   const [planLocatie,    setPlanLocatie]    = useState('');
-  const [planType,       setPlanType]       = useState<BezoekType>('mix');
+  const [planTypes,      setPlanTypes]      = useState<BezoekType[]>([]);
   const [planMax,        setPlanMax]        = useState(12);
   const [planLoading,    setPlanLoading]    = useState(false);
   const [planMsg,        setPlanMsg]        = useState('');
@@ -526,7 +526,8 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
   const planBezoekInArea = async (center: [number,number], radiusM: number, type: BezoekType, max: number) => {
     setDrawLoading(true);
     const radiusKm = radiusM / 1000;
-    const scored = scoreBedrijven(allData, center[0], center[1], type, cityCoords as any, Math.ceil(max * 1.5), radiusKm);
+    const types = type === 'mix' ? [] : [type];
+    const scored = scoreBedrijven(allData, center[0], center[1], types, cityCoords as any, Math.ceil(max * 1.5), radiusKm);
     const cache = loadCache();
     const seenNames = new Set(stopsRef.current.map(s => normNaam(s.company._raw?.naam || s.company.name)));
     let added = 0;
@@ -670,7 +671,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
       const lat = parseFloat(d[0].lat);
       const lon = parseFloat(d[0].lon);
 
-      const scored = scoreBedrijven(allData, lat, lon, planType, cityCoords as any, planMax);
+      const scored = scoreBedrijven(allData, lat, lon, planTypes, cityCoords as any, planMax);
       if (scored.length === 0) { setPlanMsg('Geen bedrijven gevonden in de buurt. Probeer een grotere stad.'); setPlanLoading(false); return; }
 
       // Clear existing stops and load the new ones
@@ -1230,20 +1231,31 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
             </div>
             <div>
               <label className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider block mb-1">Type bedrijven</label>
-              <div className="grid grid-cols-2 gap-1">
+              <div className="space-y-1.5">
                 {([
-                  { val: 'mix',          label: 'Mix',          icon: <Building2 className="w-3 h-3" /> },
-                  { val: 'architecten',  label: 'Architecten',  icon: <Pencil className="w-3 h-3" /> },
-                  { val: 'bouwbedrijven',label: 'Bouwbedrijven',icon: <HardHat className="w-3 h-3" /> },
-                  { val: 'aannemers',    label: 'Aannemers',    icon: <HardHat className="w-3 h-3" /> },
-                ] as { val: BezoekType; label: string; icon: React.ReactNode }[]).map(({ val, label, icon }) => (
-                  <button
-                    key={val}
-                    onClick={() => setPlanType(val)}
-                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded-sm text-[10px] font-bold border transition-colors ${planType === val ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]'}`}>
-                    {icon} {label}
-                  </button>
-                ))}
+                  { val: 'architecten',  label: 'Architecten',  match: 'architect' },
+                  { val: 'bouwbedrijven',label: 'Bouwbedrijven',match: 'bouwbedrijf' },
+                  { val: 'aannemers',    label: 'Aannemers',    match: 'aannemer' },
+                  { val: 'materialen',   label: 'Bouwmaterialen',match: 'materialen' },
+                ] as { val: BezoekType; label: string; match: string }[]).map(({ val, label, match }) => {
+                  const count = allData.filter((b: any) => detectType(b) === match).length;
+                  const isSelected = planTypes.includes(val);
+                  return (
+                    <label key={val} className="flex items-center gap-2 cursor-pointer group">
+                      <div className={`w-3.5 h-3.5 border flex-shrink-0 flex items-center justify-center rounded-sm ${isSelected ? 'bg-[#E85E26] border-[#E85E26]' : 'bg-white border-slate-300'}`}>
+                        {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                      </div>
+                      <span className={`text-[11px] flex-1 ${isSelected ? 'text-slate-900 font-bold' : 'text-slate-600 font-medium'}`}>{label}</span>
+                      <span className="text-[10px] text-slate-300 font-medium">{count.toLocaleString('nl-NL')}</span>
+                      <input
+                        type="checkbox"
+                        className="hidden"
+                        checked={isSelected}
+                        onChange={() => setPlanTypes(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val])}
+                      />
+                    </label>
+                  );
+                })}
               </div>
             </div>
             <div>

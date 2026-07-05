@@ -2,7 +2,7 @@
 // Research-based bekendheid scores for Dutch construction market.
 // Source: market knowledge of largest/most prominent firms per segment.
 
-export type BezoekType = 'architecten' | 'bouwbedrijven' | 'aannemers' | 'mix';
+export type BezoekType = 'architecten' | 'bouwbedrijven' | 'aannemers' | 'materialen' | 'mix';
 
 // Name fragments (lowercase) → bekendheid bonus (0–100)
 // Covers the largest and most well-known firms nationally and per region.
@@ -61,38 +61,43 @@ const BEKENDHEID: Array<{ fragment: string; bonus: number; types: BezoekType[] }
   { fragment: 'twin architects',bonus:55, types: ['architecten','mix'] },
 ];
 
-function bekendheidBonus(naam: string, type: BezoekType): number {
+// `filters` is a list of selected BezoekTypes; an empty list means "alle" (equivalent to the old 'mix').
+function bekendheidBonus(naam: string, filters: BezoekType[]): number {
   const n = naam.toLowerCase();
   let best = 0;
   for (const b of BEKENDHEID) {
-    if (!b.types.includes(type) && type !== 'mix') continue;
+    const matches = filters.length === 0 ? b.types.includes('mix') : b.types.some(t => filters.includes(t));
+    if (!matches) continue;
     if (n.includes(b.fragment)) best = Math.max(best, b.bonus);
   }
   return best;
 }
 
 // ── Type detection ─────────────────────────────────────────────────────────────
-function detectType(b: any): 'architect' | 'bouwbedrijf' | 'aannemer' | 'overig' {
+export function detectType(b: any): 'architect' | 'bouwbedrijf' | 'aannemer' | 'materialen' | 'overig' {
   const naam = (b.naam || '').toLowerCase();
   const src  = (b.source || '').toLowerCase();
   const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase();
-  if (src === 'architectenweb' || naam.includes('architect')) return 'architect';
-  if (naam.includes('aannemer') || specs.includes('aannemer')) return 'aannemer';
-  if (naam.includes('bouw') || src === 'bouwgarant') return 'bouwbedrijf';
+  if (src === 'architectenweb' || specs.includes('architect') || naam.includes('architect')) return 'architect';
+  if (specs.includes('houthandel') || specs.includes('bouwmaterial') || src === 'stiho' || src === 'jongeneel') return 'materialen';
+  if (specs.includes('bouwbedrijf') || naam.includes('bouwbedrijf') || naam.includes(' bouw ') || naam.endsWith(' bouw')) return 'bouwbedrijf';
+  if (specs.includes('aannemer') || naam.includes('aannemer') || src === 'bouwgarant') return 'aannemer';
   return 'overig';
 }
 
-function typeScore(b: any, filter: BezoekType): number {
+function typeScore(b: any, filters: BezoekType[]): number {
   const t = detectType(b);
-  if (filter === 'mix') {
+  if (filters.length === 0) {
     if (t === 'architect')   return 30;
     if (t === 'bouwbedrijf') return 20;
     if (t === 'aannemer')    return 15;
+    if (t === 'materialen')  return 15;
     return 5;
   }
-  if (filter === 'architecten' && t === 'architect')   return 50;
-  if (filter === 'bouwbedrijven' && t === 'bouwbedrijf') return 50;
-  if (filter === 'aannemers' && t === 'aannemer')      return 50;
+  if (filters.includes('architecten') && t === 'architect')     return 50;
+  if (filters.includes('bouwbedrijven') && t === 'bouwbedrijf') return 50;
+  if (filters.includes('aannemers') && t === 'aannemer')        return 50;
+  if (filters.includes('materialen') && t === 'materialen')     return 50;
   return 0;
 }
 
@@ -131,7 +136,7 @@ export function scoreBedrijven(
   allData: any[],
   targetLat: number,
   targetLon: number,
-  type: BezoekType,
+  types: BezoekType[],
   cityCoords: Record<string, { lat: number; lng: number }>,
   maxResults = 15,
   maxKm = 60,
@@ -146,13 +151,13 @@ export function scoreBedrijven(
     const km = haversineKm(targetLat, targetLon, coords.lat, coords.lng);
     if (km > maxKm) continue; // cut off beyond the given radius
 
-    const ts = typeScore(b, type);
-    if (type !== 'mix' && ts === 0) continue; // wrong type, skip
+    const ts = typeScore(b, types);
+    if (types.length > 0 && ts === 0) continue; // wrong type, skip
 
     const score =
       distanceScore(km) * 1.5 +
       ts +
-      bekendheidBonus(b.naam || '', type) * 0.8 +
+      bekendheidBonus(b.naam || '', types) * 0.8 +
       completenessScore(b);
 
     scored.push({ bedrijf: b, score, km });
