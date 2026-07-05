@@ -1697,7 +1697,7 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
       {/* ── Map + route list ── */}
       <div className="flex-1 flex flex-col gap-3 min-w-0">
         <div className="flex-1 rounded-sm border border-slate-200 overflow-hidden relative min-h-[420px] md:min-h-[300px]">
-          <div ref={mapDiv} className="w-full h-full" />
+          <div ref={mapDiv} className="absolute inset-0" />
           {drawMode && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] pointer-events-none">
               <div className="bg-[#009FE3] text-white text-xs font-semibold px-4 py-2 rounded-sm shadow-lg flex items-center gap-2">

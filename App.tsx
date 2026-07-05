@@ -1302,8 +1302,15 @@ const App: React.FC = () => {
   const [editAvatar, setEditAvatar] = useState('');
 
   // GEBRUIKERSVOORKEUREN (persistent via localStorage)
-  const [prefLocation, setPrefLocation] = useState<string>(() =>
-    localStorage.getItem('inncempro_pref_location') || 'Hengelo');
+  const DEFAULT_HQ_ADDRESS = 'Lansinkesweg 4, 7553 AE Hengelo';
+  // Volledig bedrijfsadres — bepaalt het standaard middelpunt voor straal-zoeken en
+  // de "km van ..." afstandsweergave. Per gebruiker aan te passen bij Instellingen.
+  const [prefAddress, setPrefAddressState] = useState<string>(() =>
+    localStorage.getItem('inncempro_pref_address') || DEFAULT_HQ_ADDRESS);
+  const [prefAddressCoords, setPrefAddressCoords] = useState<{ lat: number; lng: number } | null>(() => {
+    try { return JSON.parse(localStorage.getItem('inncempro_pref_address_coords') || 'null'); } catch { return null; }
+  });
+  const [prefAddressGeocoding, setPrefAddressGeocoding] = useState(false);
   const [prefSort, setPrefSort] = useState<'relevant' | 'az'>(() =>
     (localStorage.getItem('inncempro_pref_sort') as 'relevant' | 'az') || 'relevant');
   const [prefResultsPerPage, setPrefResultsPerPage] = useState<number>(() =>
@@ -1317,7 +1324,6 @@ const App: React.FC = () => {
   };
   const showField = (key: string) => prefCardFields[key] !== undefined ? prefCardFields[key] : cardFieldDefault[key];
 
-  const savePrefLocation = (v: string) => { setPrefLocation(v); localStorage.setItem('inncempro_pref_location', v); };
   const savePrefSort = (v: 'relevant' | 'az') => { setPrefSort(v); setSortMode(v); localStorage.setItem('inncempro_pref_sort', v); };
   const savePrefRpp = (v: number) => { setPrefResultsPerPage(v); localStorage.setItem('inncempro_pref_rpp', String(v)); };
   const toggleCardField = (key: string) => {
@@ -1326,14 +1332,48 @@ const App: React.FC = () => {
     localStorage.setItem('inncempro_pref_card', JSON.stringify(next));
   };
 
-  // Coördinaten afleiden van geselecteerde vestigingsplaats
-  const hqCoords = React.useMemo(() => {
-    const key = prefLocation.toLowerCase().trim();
-    return DUTCH_CITY_COORDS[key] || { lat: 52.2549, lng: 6.7782 };
-  }, [prefLocation]);
+  // Geocodeert het bedrijfsadres via Nominatim en cachet het resultaat, zodat straal-zoeken
+  // en de afstandsweergave een precies punt hebben in plaats van alleen een plaatsnaam.
+  const geocodeAddress = async (address: string) => {
+    setPrefAddressGeocoding(true);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address + ', Nederland')}&countrycodes=nl&limit=1`,
+        { headers: { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' } },
+      );
+      const data = await res.json();
+      const hit = data?.[0];
+      if (hit) {
+        const coords = { lat: parseFloat(hit.lat), lng: parseFloat(hit.lon) };
+        setPrefAddressCoords(coords);
+        localStorage.setItem('inncempro_pref_address_coords', JSON.stringify(coords));
+      }
+    } catch { /* laat de vorige (of standaard) coördinaten staan bij een netwerkfout */ }
+    setPrefAddressGeocoding(false);
+  };
+
+  const savePrefAddress = (v: string) => {
+    setPrefAddressState(v);
+    localStorage.setItem('inncempro_pref_address', v);
+    if (v.trim()) geocodeAddress(v.trim());
+  };
+
+  // Eerste keer laden zonder gecachete coördinaten (bv. na een update van de app): geocode
+  // het (eventueel standaard) adres één keer automatisch.
+  useEffect(() => {
+    if (!prefAddressCoords && prefAddress.trim()) geocodeAddress(prefAddress.trim());
+  }, []);
+
+  // Coördinaten van het bedrijfsadres — valt terug op Hengelo-centrum zolang het adres nog
+  // niet (opnieuw) gegeocodeerd is.
+  const hqCoords = prefAddressCoords || DUTCH_CITY_COORDS['hengelo'] || { lat: 52.2549, lng: 6.7782 };
+  // Korte label voor badges/teksten (bv. "Hengelo" i.p.v. het volledige adres) — pakt het
+  // laatste kommadeel en strip een eventuele postcode.
+  const hqShortLabel = prefAddress.split(',').pop()?.replace(/\b\d{4}\s?[A-Z]{2}\b/i, '').trim() || prefAddress;
 
   // APP STATE
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'dashboard'>('search');
 
   // OPGESLAGEN FILTERS
@@ -1851,7 +1891,8 @@ const App: React.FC = () => {
       let radiusCenter: { lat: number; lng: number } | null = overrideRadiusCenter !== undefined ? overrideRadiusCenter : null;
       if (activeRadiusKm && !radiusCenter) {
         const centerCity = (overrideCity ?? city).trim();
-        radiusCenter = getCityCoords(centerCity);
+        // Geen plaats ingevuld? Straal zoekt dan standaard vanaf ons eigen (instelbare) adres.
+        radiusCenter = centerCity ? getCityCoords(centerCity) : hqCoords;
         // Als de tekst geen bekende stad is, sla de radius over en doe alleen tekst-zoeken
         // (zodat je b.v. "inbo" kunt typen als bedrijfsnaam zonder een locatiefout te krijgen)
       }
@@ -2554,18 +2595,25 @@ const App: React.FC = () => {
 
                       {settingsTab === 'voorkeuren' && (
                           <div className="space-y-6">
-                              {/* Vestigingsplaats */}
+                              {/* Bedrijfsadres */}
                               <div>
-                                  <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Mijn vestigingsplaats</label>
-                                  <p className="text-[10px] text-slate-400 mb-2">Wordt gebruikt voor afstandsberekening op alle kaarten.</p>
-                                  <select value={prefLocation} onChange={e => savePrefLocation(e.target.value)}
-                                      className="w-full p-2.5 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none bg-white">
-                                      {Object.keys(DUTCH_CITY_COORDS).sort().map(city => (
-                                          <option key={city} value={city.charAt(0).toUpperCase() + city.slice(1)}>
-                                              {city.charAt(0).toUpperCase() + city.slice(1)}
-                                          </option>
-                                      ))}
-                                  </select>
+                                  <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Mijn adres</label>
+                                  <p className="text-[10px] text-slate-400 mb-2">Uitgangspunt voor straal-zoeken (als er geen plaats is ingevuld) en voor afstandsberekening op alle kaarten. Per account aan te passen.</p>
+                                  <input
+                                      type="text"
+                                      defaultValue={prefAddress}
+                                      onBlur={e => { if (e.target.value.trim() && e.target.value.trim() !== prefAddress) savePrefAddress(e.target.value.trim()); }}
+                                      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                      placeholder="Straat, huisnummer, postcode, plaats"
+                                      className="w-full p-2.5 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none"
+                                  />
+                                  <p className="text-[10px] mt-1 h-3.5">
+                                      {prefAddressGeocoding
+                                          ? <span className="text-slate-400">Adres opzoeken…</span>
+                                          : prefAddressCoords
+                                          ? <span className="text-green-600">✓ Adres gevonden</span>
+                                          : <span className="text-amber-600">Adres niet gevonden — standaard Hengelo-locatie wordt gebruikt</span>}
+                                  </p>
                               </div>
 
                               {/* Standaard sortering */}
@@ -2603,7 +2651,7 @@ const App: React.FC = () => {
                                   <p className="text-[10px] text-slate-400 mb-3">Kies welke velden zichtbaar zijn op de compacte kaart.</p>
                                   <div className="space-y-2">
                                       {([
-                                          { key: 'afstand', label: 'Afstand', desc: `km van ${prefLocation}` },
+                                          { key: 'afstand', label: 'Afstand', desc: `km van ${hqShortLabel}` },
                                           { key: 'specs', label: 'Specialisaties', desc: 'Nieuwbouw, Renovatie, etc.' },
                                           { key: 'telefoon', label: 'Telefoonnummer', desc: 'Algemeen telefoonnummer' },
                                           { key: 'email', label: 'E-mailadres', desc: 'Algemeen e-mailadres' },
@@ -2629,6 +2677,80 @@ const App: React.FC = () => {
       )}
 
       {/* MAIN LAYOUT */}
+      {(() => {
+        const activeFilterCount = [
+          city, ...selectedRegions.filter(r => r !== 'Heel Nederland'), ...selectedTypes, ...selectedWerksoort,
+          ...selectedBron, ...selectedRechtsvorm, ...selectedContact, ...selectedLijsten,
+        ].filter(Boolean).length;
+
+        const filterGroupsContent = (
+          <>
+            <div className="flex-grow overflow-y-auto p-6 space-y-2 scrollbar-thin">
+                 {/* Opgeslagen filters */}
+                 {savedFilters.length > 0 && (
+                   <div className="border border-[#009FE3]/20 bg-[#009FE3]/5 rounded-sm p-3 mb-4">
+                     <p className="text-[10px] font-black uppercase tracking-widest text-[#009FE3] mb-2 flex items-center gap-1.5"><Bookmark className="w-3 h-3"/>Opgeslagen filters</p>
+                     <div className="space-y-1">
+                       {savedFilters.map(f => (
+                         <div key={f.name} className="flex items-center gap-1">
+                           <button onClick={() => applySavedFilter(f)} className="flex-1 text-left text-xs font-semibold text-slate-700 hover:text-[#009FE3] truncate">{f.name}</button>
+                           <button onClick={() => deleteSavedFilter(f.name)} className="text-slate-300 hover:text-red-400 flex-shrink-0"><X className="w-3 h-3" /></button>
+                         </div>
+                       ))}
+                     </div>
+                   </div>
+                 )}
+                 <ProvinceFilter selectedRegions={selectedRegions} onToggle={(item: string) => toggleFilter(setSelectedRegions, item)} dataset={sidebarDataset} />
+                 <CollapsibleFilterGroup title="Discipline" items={['Architecten', 'Bouwbedrijven', 'Aannemers', 'Bouwmaterialen']} selectedItems={selectedTypes} onToggleItem={(item) => toggleFilter(setSelectedTypes, item)} dataset={activeData} countFn={(item: string, b: any) => { const t = detectType(b); if (item === 'Architecten') return t === 'architect'; if (item === 'Bouwbedrijven') return t === 'bouwbedrijf'; if (item === 'Aannemers') return t === 'aannemer'; if (item === 'Bouwmaterialen') return t === 'materialen'; return false; }} />
+                 <CollapsibleFilterGroup title="Werksoort" items={['Nieuwbouw', 'Renovatie', 'Verduurzaming', 'Restauratie', 'Onderhoud', 'Interieur', 'Utiliteitsbouw', 'Allround']} selectedItems={selectedWerksoort} onToggleItem={(item) => toggleFilter(setSelectedWerksoort, item)} dataset={activeData} countFn={(item: string, b: any) => { const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase(); if (item === 'Nieuwbouw') return specs.includes('nieuwbouw'); if (item === 'Renovatie') return specs.includes('renovatie') || specs.includes('verbouw') || specs.includes('aanbouw') || specs.includes('transformatie'); if (item === 'Verduurzaming') return specs.includes('verduurzam') || specs.includes('isoler') || specs.includes('duurzaam') || specs.includes('energie') || specs.includes('warmtepomp') || specs.includes('zonnepanelen'); if (item === 'Restauratie') return specs.includes('restauratie') || specs.includes('monument'); if (item === 'Onderhoud') return specs.includes('onderhoud') || specs.includes('beheer') || specs.includes('service'); if (item === 'Interieur') return specs.includes('interieur') || specs.includes('afbouw') || specs.includes('binneninrichting'); if (item === 'Utiliteitsbouw') return specs.includes('utiliteit') || specs.includes('kantoor') || specs.includes('bedrijfsgebouw') || specs.includes('zakelijk'); if (item === 'Allround') return specs.includes('allround'); return false; }} />
+                 <CollapsibleFilterGroup title="Bron" items={['Bouwgarant', 'BNA', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Handmatig', 'Onbekend']} selectedItems={selectedBron} onToggleItem={(item) => toggleFilter(setSelectedBron, item)} dataset={activeData} countFn={(item: string, b: any) => { const srcs = b._sources?.length ? b._sources : [b.source || 'Onbekend']; return srcs.includes(item); }} />
+                 <CollapsibleFilterGroup title="Rechtsvorm" items={['B.V.', 'V.O.F.', 'Eenmanszaak', 'Stichting', 'N.V.']} selectedItems={selectedRechtsvorm} onToggleItem={(item) => toggleFilter(setSelectedRechtsvorm, item)} dataset={activeData} countFn={(item: string, b: any) => { const rv = (b.rechtsvorm || '').toLowerCase(); const naam = (b.naam || '').toLowerCase(); if (item === 'B.V.') return rv.includes('b.v') || rv.includes('bv') || naam.includes(' bv') || naam.endsWith(' b.v.') || naam.endsWith(' bv'); if (item === 'V.O.F.') return rv.includes('vof') || rv.includes('v.o.f') || naam.includes(' vof'); if (item === 'Eenmanszaak') return rv.includes('eenmanszaak') || rv.includes('zzp'); if (item === 'Stichting') return rv.includes('stichting') || naam.startsWith('stichting'); if (item === 'N.V.') return rv.includes('n.v') || rv.includes('nv') || naam.includes(' nv'); return false; }} />
+                 <CollapsibleFilterGroup title="Contactgegevens" items={['Heeft telefoon', 'Heeft e-mail', 'Heeft website', 'Heeft KVK']} selectedItems={selectedContact} onToggleItem={(item) => toggleFilter(setSelectedContact, item)} dataset={activeData} countFn={(item: string, b: any) => { if (item === 'Heeft telefoon') return !!(b.telefoon || b.telefoon_sales || b.telefoon_admin); if (item === 'Heeft e-mail') return !!(b.email || b.email_sales || b.email_overig); if (item === 'Heeft website') return !!(b.website || b.url); if (item === 'Heeft KVK') return !!(b.kvk); return false; }} />
+            </div>
+            <div className="p-6 border-t border-slate-200 bg-white space-y-2">
+                {(city || selectedRegions.length > 0 || selectedTypes.length > 0 || selectedWerksoort.length > 0 || selectedBron.length > 0 || selectedRechtsvorm.length > 0 || selectedContact.length > 0) && (
+                  <button
+                    onClick={() => { setSaveFilterName(''); setShowSaveFilterModal(true); }}
+                    className="w-full py-2.5 bg-white border border-[#009FE3] text-[#009FE3] text-xs font-bold uppercase tracking-[0.1em] transition-colors flex items-center justify-center gap-2 rounded-sm hover:bg-[#009FE3]/5">
+                    <Bookmark className="w-3.5 h-3.5" /> Sla filter op
+                  </button>
+                )}
+                <button
+                    onClick={() => {
+                      if (viewMode === 'favorites') setCurrentPage(1);
+                      else if (viewMode === 'database') setDbPage(1);
+                      else handleManualSearch();
+                      setShowMobileFilters(false);
+                    }}
+                    disabled={searchState.isLoading}
+                    className="w-full py-3.5 bg-[#009FE3] hover:bg-[#008ac5] disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-bold uppercase tracking-[0.1em] transition-colors shadow-sm flex items-center justify-center gap-2">
+                    Filters Toepassen
+                </button>
+                {(selectedRegions.length > 0 || selectedTypes.length > 0 || selectedWerksoort.length > 0 || selectedContact.length > 0 || selectedLijsten.length > 0 || selectedBron.length > 0 || selectedRechtsvorm.length > 0) && (
+                    <button
+                        onClick={() => {
+                            setSelectedRegions([]);
+                            setSelectedTypes([]);
+                            setSelectedWerksoort([]);
+                            setSelectedContact([]);
+                            setSelectedLijsten([]);
+                            setSelectedBron([]);
+                            setSelectedRechtsvorm([]);
+                            setCity('');
+                            setRadiusKm(null);
+                            setFoundCompanies([]);
+                            setTotalMatches(0);
+                            setSearchState({ isLoading: false, data: null, error: null });
+                        }}
+                        className="w-full py-2.5 bg-white border border-slate-200 hover:border-red-300 hover:text-red-500 text-slate-500 text-xs font-bold uppercase tracking-[0.1em] transition-colors flex items-center justify-center gap-2">
+                        <X className="w-3.5 h-3.5" /> Filters Wissen
+                    </button>
+                )}
+            </div>
+          </>
+        );
+
+        return (
       <div className={`flex flex-col md:flex-row max-w-[1400px] mx-auto w-full flex-grow ${selectedIds.size > 0 ? 'pb-20' : ''}`}>
           {viewMode !== 'map' && (
           <aside className={`bg-white border-r border-slate-200 flex-shrink-0 hidden md:flex flex-col h-[calc(100vh-112px)] sticky top-28 transition-all duration-200 ${sidebarCollapsed ? 'w-12' : 'w-80'}`}>
@@ -2638,102 +2760,65 @@ const App: React.FC = () => {
                       {sidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
                   </button>
               </div>
-              {!sidebarCollapsed && (<>
-              <div className="flex-grow overflow-y-auto p-6 space-y-2 scrollbar-thin">
-                   {/* Opgeslagen filters */}
-                   {savedFilters.length > 0 && (
-                     <div className="border border-[#009FE3]/20 bg-[#009FE3]/5 rounded-sm p-3 mb-4">
-                       <p className="text-[10px] font-black uppercase tracking-widest text-[#009FE3] mb-2 flex items-center gap-1.5"><Bookmark className="w-3 h-3"/>Opgeslagen filters</p>
-                       <div className="space-y-1">
-                         {savedFilters.map(f => (
-                           <div key={f.name} className="flex items-center gap-1">
-                             <button onClick={() => applySavedFilter(f)} className="flex-1 text-left text-xs font-semibold text-slate-700 hover:text-[#009FE3] truncate">{f.name}</button>
-                             <button onClick={() => deleteSavedFilter(f.name)} className="text-slate-300 hover:text-red-400 flex-shrink-0"><X className="w-3 h-3" /></button>
-                           </div>
-                         ))}
-                       </div>
-                     </div>
-                   )}
-                   <ProvinceFilter selectedRegions={selectedRegions} onToggle={(item: string) => toggleFilter(setSelectedRegions, item)} dataset={sidebarDataset} />
-                   <CollapsibleFilterGroup title="Discipline" items={['Architecten', 'Bouwbedrijven', 'Aannemers', 'Bouwmaterialen']} selectedItems={selectedTypes} onToggleItem={(item) => toggleFilter(setSelectedTypes, item)} dataset={activeData} countFn={(item: string, b: any) => { const t = detectType(b); if (item === 'Architecten') return t === 'architect'; if (item === 'Bouwbedrijven') return t === 'bouwbedrijf'; if (item === 'Aannemers') return t === 'aannemer'; if (item === 'Bouwmaterialen') return t === 'materialen'; return false; }} />
-                   <CollapsibleFilterGroup title="Werksoort" items={['Nieuwbouw', 'Renovatie', 'Verduurzaming', 'Restauratie', 'Onderhoud', 'Interieur', 'Utiliteitsbouw', 'Allround']} selectedItems={selectedWerksoort} onToggleItem={(item) => toggleFilter(setSelectedWerksoort, item)} dataset={activeData} countFn={(item: string, b: any) => { const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase(); if (item === 'Nieuwbouw') return specs.includes('nieuwbouw'); if (item === 'Renovatie') return specs.includes('renovatie') || specs.includes('verbouw') || specs.includes('aanbouw') || specs.includes('transformatie'); if (item === 'Verduurzaming') return specs.includes('verduurzam') || specs.includes('isoler') || specs.includes('duurzaam') || specs.includes('energie') || specs.includes('warmtepomp') || specs.includes('zonnepanelen'); if (item === 'Restauratie') return specs.includes('restauratie') || specs.includes('monument'); if (item === 'Onderhoud') return specs.includes('onderhoud') || specs.includes('beheer') || specs.includes('service'); if (item === 'Interieur') return specs.includes('interieur') || specs.includes('afbouw') || specs.includes('binneninrichting'); if (item === 'Utiliteitsbouw') return specs.includes('utiliteit') || specs.includes('kantoor') || specs.includes('bedrijfsgebouw') || specs.includes('zakelijk'); if (item === 'Allround') return specs.includes('allround'); return false; }} />
-                   <CollapsibleFilterGroup title="Bron" items={['Bouwgarant', 'BNA', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Handmatig', 'Onbekend']} selectedItems={selectedBron} onToggleItem={(item) => toggleFilter(setSelectedBron, item)} dataset={activeData} countFn={(item: string, b: any) => { const srcs = b._sources?.length ? b._sources : [b.source || 'Onbekend']; return srcs.includes(item); }} />
-                   <CollapsibleFilterGroup title="Rechtsvorm" items={['B.V.', 'V.O.F.', 'Eenmanszaak', 'Stichting', 'N.V.']} selectedItems={selectedRechtsvorm} onToggleItem={(item) => toggleFilter(setSelectedRechtsvorm, item)} dataset={activeData} countFn={(item: string, b: any) => { const rv = (b.rechtsvorm || '').toLowerCase(); const naam = (b.naam || '').toLowerCase(); if (item === 'B.V.') return rv.includes('b.v') || rv.includes('bv') || naam.includes(' bv') || naam.endsWith(' b.v.') || naam.endsWith(' bv'); if (item === 'V.O.F.') return rv.includes('vof') || rv.includes('v.o.f') || naam.includes(' vof'); if (item === 'Eenmanszaak') return rv.includes('eenmanszaak') || rv.includes('zzp'); if (item === 'Stichting') return rv.includes('stichting') || naam.startsWith('stichting'); if (item === 'N.V.') return rv.includes('n.v') || rv.includes('nv') || naam.includes(' nv'); return false; }} />
-                   <CollapsibleFilterGroup title="Contactgegevens" items={['Heeft telefoon', 'Heeft e-mail', 'Heeft website', 'Heeft KVK']} selectedItems={selectedContact} onToggleItem={(item) => toggleFilter(setSelectedContact, item)} dataset={activeData} countFn={(item: string, b: any) => { if (item === 'Heeft telefoon') return !!(b.telefoon || b.telefoon_sales || b.telefoon_admin); if (item === 'Heeft e-mail') return !!(b.email || b.email_sales || b.email_overig); if (item === 'Heeft website') return !!(b.website || b.url); if (item === 'Heeft KVK') return !!(b.kvk); return false; }} />
-              </div>
-              <div className="p-6 border-t border-slate-200 bg-white space-y-2">
-                  {(city || selectedRegions.length > 0 || selectedTypes.length > 0 || selectedWerksoort.length > 0 || selectedBron.length > 0 || selectedRechtsvorm.length > 0 || selectedContact.length > 0) && (
-                    <button
-                      onClick={() => { setSaveFilterName(''); setShowSaveFilterModal(true); }}
-                      className="w-full py-2.5 bg-white border border-[#009FE3] text-[#009FE3] text-xs font-bold uppercase tracking-[0.1em] transition-colors flex items-center justify-center gap-2 rounded-sm hover:bg-[#009FE3]/5">
-                      <Bookmark className="w-3.5 h-3.5" /> Sla filter op
-                    </button>
-                  )}
-                  <button
-                      onClick={() => {
-                        if (viewMode === 'favorites') setCurrentPage(1);
-                        else if (viewMode === 'database') setDbPage(1);
-                        else handleManualSearch();
-                      }}
-                      disabled={searchState.isLoading}
-                      className="w-full py-3.5 bg-[#009FE3] hover:bg-[#008ac5] disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-bold uppercase tracking-[0.1em] transition-colors shadow-sm flex items-center justify-center gap-2">
-                      Filters Toepassen
-                  </button>
-                  {(selectedRegions.length > 0 || selectedTypes.length > 0 || selectedWerksoort.length > 0 || selectedContact.length > 0 || selectedLijsten.length > 0 || selectedBron.length > 0 || selectedRechtsvorm.length > 0) && (
-                      <button
-                          onClick={() => {
-                              setSelectedRegions([]);
-                              setSelectedTypes([]);
-                              setSelectedWerksoort([]);
-                              setSelectedContact([]);
-                              setSelectedLijsten([]);
-                              setSelectedBron([]);
-                              setSelectedRechtsvorm([]);
-                              setCity('');
-                              setRadiusKm(null);
-                              setFoundCompanies([]);
-                              setTotalMatches(0);
-                              setSearchState({ isLoading: false, data: null, error: null });
-                          }}
-                          className="w-full py-2.5 bg-white border border-slate-200 hover:border-red-300 hover:text-red-500 text-slate-500 text-xs font-bold uppercase tracking-[0.1em] transition-colors flex items-center justify-center gap-2">
-                          <X className="w-3.5 h-3.5" /> Filters Wissen
-                      </button>
-                  )}
-              </div>
-              </>)}
+              {!sidebarCollapsed && filterGroupsContent}
           </aside>
           )}
 
           <main className="flex-grow p-3 sm:p-6 lg:p-10 min-w-0 flex flex-col">
              <div className="max-w-4xl mx-auto w-full mb-4 sm:mb-6 flex gap-1 border-b border-slate-200 overflow-x-auto">
                  <button onClick={() => setViewMode('search')} className={`flex-1 min-w-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'search' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <LayoutGrid className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                     <LayoutGrid className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
                      <span className="hidden sm:inline">Live Zoeken</span>
                      <span className="sm:hidden">Zoeken</span>
                  </button>
                  <button onClick={() => { setViewMode('favorites'); setCurrentPage(1); setShowRouteMap(false); }} className={`flex-1 min-w-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'favorites' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <Heart className={`w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0 ${viewMode === 'favorites' ? 'fill-current' : ''}`} />
+                     <Heart className={`hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0 ${viewMode === 'favorites' ? 'fill-current' : ''}`} />
                      <span className="hidden sm:inline">Mijn Favorieten ({favorites.length})</span>
                      <span className="sm:hidden">Favorieten ({favorites.length})</span>
                  </button>
                  <button onClick={() => { setViewMode('database'); setDbPage(1); }} className={`flex-1 min-w-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'database' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                     <Database className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
                      <span className="hidden sm:inline">Bedrijvendatabase ({activeData.length})</span>
                      <span className="sm:hidden">Database</span>
                  </button>
                  <button onClick={() => setViewMode('map')} className={`flex-1 min-w-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'map' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <MapPin className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" /> Kaart
+                     <MapPin className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" /> Kaart
                      {mapMarkerCount > 0 && (
                        <span className="ml-0.5 px-1.5 py-0.5 bg-[#E85E26] text-white rounded-full text-[9px] font-bold leading-none">{mapMarkerCount}</span>
                      )}
                  </button>
                  <button onClick={() => setViewMode('dashboard')} className={`flex-1 min-w-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'dashboard' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <TrendingUp className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                     <TrendingUp className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
                      <span className="hidden sm:inline">Marktoverzicht</span>
                      <span className="sm:hidden">Markt</span>
                  </button>
              </div>
 
+             {/* Mobiel: filters-knop + slide-up drawer (de aside hierboven is hidden md:flex, dus onzichtbaar op mobiel) */}
+             {viewMode !== 'map' && (
+               <button
+                 onClick={() => setShowMobileFilters(true)}
+                 className="md:hidden flex items-center justify-center gap-2 w-full mb-4 py-2.5 bg-white border border-slate-200 rounded-sm text-xs font-bold uppercase tracking-wider text-slate-600"
+               >
+                 <Filter className="w-3.5 h-3.5 text-[#009FE3]" /> Filters
+                 {activeFilterCount > 0 && <span className="px-1.5 py-0.5 bg-[#E85E26] text-white rounded-full text-[10px] leading-none">{activeFilterCount}</span>}
+               </button>
+             )}
+
+             {viewMode !== 'map' && showMobileFilters && (
+               <div className="md:hidden fixed inset-0 z-50 flex items-end bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowMobileFilters(false)}>
+                 <div className="bg-white w-full max-h-[85vh] rounded-t-xl flex flex-col" onClick={e => e.stopPropagation()}>
+                   <div className="w-10 h-1 bg-slate-300 rounded-full mx-auto mt-3 flex-shrink-0" />
+                   <div className="p-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
+                     <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest font-condensed flex items-center gap-2"><Filter className="w-4 h-4 text-[#009FE3]" /> Filters</h2>
+                     <button onClick={() => setShowMobileFilters(false)} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
+                   </div>
+                   <div className="flex flex-col overflow-y-auto min-h-0">
+                     {filterGroupsContent}
+                   </div>
+                 </div>
+               </div>
+             )}
 
              {viewMode === 'database' && (() => {
                const sidebarRegions = selectedRegions.filter(r => r !== 'Heel Nederland');
@@ -3397,7 +3482,7 @@ const App: React.FC = () => {
                                       <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wide leading-tight">{b.naam || company.name}</h3>
                                       <SourceBadges b={b} />
                                       {isNew(b) && <span className="text-[9px] bg-green-500 text-white px-1.5 py-0.5 font-bold rounded-sm flex-shrink-0">Nieuw</span>}
-                                      {distKm !== undefined && showField('afstand') && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`} van {prefLocation}</span>}
+                                      {distKm !== undefined && showField('afstand') && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`} van {hqShortLabel}</span>}
                                     </div>
                                     {(b.straat || b.postcode || b.stad || company.city) && (
                                       <p className="text-slate-500 text-xs mt-1 flex items-start gap-1 flex-wrap">
@@ -3494,7 +3579,8 @@ const App: React.FC = () => {
             )}
           </main>
       </div>
-
+        );
+      })()}
 
       {/* ── Opgeslagen filter opslaan modal ────────────────────────────────── */}
       {showSaveFilterModal && (

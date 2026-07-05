@@ -762,7 +762,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
       <div className="relative flex-1 min-h-0">
         <div
           ref={mapDiv}
-          className="w-full h-full"
+          className="absolute inset-0"
           onDragOver={e => e.preventDefault()}
           onDrop={e => {
             e.preventDefault();
