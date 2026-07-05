@@ -2165,8 +2165,12 @@ const App: React.FC = () => {
         bna_projecten: best(acc, cur, 'bna_projecten'),
         _custom:    acc._custom || cur._custom,
       }));
-      // Collect all unique sources
-      const sources = Array.from(new Set(group.map(e => e.source).filter(Boolean)));
+      // Collect all unique sources. A duplicate scraped without attribution (raw source
+      // literally "Onbekend") shouldn't count as a separate bron once a real bron is known
+      // for the same company — drop it whenever at least one real source is present.
+      const rawSources = group.map(e => e.source).filter(Boolean);
+      const realSources = Array.from(new Set(rawSources.filter(s => s !== 'Onbekend')));
+      const sources = realSources.length > 0 ? realSources : (rawSources.length > 0 ? ['Onbekend'] : []);
       base.source = sources[0] || 'Onbekend';
       base._sources = sources; // all sources as array
       // The "Onbekend" bron's address wins ties — it's leading for location, even when a
