@@ -1445,153 +1445,53 @@ const App: React.FC = () => {
     localStorage.setItem('inncempro_recent_viewed', JSON.stringify(limited));
   };
 
-  // AI Route Helper
+  // AI Route Helper - Wizard Mode
   const [showAIHelper, setShowAIHelper] = useState(false);
-  const [aiMessages, setAiMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([
-    { role: 'assistant', content: 'Hallo! Ik ben je AI Route Helper. Ik help je bedrijven zoeken en een route plannen. Wat zoek je vandaag?' }
-  ]);
-  const [aiInput, setAiInput] = useState('');
+  const [aiStep, setAiStep] = useState<'type' | 'city' | 'count' | 'results'>('type');
+  const [aiSelected, setAiSelected] = useState({ type: '', city: '', count: 0 });
 
-  const sendAIMessage = async (message: string) => {
-    if (!message.trim()) return;
+  const executeAIRoute = () => {
+    const { type, city, count } = aiSelected;
+    if (!city || count === 0) return;
 
-    const newMessages = [...aiMessages, { role: 'user' as const, content: message }];
-    setAiMessages(newMessages);
-    setAiInput('');
+    // Filter bedrijven
+    let filtered = activeData.filter(b => {
+      const bcity = (b.stad || '').toLowerCase().trim();
+      const inCity = bcity.includes(city.toLowerCase());
+      if (!inCity) return false;
 
-    // Verwerk opslaan van route als gebruiker "Ja, opslaan" zegt
-    if (message.toLowerCase().includes('opslaan')) {
-      // Extraheer route info van vorige AI bericht
-      const lastAIMsg = newMessages[newMessages.length - 2]?.content || '';
-      const cityMatch = lastAIMsg.match(/(\w+(?:\s+\w+)?)\s*-\s*goed keuze|route met \d+ bedrijven in (\w+(?:\s+\w+)?)/i);
-      const city = cityMatch?.[1] || cityMatch?.[2];
-      const countMatch = lastAIMsg.match(/(\d+) bedrijven/);
-      const count = countMatch ? parseInt(countMatch[1]) : 5;
+      if (!type) return true;
+      const naam = (b.naam || '').toLowerCase();
+      const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase();
+      const compStr = `${naam} ${specs}`;
 
-      if (city) {
-        // Filter bedrijven in deze stad
-        const filtered = activeData.filter(b => {
-          const bcity = (b.stad || '').toLowerCase().trim();
-          return bcity.includes(city.toLowerCase());
-        }).slice(0, count);
+      if (type === 'architecten' && compStr.includes('architect')) return true;
+      if (type === 'bouwbedrijven' && (compStr.includes('bouwbedrijf') || compStr.includes(' bouw'))) return true;
+      if (type === 'aannemers' && compStr.includes('aannemer')) return true;
+      if (type === 'materialen' && (compStr.includes('hout') || compStr.includes('materiaal'))) return true;
+      return false;
+    });
 
-        if (filtered.length > 0) {
-          // Maak route en sla op
-          const route = {
-            id: Math.random().toString(36).substr(2, 9),
-            name: `Route: ${city}`,
-            bedrijven: filtered.map(b => ({ naam: b.naam, stad: b.stad, straat: b.straat })),
-            createdAt: new Date().toISOString(),
-          };
+    const available = Math.min(count, filtered.length);
 
-          try {
-            const saved = JSON.parse(localStorage.getItem('inncempro_saved_routes') || '[]');
-            saved.push(route);
-            localStorage.setItem('inncempro_saved_routes', JSON.stringify(saved));
+    // Maak route en sla op
+    const route = {
+      id: Math.random().toString(36).substr(2, 9),
+      name: `Route: ${type || 'gemengd'} in ${city}`,
+      bedrijven: filtered.slice(0, count).map(b => ({ naam: b.naam, stad: b.stad, straat: b.straat })),
+      createdAt: new Date().toISOString(),
+    };
 
-            setAiMessages(prev => [...prev, { role: 'assistant', content: `✅ Route "${route.name}" opgeslagen! Je kunt hem vinden in de ROUTES sectie.` }]);
-          } catch (e) {
-            setAiMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Er was een fout bij het opslaan. Probeer opnieuw.' }]);
-          }
-          return;
-        }
-      }
+    try {
+      const saved = JSON.parse(localStorage.getItem('inncempro_saved_routes') || '[]');
+      saved.push(route);
+      localStorage.setItem('inncempro_saved_routes', JSON.stringify(saved));
+      setAiStep('results');
+    } catch (e) {
+      console.error('Route save failed');
     }
-
-    // Standaard: intelligente respons genereren
-    const response = generateAIResponse(message, activeData);
-    setTimeout(() => {
-      setAiMessages(prev => [...prev, { role: 'assistant', content: response }]);
-    }, 500);
   };
 
-  const generateAIResponse = (userInput: string, data: any[]): string => {
-    const lower = userInput.toLowerCase().trim();
-
-    // Check welke stadnamen in de input zitten
-    const allCities = Object.keys(cityCoords as any);
-    const foundCities = allCities.filter(city => lower.includes(city.toLowerCase()));
-    const primaryCity = foundCities.length > 0 ? foundCities[0] : null;
-
-    // Check welke bedrijfstypen worden genoemd
-    const hasArchitects = lower.includes('architect');
-    const hasBuilders = lower.includes('bouw') || lower.includes('bouwbedrijf');
-    const hasContractors = lower.includes('aannemer');
-    const hasMaterials = lower.includes('materiaal') || lower.includes('hout');
-
-    // Check hoeveel bedrijven gewenst
-    const numberMatch = userInput.match(/(\d+)/);
-    const desiredCount = numberMatch ? parseInt(numberMatch[1]) : null;
-
-    // Bepaal fase in conversatie
-    if (!primaryCity && !hasArchitects && !hasBuilders && !hasContractors && !hasMaterials) {
-      // Fase 1: Nog geen duidelijke voorkeur
-      return 'Hallo! Ik help je graag bedrijven zoeken en een route plannen.\n\nVertell me:\n• Welk type: architecten, bouwbedrijven, aannemers, of materialen?\n• Welke stad(en) wil je bezoeken?\n• Hoeveel bedrijven wil je zien?';
-    }
-
-    if (!primaryCity && (hasArchitects || hasBuilders || hasContractors || hasMaterials)) {
-      // Fase 2: Wel bedrijfstype, nog geen stad
-      const types = [];
-      if (hasArchitects) types.push('architecten');
-      if (hasBuilders) types.push('bouwbedrijven');
-      if (hasContractors) types.push('aannemers');
-      if (hasMaterials) types.push('materialen');
-
-      return `Prima! Je zoekt ${types.join(', ')}.\n\nIn welke stad(en) wil je zoeken? (bv. Amsterdam, Rotterdam, Utrecht, Den Bosch, Groningen, etc.)`;
-    }
-
-    if (primaryCity && !desiredCount) {
-      // Fase 3: Wel stad en type, nog geen aantal
-      const types = [];
-      if (hasArchitects) types.push('architecten');
-      if (hasBuilders) types.push('bouwbedrijven');
-      if (hasContractors) types.push('aannemers');
-      if (hasMaterials) types.push('materialen');
-      const typeStr = types.length > 0 ? types.join(', ') : 'bedrijven';
-
-      // Tel hoeveel bedrijven we hebben in die stad
-      const matchingInCity = data.filter(b => {
-        const city = (b.stad || '').toLowerCase().trim();
-        return city.includes(primaryCity.toLowerCase());
-      });
-
-      return `${primaryCity} - goed keuze! We hebben ${matchingInCity.length} ${typeStr} in/rond deze stad.\n\nHoeveel wil je bezoeken? (ik recommend 3-8 voor een dag)`;
-    }
-
-    if (primaryCity && desiredCount) {
-      // Fase 4: Alle info aanwezig - maak route
-      const types = [];
-      if (hasArchitects) types.push('architecten');
-      if (hasBuilders) types.push('bouwbedrijven');
-      if (hasContractors) types.push('aannemers');
-      if (hasMaterials) types.push('materialen');
-
-      // Filter bedrijven
-      let filtered = data.filter(b => {
-        const city = (b.stad || '').toLowerCase().trim();
-        const inCity = city.includes(primaryCity.toLowerCase());
-        if (!inCity) return false;
-
-        if (types.length === 0) return true;
-        const naam = (b.naam || '').toLowerCase();
-        const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase();
-        const compStr = `${naam} ${specs}`;
-
-        return types.some(t => {
-          if (t === 'architecten' && compStr.includes('architect')) return true;
-          if (t === 'bouwbedrijven' && (compStr.includes('bouwbedrijf') || compStr.includes(' bouw'))) return true;
-          if (t === 'aannemers' && compStr.includes('aannemer')) return true;
-          if (t === 'materialen' && (compStr.includes('hout') || compStr.includes('materiaal'))) return true;
-          return false;
-        });
-      });
-
-      const available = Math.min(desiredCount, filtered.length);
-      return `Perfect! Ik maak een route met ${available} bedrijven in ${primaryCity}.\n\nVoorstel: Start met de dichtstbijzijnde, dan efficiënt de rest bezoeken.\n\nWil je deze route opslaan?`;
-    }
-
-    return 'Kan je wat specifieker zijn? Bijvoorbeeld:\n"Bouwbedrijven in Amsterdam" of\n"5 architectenbureaus in Rotterdam"';
-  };
   const [editDraft, setEditDraft] = useState<Record<string, string>>({});
   const MANUAL_EDITS_KEY = 'inncempro_manual_edits';
   const [manualEdits, setManualEdits] = useState<Record<string, Record<string, string>>>(() => {
@@ -4637,6 +4537,72 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* AI Route Helper - Wizard Mode */}
+      {showAIHelper && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-md rounded-sm shadow-2xl border border-slate-200">
+            {/* Header */}
+            <div className="p-4 bg-gradient-to-r from-[#009FE3] to-[#0088c8] flex items-center justify-between rounded-t-sm">
+              <div className="flex items-center gap-2">
+                <Bot className="w-5 h-5 text-white" />
+                <h2 className="text-lg font-bold text-white">AI Route Maker</h2>
+              </div>
+              <button onClick={() => { setShowAIHelper(false); setAiStep('type'); setAiSelected({ type: '', city: '', count: 0 }); }} className="text-white/70 hover:text-white"><X className="w-5 h-5" /></button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Step 1: Type */}
+              {aiStep === 'type' && (
+                <div>
+                  <p className="text-sm font-bold text-slate-900 mb-3">Welk type bedrijf zoek je?</p>
+                  <div className="space-y-2">
+                    {['architecten', 'bouwbedrijven', 'aannemers', 'materialen'].map(t => (
+                      <button key={t} onClick={() => { setAiSelected({...aiSelected, type: t}); setAiStep('city'); }} className={`w-full px-4 py-2 rounded-sm font-medium text-sm transition-colors ${aiSelected.type === t ? 'bg-[#009FE3] text-white' : 'bg-slate-100 text-slate-800 hover:bg-slate-200'}`}>
+                        {t.charAt(0).toUpperCase() + t.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Step 2: City */}
+              {aiStep === 'city' && (
+                <div>
+                  <p className="text-sm font-bold text-slate-900 mb-3">In welke stad?</p>
+                  <input type="text" placeholder="Amsterdam, Rotterdam..." value={aiSelected.city} onChange={(e) => setAiSelected({...aiSelected, city: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-sm text-sm focus:outline-none focus:border-[#009FE3]" />
+                  <button onClick={() => aiSelected.city && setAiStep('count')} className="w-full mt-3 px-4 py-2 bg-[#009FE3] text-white rounded-sm hover:bg-[#0088c8] font-medium text-sm">
+                    Volgende
+                  </button>
+                </div>
+              )}
+
+              {/* Step 3: Count */}
+              {aiStep === 'count' && (
+                <div>
+                  <p className="text-sm font-bold text-slate-900 mb-3">Hoeveel bedrijven? (1-20)</p>
+                  <input type="number" min="1" max="20" value={aiSelected.count || ''} onChange={(e) => setAiSelected({...aiSelected, count: parseInt(e.target.value) || 0})} className="w-full px-3 py-2 border border-slate-300 rounded-sm text-sm focus:outline-none focus:border-[#009FE3]" />
+                  <button onClick={() => aiSelected.count > 0 && executeAIRoute()} className="w-full mt-3 px-4 py-2 bg-[#E85E26] text-white rounded-sm hover:bg-[#d94d15] font-bold text-sm">
+                    Route maken
+                  </button>
+                </div>
+              )}
+
+              {/* Step 4: Results */}
+              {aiStep === 'results' && (
+                <div className="text-center">
+                  <Bot className="w-12 h-12 text-[#009FE3] mx-auto mb-2" />
+                  <p className="font-bold text-slate-900 mb-1">Route gemaakt!</p>
+                  <p className="text-sm text-slate-600 mb-4">{aiSelected.count} {aiSelected.type} in {aiSelected.city}</p>
+                  <button onClick={() => { setShowAIHelper(false); setAiStep('type'); setAiSelected({ type: '', city: '', count: 0 }); }} className="w-full px-4 py-2 bg-slate-200 text-slate-800 rounded-sm hover:bg-slate-300 font-medium text-sm">
+                    Sluiten
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -4786,61 +4752,6 @@ const ProvinceFilter: React.FC<{ selectedRegions: string[]; onToggle: (item: str
               Wis filters ({activeCount})
             </button>
           )}
-        </div>
-      )}
-
-      {/* AI Route Helper Modal */}
-      {showAIHelper && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-md rounded-sm shadow-2xl flex flex-col h-[600px] border border-slate-200">
-            {/* Header - Inncempro blauw */}
-            <div className="p-4 bg-gradient-to-r from-[#009FE3] to-[#0088c8] flex items-center justify-between rounded-t-sm">
-              <div className="flex items-center gap-2">
-                <Bot className="w-5 h-5 text-white" />
-                <h2 className="text-lg font-bold text-white">AI Route Helper</h2>
-              </div>
-              <button onClick={() => setShowAIHelper(false)} className="text-white/70 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
-            </div>
-
-            {/* Chat */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
-              {aiMessages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-xs px-3 py-2 rounded-sm text-sm whitespace-pre-wrap break-words ${msg.role === 'user' ? 'bg-[#009FE3] text-white' : 'bg-white text-slate-800 border border-slate-200'}`}>
-                    {msg.content}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Actions / Input */}
-            <div className="p-4 border-t border-slate-200 bg-white rounded-b-sm">
-              {aiMessages.length > 0 && aiMessages[aiMessages.length - 1].content.includes('Wil je deze route opslaan') ? (
-                <div className="flex gap-2">
-                  <button onClick={() => sendAIMessage('Ja, opslaan')} className="flex-1 px-3 py-2 bg-[#009FE3] text-white rounded-sm hover:bg-[#0088c8] text-sm font-bold flex items-center justify-center gap-1 transition-colors">
-                    <Check className="w-4 h-4" /> Opslaan
-                  </button>
-                  <button onClick={() => sendAIMessage('Nee, annuleren')} className="flex-1 px-3 py-2 bg-slate-200 text-slate-700 rounded-sm hover:bg-slate-300 text-sm font-bold transition-colors">
-                    Annuleren
-                  </button>
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={aiInput}
-                    onChange={(e) => setAiInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && sendAIMessage(aiInput)}
-                    placeholder="Typ je vraag..."
-                    className="flex-1 px-3 py-2 border border-slate-300 rounded-sm text-sm focus:outline-none focus:border-[#009FE3] focus:ring-1 focus:ring-[#009FE3]"
-                  />
-                  <button onClick={() => sendAIMessage(aiInput)} className="px-3 py-2 bg-[#009FE3] text-white rounded-sm hover:bg-[#0088c8] transition-colors flex items-center justify-center">
-                    <Send className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
         </div>
       )}
     </div>
