@@ -327,6 +327,7 @@ interface Props {
   favorites: { name: string; city: string; _raw?: any }[];
   selectedItems?: any[];
   selectedIds?: Set<string>;
+  selectedCompany?: any; // bedrijf uit detail modal
   onToggleSelect?: (naam: string, raw: any) => void;
   onClearSelection?: () => void;
   bottomOffset?: number;
@@ -340,7 +341,7 @@ interface Props {
 const DEFAULT_START = 'Lansinkesweg 4, 7553 AE Hengelo';
 
 // ─── Component ────────────────────────────────────────────────────────────────
-const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], selectedIds = new Set(), onToggleSelect, onClearSelection, bottomOffset = 0, onNavigate, onAddressCorrection, onDeleteEntry, onMarkerCountChange, onAddCompany }) => {
+const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], selectedIds = new Set(), selectedCompany, onToggleSelect, onClearSelection, bottomOffset = 0, onNavigate, onAddressCorrection, onDeleteEntry, onMarkerCountChange, onAddCompany }) => {
   const hasSelection = selectedItems.length > 0;
   const [mapSearch, setMapSearch] = useState('');
   const searchResults = useMemo(() => {
@@ -677,9 +678,8 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return;
     mapRef.current = L.map(mapDiv.current, { center: [52.15, 5.2], zoom: 7 });
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>',
-      subdomains: 'abcd',
+    L.tileLayer('https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png', {
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
     }).addTo(mapRef.current);
     const ro = new ResizeObserver(() => mapRef.current?.invalidateSize());
@@ -775,6 +775,44 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
       }
     });
   }, [drawCenter, drawRadiusM, entries]);
+
+  // Zoom naar geselecteerde bedrijf en plaats marker
+  const selectedMarkerRef = useRef<L.Marker | null>(null);
+  useEffect(() => {
+    if (!selectedCompany || !mapRef.current) return;
+
+    const stad = (selectedCompany.stad || '').trim();
+    if (!stad) return;
+
+    // Verwijder oude marker
+    if (selectedMarkerRef.current) {
+      mapRef.current.removeLayer(selectedMarkerRef.current);
+      selectedMarkerRef.current = null;
+    }
+
+    // Zoek coördinaten voor deze stad
+    const coords = (cityCoords as any)[stad];
+    if (coords) {
+      const [lat, lon] = coords;
+      mapRef.current.setView([lat, lon], 15);
+
+      // Plaats nieuwe marker op bedrijfslocatie
+      const marker = L.marker([lat, lon], {
+        title: selectedCompany.naam,
+        icon: L.icon({
+          iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+          shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+          iconSize: [25, 41],
+          shadowSize: [41, 41],
+        }),
+      })
+        .bindPopup(`<b>${selectedCompany.naam}</b><br>${selectedCompany.straat || ''} ${selectedCompany.postcode || ''} ${stad}`)
+        .addTo(mapRef.current)
+        .openPopup();
+
+      selectedMarkerRef.current = marker;
+    }
+  }, [selectedCompany]);
 
   const clearDrawArea = () => {
     drawCircleRef.current?.remove(); drawCircleRef.current = null;

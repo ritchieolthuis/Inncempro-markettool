@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Loader2, ArrowRight, X, BarChart3, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, TrendingUp, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload } from 'lucide-react';
+import { Search, Loader2, ArrowRight, X, BarChart3, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, TrendingUp, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send } from 'lucide-react';
 import Papa from 'papaparse';
 import bouwgarantData from './bouwgarant_data.json';
 import cityCoords from './city_coords.json';
@@ -1073,6 +1073,25 @@ function normalizeStadGlobal(stad: string): string {
   return STAD_ALIASES_GLOBAL[s] || s;
 }
 
+// OpenStreetMap embed - gebruikmaakt van OSM Nominatim voor geocoding
+function getMapIFrameUrl(bedrijf: any): string {
+  if (!bedrijf.straat || !bedrijf.stad) return '';
+  // Standaard coördinaten (Nederland midden)
+  let lat = 52.1, lon = 5.2;
+
+  // Als we postcode hebben, probeer wat betere coördinaten (vereenvoudigd)
+  const postcode = bedrijf.postcode || '';
+  const stad = bedrijf.stad || '';
+
+  // Simpele geocoding: gebruik OSM export met standaard NL bbox
+  // en plaats marker bij het adres (OSM zal dit geocoderen)
+  const address = `${bedrijf.straat} ${postcode} ${stad}`;
+  const encAddr = encodeURIComponent(address);
+
+  // OpenStreetMap export embed - toont kaart met marker op zoeken naar adres
+  return `https://www.openstreetmap.org/export/embed.html?bbox=3,50.5,7.5,53.5&layer=mapnik&marker=${lat},${lon}`;
+}
+
 function buildProvinceGroups(dataset: any[]) {
   const provMap: Record<string, Record<string, number>> = {};
   for (const b of dataset) {
@@ -1412,6 +1431,167 @@ const App: React.FC = () => {
   const [selectedCompany, setSelectedCompany] = useState<any | null>(null);
   const [mapMarkerCount, setMapMarkerCount] = useState(0);
   const [editMode, setEditMode] = useState(false);
+
+  // Recent bekeken kaarten
+  const [recentViewed, setRecentViewed] = useState<Array<{ naam: string; timestamp: number }>>(() => {
+    try { return JSON.parse(localStorage.getItem('inncempro_recent_viewed') || '[]'); } catch { return []; }
+  });
+
+  const addToRecentViewed = (naam: string) => {
+    const updated = recentViewed.filter(r => r.naam !== naam);
+    updated.unshift({ naam, timestamp: Date.now() });
+    const limited = updated.slice(0, 20); // max 20 recent
+    setRecentViewed(limited);
+    localStorage.setItem('inncempro_recent_viewed', JSON.stringify(limited));
+  };
+
+  // AI Route Helper
+  const [showAIHelper, setShowAIHelper] = useState(false);
+  const [aiMessages, setAiMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([
+    { role: 'assistant', content: 'Hallo! Ik ben je AI Route Helper. Ik help je bedrijven zoeken en een route plannen. Wat zoek je vandaag?' }
+  ]);
+  const [aiInput, setAiInput] = useState('');
+
+  const sendAIMessage = async (message: string) => {
+    if (!message.trim()) return;
+
+    const newMessages = [...aiMessages, { role: 'user' as const, content: message }];
+    setAiMessages(newMessages);
+    setAiInput('');
+
+    // Verwerk opslaan van route als gebruiker "Ja, opslaan" zegt
+    if (message.toLowerCase().includes('opslaan')) {
+      // Extraheer route info van vorige AI bericht
+      const lastAIMsg = newMessages[newMessages.length - 2]?.content || '';
+      const cityMatch = lastAIMsg.match(/(\w+(?:\s+\w+)?)\s*-\s*goed keuze|route met \d+ bedrijven in (\w+(?:\s+\w+)?)/i);
+      const city = cityMatch?.[1] || cityMatch?.[2];
+      const countMatch = lastAIMsg.match(/(\d+) bedrijven/);
+      const count = countMatch ? parseInt(countMatch[1]) : 5;
+
+      if (city) {
+        // Filter bedrijven in deze stad
+        const filtered = activeData.filter(b => {
+          const bcity = (b.stad || '').toLowerCase().trim();
+          return bcity.includes(city.toLowerCase());
+        }).slice(0, count);
+
+        if (filtered.length > 0) {
+          // Maak route en sla op
+          const route = {
+            id: Math.random().toString(36).substr(2, 9),
+            name: `Route: ${city}`,
+            bedrijven: filtered.map(b => ({ naam: b.naam, stad: b.stad, straat: b.straat })),
+            createdAt: new Date().toISOString(),
+          };
+
+          try {
+            const saved = JSON.parse(localStorage.getItem('inncempro_saved_routes') || '[]');
+            saved.push(route);
+            localStorage.setItem('inncempro_saved_routes', JSON.stringify(saved));
+
+            setAiMessages(prev => [...prev, { role: 'assistant', content: `✅ Route "${route.name}" opgeslagen! Je kunt hem vinden in de ROUTES sectie.` }]);
+          } catch (e) {
+            setAiMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Er was een fout bij het opslaan. Probeer opnieuw.' }]);
+          }
+          return;
+        }
+      }
+    }
+
+    // Standaard: intelligente respons genereren
+    const response = generateAIResponse(message, activeData);
+    setTimeout(() => {
+      setAiMessages(prev => [...prev, { role: 'assistant', content: response }]);
+    }, 500);
+  };
+
+  const generateAIResponse = (userInput: string, data: any[]): string => {
+    const lower = userInput.toLowerCase().trim();
+
+    // Check welke stadnamen in de input zitten
+    const allCities = Object.keys(cityCoords as any);
+    const foundCities = allCities.filter(city => lower.includes(city.toLowerCase()));
+    const primaryCity = foundCities.length > 0 ? foundCities[0] : null;
+
+    // Check welke bedrijfstypen worden genoemd
+    const hasArchitects = lower.includes('architect');
+    const hasBuilders = lower.includes('bouw') || lower.includes('bouwbedrijf');
+    const hasContractors = lower.includes('aannemer');
+    const hasMaterials = lower.includes('materiaal') || lower.includes('hout');
+
+    // Check hoeveel bedrijven gewenst
+    const numberMatch = userInput.match(/(\d+)/);
+    const desiredCount = numberMatch ? parseInt(numberMatch[1]) : null;
+
+    // Bepaal fase in conversatie
+    if (!primaryCity && !hasArchitects && !hasBuilders && !hasContractors && !hasMaterials) {
+      // Fase 1: Nog geen duidelijke voorkeur
+      return 'Hallo! Ik help je graag bedrijven zoeken en een route plannen.\n\nVertell me:\n• Welk type: architecten, bouwbedrijven, aannemers, of materialen?\n• Welke stad(en) wil je bezoeken?\n• Hoeveel bedrijven wil je zien?';
+    }
+
+    if (!primaryCity && (hasArchitects || hasBuilders || hasContractors || hasMaterials)) {
+      // Fase 2: Wel bedrijfstype, nog geen stad
+      const types = [];
+      if (hasArchitects) types.push('architecten');
+      if (hasBuilders) types.push('bouwbedrijven');
+      if (hasContractors) types.push('aannemers');
+      if (hasMaterials) types.push('materialen');
+
+      return `Prima! Je zoekt ${types.join(', ')}.\n\nIn welke stad(en) wil je zoeken? (bv. Amsterdam, Rotterdam, Utrecht, Den Bosch, Groningen, etc.)`;
+    }
+
+    if (primaryCity && !desiredCount) {
+      // Fase 3: Wel stad en type, nog geen aantal
+      const types = [];
+      if (hasArchitects) types.push('architecten');
+      if (hasBuilders) types.push('bouwbedrijven');
+      if (hasContractors) types.push('aannemers');
+      if (hasMaterials) types.push('materialen');
+      const typeStr = types.length > 0 ? types.join(', ') : 'bedrijven';
+
+      // Tel hoeveel bedrijven we hebben in die stad
+      const matchingInCity = data.filter(b => {
+        const city = (b.stad || '').toLowerCase().trim();
+        return city.includes(primaryCity.toLowerCase());
+      });
+
+      return `${primaryCity} - goed keuze! We hebben ${matchingInCity.length} ${typeStr} in/rond deze stad.\n\nHoeveel wil je bezoeken? (ik recommend 3-8 voor een dag)`;
+    }
+
+    if (primaryCity && desiredCount) {
+      // Fase 4: Alle info aanwezig - maak route
+      const types = [];
+      if (hasArchitects) types.push('architecten');
+      if (hasBuilders) types.push('bouwbedrijven');
+      if (hasContractors) types.push('aannemers');
+      if (hasMaterials) types.push('materialen');
+
+      // Filter bedrijven
+      let filtered = data.filter(b => {
+        const city = (b.stad || '').toLowerCase().trim();
+        const inCity = city.includes(primaryCity.toLowerCase());
+        if (!inCity) return false;
+
+        if (types.length === 0) return true;
+        const naam = (b.naam || '').toLowerCase();
+        const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase();
+        const compStr = `${naam} ${specs}`;
+
+        return types.some(t => {
+          if (t === 'architecten' && compStr.includes('architect')) return true;
+          if (t === 'bouwbedrijven' && (compStr.includes('bouwbedrijf') || compStr.includes(' bouw'))) return true;
+          if (t === 'aannemers' && compStr.includes('aannemer')) return true;
+          if (t === 'materialen' && (compStr.includes('hout') || compStr.includes('materiaal'))) return true;
+          return false;
+        });
+      });
+
+      const available = Math.min(desiredCount, filtered.length);
+      return `Perfect! Ik maak een route met ${available} bedrijven in ${primaryCity}.\n\nVoorstel: Start met de dichtstbijzijnde, dan efficiënt de rest bezoeken.\n\nWil je deze route opslaan?`;
+    }
+
+    return 'Kan je wat specifieker zijn? Bijvoorbeeld:\n"Bouwbedrijven in Amsterdam" of\n"5 architectenbureaus in Rotterdam"';
+  };
   const [editDraft, setEditDraft] = useState<Record<string, string>>({});
   const MANUAL_EDITS_KEY = 'inncempro_manual_edits';
   const [manualEdits, setManualEdits] = useState<Record<string, Record<string, string>>>(() => {
@@ -1985,6 +2165,18 @@ const App: React.FC = () => {
       .flatMap((s: string) => s.split(/[,;\/]/).map((t: string) => t.trim()).filter(Boolean));
   };
 
+  // Normaliseer tekst: verwijder accenten, diacrieten, speciale tekens
+  const normalizeText = (text: string): string => {
+    return (text || '')
+      .toLowerCase()
+      .trim()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '') // verwijder diacrieten
+      .replace(/[&]/g, ' en ')  // & -> en
+      .replace(/[^\w\s]/g, ' ') // speciale tekens naar spatie
+      .replace(/\s+/g, ' ');    // meerdere spaties -> één
+  };
+
   // Expandeer zoekopdracht: geeft array van te matchen termen terug
   const expandQuery = (q: string): string[] => {
     const lower = q.toLowerCase().trim();
@@ -2165,32 +2357,44 @@ const App: React.FC = () => {
           // Als de tekst een bekende stad is én radius actief, werkt het als locatiezoeken.
           if (q && !queryIsRadiusOrigin) {
               const naam = (b.naam || '').toLowerCase();
+              const naamNorm = normalizeText(b.naam || '');
               const isKnownAlias = q in NAAM_ALIASSEN || q.length <= 4;
 
               // Splits query in afzonderlijke zoekwoorden (ook alias-geëxpandeerd)
-              const expandedTerms = expandQuery(q); // kan meerdere termen retourneren via aliassen
+              const expandedTerms = expandQuery(q);
               const allSearchWords = new Set<string>();
               for (const t of expandedTerms) {
                 t.split(/[\s\-\/&,.()+]+/).filter(Boolean).forEach(w => allSearchWords.add(w));
               }
               const searchWordList = Array.from(allSearchWords);
+              const qNorm = normalizeText(q);
 
-              // Splits naam in losse woorden (op spatie, koppelteken, slash, &, etc.)
+              // Splits naam in losse woorden
               const naamWords = naam.split(/[\s\-\/&,.()+]+/).filter(Boolean);
+              const naamWordsNorm = naamNorm.split(/\s+/).filter(Boolean);
 
-              // Match: ALLE zoekwoorden moeten ergens in de naam voorkomen (niet noodzakelijk naast elkaar).
-              // Elk zoekwoord wordt gematcht als exact heel woord of als begin van woord.
-              const matchNaam = searchWordList.length > 0 && searchWordList.every(searchTerm =>
-                naam === searchTerm ||
-                naamWords.some(naamWord => naamWord === searchTerm || naamWord.startsWith(searchTerm))
-              );
+              // Verbeterde matching: elk zoekwoord moet voorkomen in:
+              // 1. Exakte hele woord match (incl. genormaliseerd)
+              // 2. Begin van woord match (incl. genormaliseerd)
+              // 3. Substring match (voor gedeeltelijke zoeken)
+              const matchNaam = searchWordList.length > 0 && searchWordList.every(searchTerm => {
+                const termNorm = normalizeText(searchTerm);
+                return naam === searchTerm || // exact match (case-insensitive)
+                       naamNorm === termNorm || // exact match genormaliseerd
+                       naamNorm.includes(termNorm) || // substring match genormaliseerd
+                       naamWords.some(w => w === searchTerm || w.startsWith(searchTerm)) || // hele woord/begin
+                       naamWordsNorm.some(w => w === termNorm || w.startsWith(termNorm)); // genormaliseerd woord
+              });
 
-              // Ook zoeken in stad, postcode, straat — maar NIET in email/website bij bekende afkortingen
+              // Ook zoeken in stad, postcode, straat
               const locationStr = [dbStad, b.straat, b.postcode].filter(Boolean).join(' ').toLowerCase();
+              const locationStrNorm = normalizeText(locationStr);
               const locationWords = locationStr.split(/[\s\-\/&,.()+]+/).filter(Boolean);
-              const matchLocation = searchWordList.length > 0 && searchWordList.every(searchTerm =>
-                locationWords.some(locWord => locWord === searchTerm || locWord.startsWith(searchTerm))
-              );
+              const matchLocation = searchWordList.length > 0 && searchWordList.every(searchTerm => {
+                const termNorm = normalizeText(searchTerm);
+                return locationStrNorm.includes(termNorm) ||
+                       locationWords.some(w => w === searchTerm || w.startsWith(searchTerm));
+              });
 
               const contactFields = isKnownAlias ? '' : [b.email, b.email_sales, b.email_overig, b.website].filter(Boolean).join(' ').toLowerCase();
               const matchFields = matchLocation || (!isKnownAlias && contactFields.includes(q));
@@ -2204,17 +2408,28 @@ const App: React.FC = () => {
       const queryMatchScore = (b: any): number => {
         if (!q) return 0;
         const naam = (b.naam || '').toLowerCase();
+        const naamNorm = normalizeText(b.naam || '');
         const terms = expandQuery(q);
         const words = naam.split(/[\s\-\/&,.()+]+/).filter(Boolean);
+        const wordsNorm = naamNorm.split(/\s+/).filter(Boolean);
         let best = 0;
         for (const t of terms) {
+          const tNorm = normalizeText(t);
           if (naam === t)                        best = Math.max(best, 2000); // exacte naam match
+          else if (naamNorm === tNorm)           best = Math.max(best, 1950); // exacte match genormaliseerd
           else if (naam.startsWith(t + ' ') || naam.startsWith(t + '-'))
                                                  best = Math.max(best, 1800); // naam begint met term
+          else if (naamNorm.startsWith(tNorm + ' '))
+                                                 best = Math.max(best, 1750); // genormaliseerd begin
           else if (words[0] === t)               best = Math.max(best, 1600); // eerste woord is exact term
+          else if (wordsNorm[0] === tNorm)       best = Math.max(best, 1550); // eerste woord genormaliseerd
           else if (words.some(w => w === t))     best = Math.max(best, 1200); // heel woord is exact term
+          else if (wordsNorm.some(w => w === tNorm)) best = Math.max(best, 1150); // genormaliseerd woord
+          else if (naamNorm.includes(tNorm))     best = Math.max(best, 800);  // substring match genormaliseerd
           else if (words[0]?.startsWith(t))      best = Math.max(best, 900);  // eerste woord begint met term
+          else if (wordsNorm[0]?.startsWith(tNorm)) best = Math.max(best, 850); // genormaliseerd eerste woord
           else if (words.some(w => w.startsWith(t))) best = Math.max(best, 500); // een woord begint met term
+          else if (wordsNorm.some(w => w.startsWith(tNorm))) best = Math.max(best, 450); // genormaliseerd woord begin
         }
         return best;
       };
@@ -3056,8 +3271,11 @@ const App: React.FC = () => {
                const filtered = activeData.filter(b => {
                  if (!(b.naam || '').trim()) return false;
                  const q = dbSearch.toLowerCase().trim();
+                 const qNorm = normalizeText(dbSearch);
                  const dbStadN = normalizeStad(b.stad || '');
-                 const matchSearch = !q || [b.naam, dbStadN, b.straat, b.postcode, b.email, b.telefoon, b.spec1, b.spec2, b.spec3, b.website].join(' ').toLowerCase().includes(q) || dbStadN.includes(normalizeStad(q));
+                 const allFields = [b.naam, dbStadN, b.straat, b.postcode, b.email, b.telefoon, b.spec1, b.spec2, b.spec3, b.website].join(' ').toLowerCase();
+                 const allFieldsNorm = normalizeText(allFields);
+                 const matchSearch = !q || allFields.includes(q) || allFieldsNorm.includes(qNorm) || dbStadN.includes(normalizeStad(q));
                  const matchSidebar = sidebarRegions.length === 0 || sidebarRegions.some(r => b.provincie === r || normalizeStad(b.stad) === normalizeStad(r));
                  const naam = (b.naam || '').toLowerCase();
                  const matchLijsten = selectedLijsten.length === 0 || selectedLijsten.some(lijst => {
@@ -3154,7 +3372,7 @@ const App: React.FC = () => {
                    </div>
                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                      {paged.map((b: any, i: number) => (
-                       <div key={i} className={`bg-white border p-5 flex flex-col gap-3 transition-colors cursor-pointer ${selectedIds.has(b.naam) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`} onClick={() => setSelectedCompany(b)}>
+                       <div key={i} className={`bg-white border p-5 flex flex-col gap-3 transition-colors cursor-pointer ${selectedIds.has(b.naam) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`} onClick={() => { setSelectedCompany(b); addToRecentViewed(b.naam); }}>
                          <div className="flex items-start justify-between gap-2">
                            <div className="flex-1 min-w-0">
                              <div className="flex items-center gap-2 flex-wrap">
@@ -3337,6 +3555,7 @@ const App: React.FC = () => {
                     <Search className="w-10 h-10 text-slate-200 mx-auto mb-4" />
                     <p className="text-slate-400 text-sm font-medium">Typ een bedrijfsnaam, stad of postcode — of stel een filter in.</p>
                     <p className="text-slate-400 text-xs mt-1">Alle {activeData.length.toLocaleString('nl-NL')} bedrijven staan in de <button onClick={() => { setViewMode('database'); setDbPage(1); }} className="underline hover:text-[#009FE3]">Bedrijvendatabase</button>.</p>
+                    <button onClick={() => setShowAIHelper(true)} className="mt-4 px-4 py-2 bg-[#009FE3] hover:bg-[#0088c8] text-white text-sm font-bold rounded-sm flex items-center gap-2 transition-colors"><Bot className="w-4 h-4" /> AI Route Helper</button>
                 </div>
             )}
 
@@ -3537,6 +3756,7 @@ const App: React.FC = () => {
                   favorites={favorites}
                   selectedItems={Array.from(selectedRaws.values())}
                   selectedIds={selectedIds}
+                  selectedCompany={selectedCompany}
                   onToggleSelect={(naam, raw) => { setSelectedIds(prev => { const next = new Set(prev); next.has(naam) ? next.delete(naam) : next.add(naam); return next; }); setSelectedRaws(prev => { const next = new Map(prev); next.has(naam) ? next.delete(naam) : next.set(naam, raw); return next; }); }}
                   onClearSelection={clearSelection}
                   onNavigate={(target, naam) => {
@@ -4188,6 +4408,20 @@ const App: React.FC = () => {
                       {b.straat && <p className="text-slate-800 font-medium text-sm">{b.straat}</p>}
                       {(b.postcode || b.stad) && <p className="text-slate-700 text-sm">{[b.postcode, b.stad].filter(Boolean).join('  ')}</p>}
                       {b.provincie && <p className="text-slate-500 text-xs mt-0.5">{b.provincie}</p>}
+
+                      {/* Kaart info - klikbare link naar KAART tab */}
+                      {(b.stad) && (
+                        <button
+                          onClick={() => {
+                            setViewMode('map');
+                            setSelectedCompany(b);
+                          }}
+                          className="w-full mt-4 pt-4 border-t border-slate-100 text-center hover:bg-[#009FE3]/5 transition-colors rounded-sm py-2 cursor-pointer"
+                        >
+                          <p className="text-sm font-medium text-[#009FE3] hover:text-[#0088c8]">📍 Bekijk op de KAART-tab</p>
+                          <p className="text-[10px] text-slate-400 mt-1">{b.stad}{b.straat ? `, ${b.straat}` : ''}</p>
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -4203,7 +4437,7 @@ const App: React.FC = () => {
                         {vestigingen.map((v: any, vi: number) => (
                           <button
                             key={vi}
-                            onClick={() => { setSelectedCompany(v); setEditMode(false); }}
+                            onClick={() => { setSelectedCompany(v); addToRecentViewed(v.naam); setEditMode(false); }}
                             className="w-full text-left p-3 flex items-start gap-2 hover:bg-slate-50 transition-colors"
                           >
                             <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
@@ -4554,6 +4788,61 @@ const ProvinceFilter: React.FC<{ selectedRegions: string[]; onToggle: (item: str
           )}
         </div>
       )}
+
+      {/* AI Route Helper Modal */}
+      {showAIHelper && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-md rounded-sm shadow-2xl flex flex-col h-[600px] border border-slate-200">
+            {/* Header - Inncempro blauw */}
+            <div className="p-4 bg-gradient-to-r from-[#009FE3] to-[#0088c8] flex items-center justify-between rounded-t-sm">
+              <div className="flex items-center gap-2">
+                <Bot className="w-5 h-5 text-white" />
+                <h2 className="text-lg font-bold text-white">AI Route Helper</h2>
+              </div>
+              <button onClick={() => setShowAIHelper(false)} className="text-white/70 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+            </div>
+
+            {/* Chat */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
+              {aiMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-xs px-3 py-2 rounded-sm text-sm whitespace-pre-wrap break-words ${msg.role === 'user' ? 'bg-[#009FE3] text-white' : 'bg-white text-slate-800 border border-slate-200'}`}>
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Actions / Input */}
+            <div className="p-4 border-t border-slate-200 bg-white rounded-b-sm">
+              {aiMessages.length > 0 && aiMessages[aiMessages.length - 1].content.includes('Wil je deze route opslaan') ? (
+                <div className="flex gap-2">
+                  <button onClick={() => sendAIMessage('Ja, opslaan')} className="flex-1 px-3 py-2 bg-[#009FE3] text-white rounded-sm hover:bg-[#0088c8] text-sm font-bold flex items-center justify-center gap-1 transition-colors">
+                    <Check className="w-4 h-4" /> Opslaan
+                  </button>
+                  <button onClick={() => sendAIMessage('Nee, annuleren')} className="flex-1 px-3 py-2 bg-slate-200 text-slate-700 rounded-sm hover:bg-slate-300 text-sm font-bold transition-colors">
+                    Annuleren
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={aiInput}
+                    onChange={(e) => setAiInput(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && sendAIMessage(aiInput)}
+                    placeholder="Typ je vraag..."
+                    className="flex-1 px-3 py-2 border border-slate-300 rounded-sm text-sm focus:outline-none focus:border-[#009FE3] focus:ring-1 focus:ring-[#009FE3]"
+                  />
+                  <button onClick={() => sendAIMessage(aiInput)} className="px-3 py-2 bg-[#009FE3] text-white rounded-sm hover:bg-[#0088c8] transition-colors flex items-center justify-center">
+                    <Send className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -4602,6 +4891,7 @@ const CollapsibleFilterGroup: React.FC<any> = ({ title, items, selectedItems, on
                     )}
                 </div>
             )}
+
         </div>
     );
 };
