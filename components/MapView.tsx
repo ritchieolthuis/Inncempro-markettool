@@ -32,14 +32,14 @@ const SRC_COLOR: Record<string, string> = {
   'Mijn Adressen':      '#7C3AED',
   'Geselecteerde items': '#E85E26',
 };
-const ALL_SOURCES = ['Bouwgarant', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Onbekend'];
+const ALL_SOURCES = ['Bouwgarant', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Plegt-Vos', 'VolkerWessels', 'Onbekend'];
 
 // ─── Vestigingen (branch locations van hetzelfde bedrijf) ─────────────────────
 // Bronnen die zelf één landelijke keten zijn (elke entry is een vestiging van dezelfde
 // onderneming) — de brand-naam alleen volstaat niet altijd (bv. "Stiho Amsterdam Amstel",
 // "PontMeyer Rotterdam Noord" hebben een extra locatie-detail na de stad), dus voor deze
 // bronnen groeperen we simpelweg op bron in plaats van op naam.
-const VESTIGING_CHAIN_SOURCES = new Set(['stiho', 'jongeneel', 'pontmeyer', 'van wijnen']);
+const VESTIGING_CHAIN_SOURCES = new Set(['stiho', 'jongeneel', 'pontmeyer', 'van wijnen', 'plegt-vos']);
 
 // Regionale divisie-namen die bedrijven met meerdere vestigingen vaak achter hun naam
 // zetten (bv. "Plegt-Vos Oost", "Plegt-Vos Midden") — strippen zodat ze onder dezelfde
