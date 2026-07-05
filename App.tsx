@@ -1432,7 +1432,7 @@ const App: React.FC = () => {
   });
   const [showAddModal, setShowAddModal] = useState(false);
   const [addTab, setAddTab] = useState<'single' | 'bulk'>('single');
-  const [addForm, setAddForm] = useState({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '' });
+  const [addForm, setAddForm] = useState({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', linkedin_url: '', twitter_handle: '', instagram_handle: '' });
   const [bulkText, setBulkText] = useState('');
   const [bulkParsed, setBulkParsed] = useState<any[]>([]);
   const [bulkMsg, setBulkMsg] = useState('');
@@ -3058,7 +3058,7 @@ const App: React.FC = () => {
                      <div className="flex items-center gap-2">
                        <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">~{filtered.length} gevonden</span>
                        <button onClick={() => setImportModalOpen(true)} className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 rounded-sm text-[10px] font-bold uppercase tracking-wider transition-all"><Upload className="w-3 h-3"/>Importeren</button>
-                       <button onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setShowAddModal(true); }} className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 rounded-sm text-[10px] font-bold uppercase tracking-wider transition-all"><Plus className="w-3 h-3"/>Toevoegen</button>
+                       <button onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', linkedin_url: '', twitter_handle: '', instagram_handle: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setShowAddModal(true); }} className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 rounded-sm text-[10px] font-bold uppercase tracking-wider transition-all"><Plus className="w-3 h-3"/>Toevoegen</button>
                      </div>
                      {(() => {
                        const pageNamen = paged.map((b: any) => b.naam as string);
@@ -3515,7 +3515,7 @@ const App: React.FC = () => {
                                      <MapPin className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> {showRouteMap ? 'Kaart sluiten' : 'Route Kaart'}
                                  </button>}
                                  <button
-                                     onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setAddTab('bulk'); setShowAddModal(true); }}
+                                     onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', linkedin_url: '', twitter_handle: '', instagram_handle: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setAddTab('bulk'); setShowAddModal(true); }}
                                      className="px-3 py-1.5 sm:px-4 sm:py-2 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 sm:gap-2 transition-colors"
                                  >
                                      <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Toevoegen
