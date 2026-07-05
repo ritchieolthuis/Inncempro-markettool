@@ -10,6 +10,56 @@ import { authService } from './services/authService';
 import { SearchState, DiscoveredCompany, User } from './types';
 import { scoreInsertionCandidates } from './utils/dagbezoek';
 
+// ── Plaatsnaam-normalisatie ──────────────────────────────────────────────────
+// Sommige bronnen leveren dezelfde plaats onder net iets andere spelling aan
+// (bv. "AMSTERDAM (NL)", "'s-Hertogenbosch" vs "Den Bosch", "ROTTERDAM" vs
+// "Rotterdam"). Zonder correctie duiken die als aparte plaatsen op in
+// filters, kaartmarkers en het marktoverzicht. Dit wordt één keer bij het
+// laden van de data gecorrigeerd, zodat alles verder consistent is.
+function normStadKey(s: string): string {
+  return s.toLowerCase().trim().replace(/^'+/, '').replace(/\s+/g, ' ');
+}
+const STAD_FIXES: Record<string, string> = {
+  'amsterdam (nl)': 'Amsterdam', 'amsterdam (nederland)': 'Amsterdam',
+  'eindhoven (nederland)': 'Eindhoven', 'eindhoven eindhoven': 'Eindhoven',
+  's-hertogenbosch': 'Den Bosch', 'hertogenbosch': 'Den Bosch',
+  's-gravenhage': 'Den Haag', 'gravenhage': 'Den Haag',
+  'alphen aan de rijn': 'Alphen aan den Rijn',
+  'capelle aan de ijssel': 'Capelle aan den IJssel',
+  'koog aan de zaan': 'Zaandam',
+  'rotterdam-oost': 'Rotterdam',
+  'almere stad': 'Almere',
+  'hengelo ov': 'Hengelo', 'hengelo gld': 'Hengelo',
+};
+// Bij loutere schrijfwijze-verschillen (hoofdletters e.d.) kiezen we de vaakst
+// voorkomende schrijfwijze in de data zelf als canonieke vorm.
+const stadCasingMap = new Map<string, string>();
+(() => {
+  const counts = new Map<string, Map<string, number>>();
+  (bouwgarantData as any[]).forEach((b: any) => {
+    const raw = (b.stad || '').toString().trim();
+    if (!raw) return;
+    const key = normStadKey(raw);
+    if (!counts.has(key)) counts.set(key, new Map());
+    const m = counts.get(key)!;
+    m.set(raw, (m.get(raw) || 0) + 1);
+  });
+  counts.forEach((variants, key) => {
+    let best = ''; let bestCount = -1;
+    variants.forEach((cnt, variant) => {
+      if (cnt > bestCount || (cnt === bestCount && variant.length > best.length)) { best = variant; bestCount = cnt; }
+    });
+    stadCasingMap.set(key, best);
+  });
+})();
+function canonicalStad(raw: string): string {
+  const trimmed = (raw || '').toString().trim();
+  if (!trimmed) return trimmed;
+  const key = normStadKey(trimmed);
+  return STAD_FIXES[key] || stadCasingMap.get(key) || trimmed;
+}
+(bouwgarantData as any[]).forEach((b: any) => { if (b.stad) b.stad = canonicalStad(b.stad); });
+
 const DUTCH_LOCATIONS = [
     "Heel Nederland",
     "Drenthe", "Flevoland", "Friesland", "Gelderland", "Groningen", "Limburg", "Noord-Brabant", "Noord-Holland", "Overijssel", "Utrecht", "Zeeland", "Zuid-Holland",
