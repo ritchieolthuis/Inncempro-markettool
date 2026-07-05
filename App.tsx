@@ -17,7 +17,7 @@ import { scoreInsertionCandidates } from './utils/dagbezoek';
 // filters, kaartmarkers en het marktoverzicht. Dit wordt één keer bij het
 // laden van de data gecorrigeerd, zodat alles verder consistent is.
 function normStadKey(s: string): string {
-  return s.toLowerCase().trim().replace(/^'+/, '').replace(/\s+/g, ' ');
+  return s.toLowerCase().trim().replace(/^\\+/, '').replace(/^'+/, '').replace(/\s+/g, ' ');
 }
 const STAD_FIXES: Record<string, string> = {
   'amsterdam (nl)': 'Amsterdam', 'amsterdam (nederland)': 'Amsterdam',
