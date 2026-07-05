@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Loader2, ArrowRight, X, BarChart3, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, TrendingUp, Bookmark, BookmarkCheck, Columns, Star, Repeat } from 'lucide-react';
+import { Search, Loader2, ArrowRight, X, BarChart3, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, TrendingUp, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload } from 'lucide-react';
+import Papa from 'papaparse';
 import bouwgarantData from './bouwgarant_data.json';
 import cityCoords from './city_coords.json';
 import Header from './components/Header';
@@ -1376,6 +1377,13 @@ const App: React.FC = () => {
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'dashboard'>('search');
 
+  // BATCH IMPORT
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importData, setImportData] = useState<any[]>([]);
+  const [importPreview, setImportPreview] = useState<Array<{ row: any; error?: string; isDuplicate?: boolean }>>([]);
+  const [importStep, setImportStep] = useState<'upload' | 'preview' | 'confirm'>('upload');
+  const [importStats, setImportStats] = useState({ total: 0, valid: 0, duplicates: 0, errors: 0 });
+
   // OPGESLAGEN FILTERS
   const [savedFilters, setSavedFilters] = useState<Array<{name: string; query: string; regions: string[]; types: string[]; werksoort: string[]; bron: string[]; rechtsvorm: string[]; contact: string[]}>>(() => {
     try { return JSON.parse(localStorage.getItem('inncempro_saved_filters') || '[]'); } catch { return []; }
@@ -1737,6 +1745,90 @@ const App: React.FC = () => {
       } catch (err: any) {
           alert(err.message);
       }
+  };
+
+  // BATCH IMPORT HANDLERS
+  const handleCSVUpload = (file: File) => {
+    Papa.parse(file, {
+      header: true,
+      dynamicTyping: false,
+      skipEmptyLines: true,
+      complete: (results: any) => {
+        const rows = results.data as any[];
+        const validated = rows.map((row, idx) => {
+          const errors: string[] = [];
+          const naam = (row.naam || row.name || '').trim();
+          const straat = (row.straat || row.street || '').trim();
+          const postcode = (row.postcode || row.postcode || '').trim();
+          const stad = (row.stad || row.city || '').trim();
+
+          if (!naam) errors.push('Naam ontbreekt');
+          if (!straat) errors.push('Straat ontbreekt');
+          if (!postcode) errors.push('Postcode ontbreekt');
+          if (!stad) errors.push('Stad ontbreekt');
+
+          const addrKey = `${postcode} ${straat}`.toLowerCase().trim();
+          const isDuplicate = activeData.some(
+            b => `${b.postcode || ''} ${b.straat || ''}`.toLowerCase().trim() === addrKey &&
+                 (b.naam || '').toLowerCase().trim() === naam.toLowerCase()
+          );
+
+          return {
+            row: {
+              naam,
+              straat,
+              postcode,
+              stad,
+              telefoon: (row.telefoon || row.phone || '').trim() || '',
+              email: (row.email || '').trim() || '',
+              website: (row.website || '').trim() || '',
+              source: 'Handmatig',
+              bron: 'Handmatig',
+              provincie: row.provincie || row.province || stad,
+              rechtsvorm: row.rechtsvorm || row.legalform || '',
+              spec1: row.spec1 || '',
+              spec2: row.spec2 || '',
+              spec3: row.spec3 || '',
+            },
+            error: errors.length > 0 ? errors.join('; ') : undefined,
+            isDuplicate,
+          };
+        });
+
+        const stats = {
+          total: rows.length,
+          valid: validated.filter(v => !v.error).length,
+          duplicates: validated.filter(v => v.isDuplicate).length,
+          errors: validated.filter(v => v.error).length,
+        };
+
+        setImportData(rows);
+        setImportPreview(validated);
+        setImportStats(stats);
+        setImportStep('preview');
+      },
+      error: (error: any) => {
+        alert('CSV parse fout: ' + error.message);
+      },
+    });
+  };
+
+  const handleImportConfirm = () => {
+    const toImport = importPreview
+      .filter(v => !v.error && !v.isDuplicate)
+      .map(v => ({ ...v.row, id: Math.random().toString(36).substr(2, 9) }));
+
+    if (toImport.length === 0) {
+      alert('Niets om te importeren (alles heeft fouten of is duplicaat).');
+      return;
+    }
+
+    setActiveData(prev => [...prev, ...toImport]);
+    alert(`${toImport.length} bedrijven geïmporteerd!`);
+    setImportModalOpen(false);
+    setImportStep('upload');
+    setImportData([]);
+    setImportPreview([]);
   };
 
   // APP LOGIC
@@ -2889,6 +2981,7 @@ const App: React.FC = () => {
                    <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                      <div className="flex items-center gap-2">
                        <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">~{filtered.length} gevonden</span>
+                       <button onClick={() => setImportModalOpen(true)} className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 rounded-sm text-[10px] font-bold uppercase tracking-wider transition-all"><Upload className="w-3 h-3"/>Importeren</button>
                        <button onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setShowAddModal(true); }} className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 rounded-sm text-[10px] font-bold uppercase tracking-wider transition-all"><Plus className="w-3 h-3"/>Toevoegen</button>
                      </div>
                      {(() => {
@@ -4006,6 +4099,90 @@ const App: React.FC = () => {
           }}
           onClear={clearSelection}
         />
+      )}
+
+      {/* BATCH IMPORT MODAL */}
+      {importModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" onClick={() => setImportModalOpen(false)}>
+          <div className="bg-white w-full max-w-2xl rounded-sm shadow-xl animate-fade-in relative max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white">
+              <h2 className="text-base font-black text-slate-900 uppercase font-condensed tracking-wider">Bedrijven importeren</h2>
+              <button onClick={() => setImportModalOpen(false)} className="text-slate-400 hover:text-slate-800"><X className="w-5 h-5"/></button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {importStep === 'upload' && (
+                <div className="space-y-3">
+                  <p className="text-sm text-slate-600">CSV-bestand met kolommen: <code className="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">naam, straat, postcode, stad, telefoon, email, website</code></p>
+                  <label className="block p-6 border-2 border-dashed border-slate-300 rounded-sm text-center cursor-pointer hover:border-[#009FE3] hover:bg-[#009FE3]/5 transition-all">
+                    <input type="file" accept=".csv" onChange={e => { if (e.target.files?.[0]) handleCSVUpload(e.target.files[0]); }} className="hidden" />
+                    <div className="flex items-center justify-center gap-2 text-slate-600">
+                      <Upload className="w-5 h-5" />
+                      <div>
+                        <p className="font-bold text-sm">CSV-bestand selecteren</p>
+                        <p className="text-xs text-slate-400">of sleep het hierheen</p>
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              )}
+
+              {importStep === 'preview' && (
+                <div className="space-y-3">
+                  <div className="flex gap-4 text-xs">
+                    <div className="flex-1 bg-blue-50 p-3 rounded-sm border border-blue-200"><span className="font-bold text-blue-900">{importStats.total}</span> <span className="text-blue-700">totaal</span></div>
+                    <div className="flex-1 bg-green-50 p-3 rounded-sm border border-green-200"><span className="font-bold text-green-900">{importStats.valid}</span> <span className="text-green-700">geldig</span></div>
+                    <div className="flex-1 bg-amber-50 p-3 rounded-sm border border-amber-200"><span className="font-bold text-amber-900">{importStats.duplicates}</span> <span className="text-amber-700">duplicaat</span></div>
+                    <div className="flex-1 bg-red-50 p-3 rounded-sm border border-red-200"><span className="font-bold text-red-900">{importStats.errors}</span> <span className="text-red-700">fout</span></div>
+                  </div>
+
+                  <div className="border border-slate-200 rounded-sm overflow-hidden max-h-96 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-bold text-slate-700">Naam</th>
+                          <th className="px-3 py-2 text-left font-bold text-slate-700">Postcode</th>
+                          <th className="px-3 py-2 text-left font-bold text-slate-700">Stad</th>
+                          <th className="px-3 py-2 text-left font-bold text-slate-700">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importPreview.map((item, idx) => (
+                          <tr key={idx} className={item.error ? 'bg-red-50' : item.isDuplicate ? 'bg-amber-50' : 'bg-green-50'}>
+                            <td className="px-3 py-2 truncate">{item.row.naam}</td>
+                            <td className="px-3 py-2 truncate">{item.row.postcode}</td>
+                            <td className="px-3 py-2 truncate">{item.row.stad}</td>
+                            <td className="px-3 py-2 text-right whitespace-nowrap">
+                              {item.error ? <span className="text-red-600 font-bold">⚠ {item.error}</span> : item.isDuplicate ? <span className="text-amber-600 font-bold">↗ Duplicaat</span> : <span className="text-green-600 font-bold">✓ OK</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button onClick={() => { setImportStep('upload'); setImportPreview([]); }} className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-sm font-bold text-xs uppercase hover:border-slate-300 transition-all">Terug</button>
+                    <button onClick={() => setImportStep('confirm')} className="flex-1 py-2.5 bg-[#009FE3] text-white rounded-sm font-bold text-xs uppercase hover:bg-[#008ac5] transition-all">Doorgaan</button>
+                  </div>
+                </div>
+              )}
+
+              {importStep === 'confirm' && (
+                <div className="space-y-4 text-center">
+                  <div className="p-6 bg-[#009FE3]/5 rounded-sm border border-[#009FE3]/30">
+                    <p className="text-sm font-bold text-slate-900 mb-2">Klaar om te importeren?</p>
+                    <p className="text-xs text-slate-600">{importStats.valid} bedrijven zullen worden toegevoegd. Duplicaten en fouten worden overgeslagen.</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setImportStep('preview')} className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-sm font-bold text-xs uppercase hover:border-slate-300 transition-all">Terug</button>
+                    <button onClick={handleImportConfirm} className="flex-1 py-2.5 bg-green-600 text-white rounded-sm font-bold text-xs uppercase hover:bg-green-700 transition-all">Importeren</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
