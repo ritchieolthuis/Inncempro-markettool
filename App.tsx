@@ -4313,8 +4313,9 @@ const App: React.FC = () => {
                       {(b.stad) && (
                         <button
                           onClick={() => {
-                            setViewMode('map');
                             setSelectedCompany(b);
+                            setViewMode('map');
+                            setShowDetailsModal(false);
                           }}
                           className="w-full mt-4 pt-4 border-t border-slate-100 text-center hover:bg-[#009FE3]/5 transition-colors rounded-sm py-2 cursor-pointer"
                         >
