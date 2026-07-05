@@ -1297,7 +1297,7 @@ const App: React.FC = () => {
 
   // SETTINGS MODAL
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'profiel' | 'voorkeuren'>('profiel');
+  const [settingsTab, setSettingsTab] = useState<'profiel' | 'voorkeuren' | 'audit'>('profiel');
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editAvatar, setEditAvatar] = useState('');
@@ -1390,6 +1390,12 @@ const App: React.FC = () => {
   });
   const [showSaveFilterModal, setShowSaveFilterModal] = useState(false);
   const [saveFilterName, setSaveFilterName] = useState('');
+
+  // AUDIT LOG
+  const [auditLog, setAuditLog] = useState<Array<{ id: string; timestamp: string; userId: string; action: string; bedrijf: string; field?: string; oldValue?: string; newValue?: string }>>(() => {
+    try { return JSON.parse(localStorage.getItem('inncempro_audit_log') || '[]'); } catch { return []; }
+  });
+  const [auditFilter, setAuditFilter] = useState({ search: '', action: '', days: 30 });
 
   // VERGELIJKING
   const [showCompare, setShowCompare] = useState(false);
@@ -1824,11 +1830,29 @@ const App: React.FC = () => {
     }
 
     setActiveData(prev => [...prev, ...toImport]);
+    toImport.forEach(b => addAuditLog('Bedrijf geïmporteerd', b.naam));
     alert(`${toImport.length} bedrijven geïmporteerd!`);
     setImportModalOpen(false);
     setImportStep('upload');
     setImportData([]);
     setImportPreview([]);
+  };
+
+  // AUDIT LOG HELPER
+  const addAuditLog = (action: string, bedrijf: string, field?: string, oldValue?: string, newValue?: string) => {
+    const entry = {
+      id: Math.random().toString(36).substr(2, 9),
+      timestamp: new Date().toISOString(),
+      userId: currentUser?.id || 'Anoniem',
+      action,
+      bedrijf,
+      field,
+      oldValue,
+      newValue,
+    };
+    const updated = [entry, ...auditLog].slice(0, 1000); // Keep last 1000 entries
+    setAuditLog(updated);
+    localStorage.setItem('inncempro_audit_log', JSON.stringify(updated));
   };
 
   // APP LOGIC
@@ -2655,10 +2679,10 @@ const App: React.FC = () => {
                   </div>
                   {/* Tabs */}
                   <div className="flex border-b border-slate-100">
-                      {(['profiel', 'voorkeuren'] as const).map(tab => (
+                      {(['profiel', 'voorkeuren', 'audit'] as const).map(tab => (
                           <button key={tab} onClick={() => setSettingsTab(tab)}
                               className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${settingsTab === tab ? 'border-b-2 border-[#E85E26] text-[#E85E26]' : 'text-slate-400 hover:text-slate-700'}`}>
-                              {tab === 'profiel' ? 'Profiel' : 'Voorkeuren'}
+                              {tab === 'profiel' ? 'Profiel' : tab === 'voorkeuren' ? 'Voorkeuren' : 'Audit Log'}
                           </button>
                       ))}
                   </div>
@@ -2763,6 +2787,58 @@ const App: React.FC = () => {
                               </div>
                           </div>
                       )}
+
+                      {settingsTab === 'audit' && (
+                          <div className="space-y-3">
+                              <div className="flex gap-2 mb-4">
+                                  <input type="text" placeholder="Zoek op bedrijf..." value={auditFilter.search} onChange={e => setAuditFilter({...auditFilter, search: e.target.value})} className="flex-1 px-3 py-2 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none" />
+                                  <select value={auditFilter.action} onChange={e => setAuditFilter({...auditFilter, action: e.target.value})} className="px-3 py-2 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none bg-white">
+                                      <option value="">Alle acties</option>
+                                      <option value="Bedrijf geïmporteerd">Geïmporteerd</option>
+                                      <option value="Bedrijf toegevoegd">Toegevoegd</option>
+                                      <option value="Bedrijf bewerkt">Bewerkt</option>
+                                      <option value="Bedrijf verwijderd">Verwijderd</option>
+                                  </select>
+                                  <select value={auditFilter.days} onChange={e => setAuditFilter({...auditFilter, days: Number(e.target.value)})} className="px-3 py-2 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none bg-white">
+                                      <option value={7}>7 dagen</option>
+                                      <option value={30}>30 dagen</option>
+                                      <option value={90}>90 dagen</option>
+                                      <option value={999}>Alle</option>
+                                  </select>
+                              </div>
+                              <div className="border border-slate-200 rounded-sm overflow-hidden max-h-96 overflow-y-auto">
+                                  <table className="w-full text-xs">
+                                      <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
+                                          <tr>
+                                              <th className="px-3 py-2 text-left font-bold text-slate-700">Timestamp</th>
+                                              <th className="px-3 py-2 text-left font-bold text-slate-700">Gebruiker</th>
+                                              <th className="px-3 py-2 text-left font-bold text-slate-700">Actie</th>
+                                              <th className="px-3 py-2 text-left font-bold text-slate-700">Bedrijf</th>
+                                          </tr>
+                                      </thead>
+                                      <tbody>
+                                          {auditLog
+                                              .filter(e => {
+                                                  const daysAgo = new Date(Date.now() - auditFilter.days * 24 * 60 * 60 * 1000).toISOString();
+                                                  return e.timestamp >= daysAgo &&
+                                                      (auditFilter.search === '' || e.bedrijf.toLowerCase().includes(auditFilter.search.toLowerCase())) &&
+                                                      (auditFilter.action === '' || e.action === auditFilter.action);
+                                              })
+                                              .map((e, idx) => (
+                                                  <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50">
+                                                      <td className="px-3 py-2 text-slate-500 whitespace-nowrap text-[10px]">{new Date(e.timestamp).toLocaleString('nl-NL')}</td>
+                                                      <td className="px-3 py-2 truncate text-slate-700">{e.userId}</td>
+                                                      <td className="px-3 py-2 font-semibold text-slate-700">{e.action}</td>
+                                                      <td className="px-3 py-2 truncate text-slate-700">{e.bedrijf}</td>
+                                                  </tr>
+                                              ))}
+                                      </tbody>
+                                  </table>
+                              </div>
+                              <p className="text-[10px] text-slate-400">Totaal: {auditLog.length} entries (max 1000 behouden)</p>
+                          </div>
+                      )}
+
                   </div>
               </div>
           </div>
