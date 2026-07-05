@@ -2300,13 +2300,16 @@ const App: React.FC = () => {
     setReplaceQuery('');
   };
 
-  // Live zoeken: debounce 350ms op city-, straal- of geavanceerd-zoeken-wijziging
+  // Live zoeken: debounce 350ms op city-, straal-, geavanceerd-zoeken- én
+  // data-mutatie-wijziging. Wanneer een gebruiker in Live Zoeken zit en een bedrijf
+  // bewerkt/verwijdert/toevoegt vanuit een detailpaneel, moet de zoekresultatenlijst
+  // meteen mee-updaten — anders blijft hij hangen op de oude snapshot.
   useEffect(() => {
     if (!didMountRef.current) { didMountRef.current = true; return; }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => { executeSearch(); }, 350);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [city, radiusKm, advancedSearch]);
+  }, [city, radiusKm, advancedSearch, manualEdits, customEntries, deletedEntries]);
 
   const handleManualSearch = (e?: React.FormEvent) => {
       if (e) e.preventDefault();
