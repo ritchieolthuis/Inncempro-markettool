@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Loader2, ArrowRight, X, BarChart3, Building, Filter, Check, ChevronRight, ChevronDown, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, TrendingUp, Bookmark, BookmarkCheck, Columns, Star, Repeat } from 'lucide-react';
+import { Search, Loader2, ArrowRight, X, BarChart3, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, TrendingUp, Bookmark, BookmarkCheck, Columns, Star, Repeat } from 'lucide-react';
 import bouwgarantData from './bouwgarant_data.json';
 import cityCoords from './city_coords.json';
 import Header from './components/Header';
@@ -1361,44 +1361,54 @@ const App: React.FC = () => {
     const next = { ...addressCorrections, [naam]: correction };
     setAddressCorrections(next);
     localStorage.setItem(CORRECTIONS_KEY, JSON.stringify(next));
-    // Apply in-memory: find the entry and update it directly
-    const entry = (bouwgarantData as any[]).find(b => b.naam === naam);
-    if (entry) {
+    // Apply in-memory: naam komt vaak meerdere keren voor (duplicaten uit verschillende bronnen) —
+    // update ze allemaal, anders lijkt de correctie niet op te slaan op de marker die je net bekeek.
+    (bouwgarantData as any[]).filter(b => b.naam === naam).forEach(entry => {
       if (correction.straat)   entry.straat   = correction.straat;
       if (correction.postcode) entry.postcode = correction.postcode;
       if (correction.stad)     entry.stad     = correction.stad;
-    }
+    });
   };
 
-  const handleSaveEdit = (naam: string, edits: Record<string, string>) => {
+  const autoSaveEdit = (naam: string, edits: Record<string, string>) => {
     const next = { ...manualEdits, [naam]: edits };
     setManualEdits(next);
     localStorage.setItem(MANUAL_EDITS_KEY, JSON.stringify(next));
-    const entry = (bouwgarantData as any[]).find(b => b.naam === naam);
-    if (entry) Object.assign(entry, edits);
+    (bouwgarantData as any[]).filter(b => b.naam === naam).forEach(entry => Object.assign(entry, edits));
     setSelectedCompany((prev: any) => prev ? { ...prev, ...edits } : prev);
+  };
+
+  const handleSaveEdit = (naam: string, edits: Record<string, string>) => {
+    autoSaveEdit(naam, edits);
     setEditMode(false);
   };
 
-  // On mount: apply any stored manual edits to in-memory data
+  // Autosave: sla wijzigingen in het bewerkformulier automatisch op terwijl je typt,
+  // zodat een correctie niet verloren gaat als je vergeet op "Opslaan" te klikken.
+  React.useEffect(() => {
+    if (!editMode || !selectedCompany?.naam) return;
+    const t = setTimeout(() => autoSaveEdit(selectedCompany.naam, editDraft), 600);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editDraft, editMode]);
+
+  // On mount: apply any stored manual edits to in-memory data (alle records met die naam)
   React.useEffect(() => {
     Object.entries(manualEdits).forEach(([naam, edits]) => {
-      const entry = (bouwgarantData as any[]).find(b => b.naam === naam);
-      if (entry) Object.assign(entry, edits);
+      (bouwgarantData as any[]).filter(b => b.naam === naam).forEach(entry => Object.assign(entry, edits));
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // On mount: apply any stored corrections to in-memory data
+  // On mount: apply any stored corrections to in-memory data (alle records met die naam)
   React.useEffect(() => {
     Object.entries(addressCorrections).forEach(([naam, c]) => {
       const correction = c as { straat: string; postcode: string; stad: string };
-      const entry = (bouwgarantData as any[]).find(b => b.naam === naam);
-      if (entry) {
+      (bouwgarantData as any[]).filter(b => b.naam === naam).forEach(entry => {
         if (correction.straat)   entry.straat   = correction.straat;
         if (correction.postcode) entry.postcode = correction.postcode;
         if (correction.stad)     entry.stad     = correction.stad;
-      }
+      });
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1712,6 +1722,16 @@ const App: React.FC = () => {
 
       // Radius: bereken vroeg zodat de tekstfilter er rekening mee kan houden
       const activeRadiusKm = overrideRadiusKm !== undefined ? overrideRadiusKm : radiusKm;
+      let radiusCenter: { lat: number; lng: number } | null = overrideRadiusCenter !== undefined ? overrideRadiusCenter : null;
+      if (activeRadiusKm && !radiusCenter) {
+        const centerCity = (overrideCity ?? city).trim();
+        radiusCenter = getCityCoords(centerCity);
+        // Als de tekst geen bekende stad is, sla de radius over en doe alleen tekst-zoeken
+        // (zodat je b.v. "inbo" kunt typen als bedrijfsnaam zonder een locatiefout te krijgen)
+      }
+      // Als de ingevoerde tekst is opgelost tot een straal-centrum, dient hij puur als locatie
+      // en mag hij de resultaten niet óók nog eens dichttimmeren als naam/stad-tekstfilter.
+      const queryIsRadiusOrigin = !!(activeRadiusKm && radiusCenter);
 
       const PROVINCES = ['Drenthe','Flevoland','Friesland','Gelderland','Groningen','Limburg','Noord-Brabant','Noord-Holland','Overijssel','Utrecht','Zeeland','Zuid-Holland'];
 
@@ -1815,7 +1835,7 @@ const App: React.FC = () => {
           // Tekst filtert altijd op bedrijfsnaam/velden.
           // Radius is een extra afstandsfilter bovenop de tekstfilter.
           // Als de tekst een bekende stad is én radius actief, werkt het als locatiezoeken.
-          if (q) {
+          if (q && !queryIsRadiusOrigin) {
               const naam = (b.naam || '').toLowerCase();
               const terms = expandQuery(q);
               // Splits naam in losse woorden (op spatie, koppelteken, slash, &, etc.)
@@ -1877,16 +1897,8 @@ const App: React.FC = () => {
         return score;
       };
 
-      // Radius filter
-      let radiusCenter: { lat: number; lng: number } | null = overrideRadiusCenter !== undefined ? overrideRadiusCenter : null;
+      // Radius filter (radiusCenter is hierboven al berekend, vóór de tekstfilter)
       const distanceMap = new Map<any, number>();
-
-      if (activeRadiusKm && !radiusCenter) {
-        const centerCity = (overrideCity ?? city).trim();
-        radiusCenter = getCityCoords(centerCity);
-        // Als de tekst geen bekende stad is, sla de radius over en doe alleen tekst-zoeken
-        // (zodat je b.v. "inbo" kunt typen als bedrijfsnaam zonder een locatiefout te krijgen)
-      }
 
       if (activeRadiusKm && radiusCenter) {
         const center = radiusCenter;
@@ -3515,6 +3527,55 @@ const App: React.FC = () => {
           </div>
         );
       })()}
+
+      {/* Persistent selectie-overzicht — blijft zichtbaar over alle tabs/pagina's heen */}
+      {selectedRaws.size > 0 && (
+        <SelectionBar
+          selected={Array.from(selectedRaws.values())}
+          onRemove={(naam: string) => {
+            setSelectedIds(prev => { const n = new Set(prev); n.delete(naam); return n; });
+            setSelectedRaws(prev => { const n = new Map(prev); n.delete(naam); return n; });
+          }}
+          onClear={clearSelection}
+        />
+      )}
+    </div>
+  );
+};
+
+// Persistent bar met alle geselecteerde bedrijven (over pagina's/tabs heen), met per-item deselecteren
+const SelectionBar: React.FC<{ selected: any[]; onRemove: (naam: string) => void; onClear: () => void }> = ({ selected, onRemove, onClear }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] max-w-md">
+      {open && (
+        <div className="mb-2 bg-white border border-slate-200 rounded-sm shadow-2xl max-h-72 overflow-y-auto animate-fade-in">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100 sticky top-0 bg-white">
+            <span className="text-xs font-black uppercase tracking-wider text-slate-600">Geselecteerd ({selected.length})</span>
+            <button onClick={onClear} className="text-[10px] font-bold uppercase tracking-wider text-red-500 hover:text-red-700">Wis alles</button>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {selected.map((b: any) => (
+              <div key={b.naam} className="flex items-center justify-between gap-2 px-4 py-2 text-xs">
+                <div className="min-w-0">
+                  <p className="font-bold text-slate-800 truncate">{b.naam}</p>
+                  {b.stad && <p className="text-slate-400 truncate">{b.stad}</p>}
+                </div>
+                <button onClick={() => onRemove(b.naam)} title="Deselecteren" className="flex-shrink-0 p-1 text-slate-400 hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 bg-[#E85E26] hover:bg-[#d14d1b] text-white rounded-sm shadow-2xl transition-colors"
+      >
+        <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
+          <Check className="w-4 h-4" /> {selected.length} geselecteerd
+        </span>
+        {open ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+      </button>
     </div>
   );
 };
