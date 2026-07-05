@@ -1488,12 +1488,13 @@ const App: React.FC = () => {
     });
   };
 
-  const addCustomEntries = (entries: any[]) => {
+  const addCustomEntries = (entries: any[], auditAction: string = 'Bedrijf toegevoegd') => {
     const withId = entries.map(e => ({ ...e, _custom: true }));
     const next = [...customEntries, ...withId];
     setCustomEntries(next);
     localStorage.setItem(CUSTOM_ENTRIES_KEY, JSON.stringify(next));
     withId.forEach(e => (bouwgarantData as any[]).push(e));
+    withId.forEach(e => addAuditLog(auditAction, e.naam));
   };
 
   // On mount: inject saved custom entries into bouwgarantData
@@ -1535,6 +1536,7 @@ const App: React.FC = () => {
     next.add(deleteKey(naam, straat));
     setDeletedEntries(next);
     localStorage.setItem(DELETED_KEY, JSON.stringify(Array.from(next)));
+    addAuditLog('Bedrijf verwijderd', naam);
   };
 
   const handleAddressCorrection = (naam: string, correction: { straat: string; postcode: string; stad: string }) => {
@@ -1556,6 +1558,7 @@ const App: React.FC = () => {
     localStorage.setItem(MANUAL_EDITS_KEY, JSON.stringify(next));
     (bouwgarantData as any[]).filter(b => b.naam === naam).forEach(entry => Object.assign(entry, edits));
     setSelectedCompany((prev: any) => prev ? { ...prev, ...edits } : prev);
+    Object.entries(edits).forEach(([field, newValue]) => addAuditLog('Bedrijf bewerkt', naam, field, undefined, newValue));
   };
 
   const handleSaveEdit = (naam: string, edits: Record<string, string>) => {
@@ -1829,8 +1832,7 @@ const App: React.FC = () => {
       return;
     }
 
-    setActiveData(prev => [...prev, ...toImport]);
-    toImport.forEach(b => addAuditLog('Bedrijf geïmporteerd', b.naam));
+    addCustomEntries(toImport, 'Bedrijf geïmporteerd');
     alert(`${toImport.length} bedrijven geïmporteerd!`);
     setImportModalOpen(false);
     setImportStep('upload');
