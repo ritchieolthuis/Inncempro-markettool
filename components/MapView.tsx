@@ -41,6 +41,11 @@ const ALL_SOURCES = ['Bouwgarant', 'Architectenweb', 'Stiho', 'Jongeneel', 'Bouw
 // bronnen groeperen we simpelweg op bron in plaats van op naam.
 const VESTIGING_CHAIN_SOURCES = new Set(['stiho', 'jongeneel', 'pontmeyer', 'van wijnen']);
 
+// Regionale divisie-namen die bedrijven met meerdere vestigingen vaak achter hun naam
+// zetten (bv. "Plegt-Vos Oost", "Plegt-Vos Midden") — strippen zodat ze onder dezelfde
+// kernnaam groeperen, net als de stad-suffix hieronder.
+const REGIO_SUFFIXES = /\b(noordoost|noordwest|zuidoost|zuidwest|noord|oost|zuid|west|midden)\b/g;
+
 // Herleidt de "kernnaam" van een bedrijf door rechtsvorm-suffixen en, als de
 // naam eindigt op de eigen plaatsnaam (bv. "INBO Amsterdam"), ook die plaats
 // te strippen — zo groeperen "INBO Amsterdam" en "INBO Rotterdam" onder "inbo".
@@ -55,6 +60,7 @@ function coreCompanyName(naam: string, stad: string, source?: string): string {
     if (n === s) n = '';
     else if (n.endsWith(' ' + s)) n = n.slice(0, -(s.length + 1)).trim();
   }
+  n = n.replace(REGIO_SUFFIXES, '').replace(/\s+/g, ' ').trim();
   return n;
 }
 

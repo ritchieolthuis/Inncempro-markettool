@@ -1231,6 +1231,10 @@ const VESTIGING_CHAIN_SOURCES = new Set(['stiho', 'jongeneel', 'pontmeyer', 'van
 // Kernnaam voor het groeperen van vestigingen (zelfde logica als in MapView.tsx): strip
 // rechtsvorm-suffixen en, als de naam eindigt op de eigen plaatsnaam ("INBO Rotterdam"),
 // ook die plaats — zo groeperen "INBO Rotterdam" en "INBO Eindhoven" onder de kern "inbo".
+// Regionale divisie-namen die bedrijven met meerdere vestigingen vaak achter hun naam
+// zetten (bv. "Plegt-Vos Oost", "Plegt-Vos Midden") — strippen zodat ze onder dezelfde
+// kernnaam groeperen, net als de stad-suffix hieronder.
+const REGIO_SUFFIXES = /\b(noordoost|noordwest|zuidoost|zuidwest|noord|oost|zuid|west|midden)\b/g;
 const vestigingCoreNaam = (naam: string, stad: string, source?: string): string => {
   const src = (source || '').toLowerCase().trim();
   if (VESTIGING_CHAIN_SOURCES.has(src)) return `keten:${src}`;
@@ -1242,6 +1246,7 @@ const vestigingCoreNaam = (naam: string, stad: string, source?: string): string 
     if (n === s) n = '';
     else if (n.endsWith(' ' + s)) n = n.slice(0, -(s.length + 1)).trim();
   }
+  n = n.replace(REGIO_SUFFIXES, '').replace(/\s+/g, ' ').trim();
   return n;
 };
 const vestigingAddrKey = (b: any): string => `${(b.straat || '').toLowerCase().trim()}|${(b.postcode || '').toLowerCase().replace(/\s/g, '')}`;
@@ -4230,6 +4235,31 @@ const App: React.FC = () => {
                     <div className="bg-white border border-slate-200 p-4 rounded-sm space-y-2">
                       {b.rechtsvorm && <div className="flex items-center gap-3 text-sm"><span className="text-slate-400 text-xs w-24 flex-shrink-0">Rechtsvorm</span><span className="text-slate-800 font-medium">{b.rechtsvorm}</span></div>}
                       {b.kvk && <div className="flex items-center gap-3 text-sm"><span className="text-slate-400 text-xs w-24 flex-shrink-0">KvK</span><span className="text-slate-800 font-medium">{b.kvk}</span></div>}
+                    </div>
+                  </div>
+                )}
+
+                {/* Over dit bedrijf (redactionele beschrijving, bv. uit architectenlijsten) */}
+                {b.beschrijving && (
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Over dit bedrijf</p>
+                    <div className="bg-white border border-slate-200 p-4 rounded-sm">
+                      <p className="text-slate-700 text-sm leading-relaxed">{b.beschrijving}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Bekende projecten */}
+                {Array.isArray(b.projecten) && b.projecten.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5"><Building className="w-3 h-3"/> Bekende projecten</p>
+                    <div className="bg-white border border-slate-200 rounded-sm divide-y divide-slate-100">
+                      {b.projecten.map((p: string, i: number) => (
+                        <div key={i} className="px-4 py-2.5 text-sm text-slate-700 flex items-start gap-2">
+                          <span className="text-[#009FE3] mt-0.5">•</span>
+                          <span>{p}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
