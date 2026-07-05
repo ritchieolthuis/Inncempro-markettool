@@ -1503,8 +1503,19 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
 
         {/* Route plannen — verschijnt zodra kaart gegenereerd is */}
         {visibleCount > 0 && !isLoading && (
-          <div className="bg-white rounded-sm border border-[#E85E26]/30 p-4">
-            <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Route plannen</div>
+          <div className="bg-white rounded-sm border border-[#E85E26]/30 overflow-hidden flex-shrink-0">
+            <div className="flex items-center gap-2.5 px-4 py-3 border-b border-slate-100">
+              <div className="w-7 h-7 rounded-sm bg-[#E85E26] flex items-center justify-center flex-shrink-0">
+                <Navigation className="w-4 h-4 text-white" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-800 uppercase tracking-wide leading-none">Route Kaart</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  {routeMode ? `${routeStops.length} ${routeStops.length === 1 ? 'stop' : 'stops'} · geoptimaliseerd` : `${visibleCount} ${visibleCount === 1 ? 'bedrijf' : 'bedrijven'} op kaart`}
+                </p>
+              </div>
+            </div>
+            <div className="p-4">
             <div className="space-y-2 mb-3">
               <div>
                 <label className="text-xs text-slate-500 mb-1 block">Startadres</label>
@@ -1541,6 +1552,7 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
                 </button>
               </div>
             )}
+            </div>
           </div>
         )}
 
