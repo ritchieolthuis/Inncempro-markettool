@@ -1432,7 +1432,7 @@ const App: React.FC = () => {
   });
   const [showAddModal, setShowAddModal] = useState(false);
   const [addTab, setAddTab] = useState<'single' | 'bulk'>('single');
-  const [addForm, setAddForm] = useState({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', linkedin_url: '', twitter_handle: '', instagram_handle: '' });
+  const [addForm, setAddForm] = useState({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', linkedin_url: '', twitter_handle: '', instagram_handle: '', source: '' });
   const [bulkText, setBulkText] = useState('');
   const [bulkParsed, setBulkParsed] = useState<any[]>([]);
   const [bulkMsg, setBulkMsg] = useState('');
@@ -1457,11 +1457,11 @@ const App: React.FC = () => {
     if (blocks.length === 0) {
       // Try line-by-line if no blank-line separation
       const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-      return lines.map(line => ({ naam: line, straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Handmatig' }));
+      return lines.map(line => ({ naam: line, straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Onbekend' }));
     }
     return blocks.map(block => {
       const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-      const entry: any = { naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Handmatig' };
+      const entry: any = { naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Onbekend' };
       const emailRe = /[\w.+-]+@[\w-]+\.[a-z]{2,}/i;
       const urlRe   = /(?:https?:\/\/)?(?:www\.)?[\w-]+\.[a-z]{2,}(?:\/\S*)?/i;
       const telRe   = /(?:\+31|0)[\s\-]?[\d\s\-]{7,}/;
@@ -1508,7 +1508,7 @@ const App: React.FC = () => {
     const hoaKey = 'House of Architects||Leen Jongewaardkade 109';
     const deletedRaw: string[] = JSON.parse(localStorage.getItem('inncempro_deleted_entries') || '[]');
     if (!deletedRaw.includes(hoaKey) && !(bouwgarantData as any[]).find((b: any) => b.naam === 'House of Architects' && b.straat === 'Leen Jongewaardkade 109')) {
-      const hoa = { naam: 'House of Architects', straat: 'Leen Jongewaardkade 109', postcode: '1031 HS', stad: 'Amsterdam', provincie: 'Noord-Holland', telefoon: '020 235 7402', email: 'info@houseofarchitects.nl', website: 'houseofarchitects.nl', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Handmatig', _custom: true };
+      const hoa = { naam: 'House of Architects', straat: 'Leen Jongewaardkade 109', postcode: '1031 HS', stad: 'Amsterdam', provincie: 'Noord-Holland', telefoon: '020 235 7402', email: 'info@houseofarchitects.nl', website: 'houseofarchitects.nl', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Onbekend', _custom: true };
       (bouwgarantData as any[]).push(hoa);
       const stored: any[] = JSON.parse(localStorage.getItem('inncempro_custom_entries') || '[]');
       if (!stored.find((e: any) => e.naam === 'House of Architects' && e.straat === 'Leen Jongewaardkade 109')) {
@@ -1792,8 +1792,8 @@ const App: React.FC = () => {
               telefoon: (row.telefoon || row.phone || '').trim() || '',
               email: (row.email || '').trim() || '',
               website: (row.website || '').trim() || '',
-              source: 'Handmatig',
-              bron: 'Handmatig',
+              source: row.source || row.bron || 'Onbekend',
+              bron: row.source || row.bron || 'Onbekend',
               provincie: row.provincie || row.province || stad,
               rechtsvorm: row.rechtsvorm || row.legalform || '',
               spec1: row.spec1 || '',
@@ -2885,7 +2885,7 @@ const App: React.FC = () => {
                  <ProvinceFilter selectedRegions={selectedRegions} onToggle={(item: string) => toggleFilter(setSelectedRegions, item)} dataset={sidebarDataset} />
                  <CollapsibleFilterGroup title="Discipline" items={['Architecten', 'Bouwbedrijven', 'Aannemers', 'Bouwmaterialen']} selectedItems={selectedTypes} onToggleItem={(item) => toggleFilter(setSelectedTypes, item)} dataset={activeData} countFn={(item: string, b: any) => { const t = detectType(b); if (item === 'Architecten') return t === 'architect'; if (item === 'Bouwbedrijven') return t === 'bouwbedrijf'; if (item === 'Aannemers') return t === 'aannemer'; if (item === 'Bouwmaterialen') return t === 'materialen'; return false; }} />
                  <CollapsibleFilterGroup title="Werksoort" items={['Nieuwbouw', 'Renovatie', 'Verduurzaming', 'Restauratie', 'Onderhoud', 'Interieur', 'Utiliteitsbouw', 'Allround']} selectedItems={selectedWerksoort} onToggleItem={(item) => toggleFilter(setSelectedWerksoort, item)} dataset={activeData} countFn={(item: string, b: any) => { const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase(); if (item === 'Nieuwbouw') return specs.includes('nieuwbouw'); if (item === 'Renovatie') return specs.includes('renovatie') || specs.includes('verbouw') || specs.includes('aanbouw') || specs.includes('transformatie'); if (item === 'Verduurzaming') return specs.includes('verduurzam') || specs.includes('isoler') || specs.includes('duurzaam') || specs.includes('energie') || specs.includes('warmtepomp') || specs.includes('zonnepanelen'); if (item === 'Restauratie') return specs.includes('restauratie') || specs.includes('monument'); if (item === 'Onderhoud') return specs.includes('onderhoud') || specs.includes('beheer') || specs.includes('service'); if (item === 'Interieur') return specs.includes('interieur') || specs.includes('afbouw') || specs.includes('binneninrichting'); if (item === 'Utiliteitsbouw') return specs.includes('utiliteit') || specs.includes('kantoor') || specs.includes('bedrijfsgebouw') || specs.includes('zakelijk'); if (item === 'Allround') return specs.includes('allround'); return false; }} />
-                 <CollapsibleFilterGroup title="Bron" items={['Bouwgarant', 'BNA', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Handmatig', 'Onbekend']} selectedItems={selectedBron} onToggleItem={(item) => toggleFilter(setSelectedBron, item)} dataset={activeData} countFn={(item: string, b: any) => { const srcs = b._sources?.length ? b._sources : [b.source || 'Onbekend']; return srcs.includes(item); }} />
+                 <CollapsibleFilterGroup title="Bron" items={['Bouwgarant', 'BNA', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Onbekend']} selectedItems={selectedBron} onToggleItem={(item) => toggleFilter(setSelectedBron, item)} dataset={activeData} countFn={(item: string, b: any) => { const srcs = b._sources?.length ? b._sources : [b.source || 'Onbekend']; return srcs.includes(item); }} />
                  <CollapsibleFilterGroup title="Rechtsvorm" items={['B.V.', 'V.O.F.', 'Eenmanszaak', 'Stichting', 'N.V.']} selectedItems={selectedRechtsvorm} onToggleItem={(item) => toggleFilter(setSelectedRechtsvorm, item)} dataset={activeData} countFn={(item: string, b: any) => { const rv = (b.rechtsvorm || '').toLowerCase(); const naam = (b.naam || '').toLowerCase(); if (item === 'B.V.') return rv.includes('b.v') || rv.includes('bv') || naam.includes(' bv') || naam.endsWith(' b.v.') || naam.endsWith(' bv'); if (item === 'V.O.F.') return rv.includes('vof') || rv.includes('v.o.f') || naam.includes(' vof'); if (item === 'Eenmanszaak') return rv.includes('eenmanszaak') || rv.includes('zzp'); if (item === 'Stichting') return rv.includes('stichting') || naam.startsWith('stichting'); if (item === 'N.V.') return rv.includes('n.v') || rv.includes('nv') || naam.includes(' nv'); return false; }} />
                  <CollapsibleFilterGroup title="Contactgegevens" items={['Heeft telefoon', 'Heeft e-mail', 'Heeft website', 'Heeft KVK']} selectedItems={selectedContact} onToggleItem={(item) => toggleFilter(setSelectedContact, item)} dataset={activeData} countFn={(item: string, b: any) => { if (item === 'Heeft telefoon') return !!(b.telefoon || b.telefoon_sales || b.telefoon_admin); if (item === 'Heeft e-mail') return !!(b.email || b.email_sales || b.email_overig); if (item === 'Heeft website') return !!(b.website || b.url); if (item === 'Heeft KVK') return !!(b.kvk); return false; }} />
             </div>
@@ -3072,7 +3072,7 @@ const App: React.FC = () => {
                      <div className="flex items-center gap-2">
                        <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">~{filtered.length} gevonden</span>
                        <button onClick={() => setImportModalOpen(true)} className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 rounded-sm text-[10px] font-bold uppercase tracking-wider transition-all"><Upload className="w-3 h-3"/>Importeren</button>
-                       <button onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', linkedin_url: '', twitter_handle: '', instagram_handle: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setShowAddModal(true); }} className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 rounded-sm text-[10px] font-bold uppercase tracking-wider transition-all"><Plus className="w-3 h-3"/>Toevoegen</button>
+                       <button onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', linkedin_url: '', twitter_handle: '', instagram_handle: '', source: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setShowAddModal(true); }} className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 rounded-sm text-[10px] font-bold uppercase tracking-wider transition-all"><Plus className="w-3 h-3"/>Toevoegen</button>
                      </div>
                      {(() => {
                        const pageNamen = paged.map((b: any) => b.naam as string);
@@ -3544,7 +3544,7 @@ const App: React.FC = () => {
                                      <MapPin className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> {showRouteMap ? 'Kaart sluiten' : 'Route Kaart'}
                                  </button>}
                                  <button
-                                     onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', linkedin_url: '', twitter_handle: '', instagram_handle: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setAddTab('bulk'); setShowAddModal(true); }}
+                                     onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', linkedin_url: '', twitter_handle: '', instagram_handle: '', source: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setAddTab('bulk'); setShowAddModal(true); }}
                                      className="px-3 py-1.5 sm:px-4 sm:py-2 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 sm:gap-2 transition-colors"
                                  >
                                      <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Toevoegen
@@ -3926,12 +3926,30 @@ const App: React.FC = () => {
                       {f('rechtsvorm', 'Rechtsvorm')}
                       {f('kvk', 'KvK-nummer')}
                     </div>
+                    <div>
+                      <label className={labelCls}>Bron</label>
+                      <select
+                        className={fieldCls + ' bg-white'}
+                        value={addForm.source}
+                        onChange={e => setAddForm(d => ({ ...d, source: e.target.value }))}
+                      >
+                        <option value="">Onbekend</option>
+                        <option value="Bouwgarant">Bouwgarant</option>
+                        <option value="BNA">BNA</option>
+                        <option value="Architectenweb">Architectenweb</option>
+                        <option value="Stiho">Stiho</option>
+                        <option value="Jongeneel">Jongeneel</option>
+                        <option value="BouwPartner">BouwPartner</option>
+                        <option value="PontMeyer">PontMeyer</option>
+                        <option value="Van Wijnen">Van Wijnen</option>
+                      </select>
+                    </div>
                     {addDuplicate && (
                       <div className="bg-amber-50 border border-amber-300 rounded-sm p-3 text-xs text-amber-800">
                         <p className="font-bold mb-1">⚠ Mogelijk al in database</p>
                         <p className="mb-2">Gevonden: <span className="font-semibold">{addDuplicate.naam}</span>{addDuplicate.stad ? ` — ${addDuplicate.stad}` : ''}{addDuplicate.straat ? `, ${addDuplicate.straat}` : ''}</p>
                         <div className="flex gap-2">
-                          <button onClick={() => { addCustomEntries([{ ...addForm, source: 'Handmatig' }]); setAddDuplicate(null); setShowAddModal(false); }} className="flex-1 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-sm">Toch toevoegen</button>
+                          <button onClick={() => { addCustomEntries([{ ...addForm, source: addForm.source || 'Onbekend' }]); setAddDuplicate(null); setShowAddModal(false); }} className="flex-1 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-sm">Toch toevoegen</button>
                           <button onClick={() => setAddDuplicate(null)} className="flex-1 py-1.5 border border-amber-300 text-amber-700 font-bold rounded-sm hover:bg-amber-100">Annuleren</button>
                         </div>
                       </div>
@@ -3943,7 +3961,7 @@ const App: React.FC = () => {
                           if (!addForm.naam.trim()) return;
                           const dup = findDuplicate(addForm.naam, addForm.straat, addForm.stad);
                           if (dup) { setAddDuplicate(dup); return; }
-                          addCustomEntries([{ ...addForm, source: 'Handmatig' }]);
+                          addCustomEntries([{ ...addForm, source: addForm.source || 'Onbekend' }]);
                           setShowAddModal(false);
                         }}
                         className="w-full flex items-center justify-center gap-1.5 px-4 py-3 text-xs font-bold uppercase tracking-wider bg-[#009FE3] hover:bg-[#008ac5] disabled:opacity-40 text-white rounded-sm transition-all mt-2"
@@ -4021,7 +4039,7 @@ const App: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-1 ml-2 flex-shrink-0">
-                  <button onClick={() => { setEditDraft({ naam: b.naam||'', straat: b.straat||'', postcode: b.postcode||'', stad: b.stad||'', provincie: b.provincie||'', telefoon: b.telefoon||'', telefoon_sales: b.telefoon_sales||'', telefoon_admin: b.telefoon_admin||'', email: b.email||'', email_sales: b.email_sales||'', email_overig: b.email_overig||'', website: b.website||'', spec1: b.spec1||'', spec2: b.spec2||'', spec3: b.spec3||'', rechtsvorm: b.rechtsvorm||'', kvk: b.kvk||'' }); setEditMode(true); }} title="Bewerken" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-[#009FE3]"><Pencil className="w-4 h-4" /></button>
+                  <button onClick={() => { setEditDraft({ naam: b.naam||'', straat: b.straat||'', postcode: b.postcode||'', stad: b.stad||'', provincie: b.provincie||'', telefoon: b.telefoon||'', telefoon_sales: b.telefoon_sales||'', telefoon_admin: b.telefoon_admin||'', email: b.email||'', email_sales: b.email_sales||'', email_overig: b.email_overig||'', website: b.website||'', spec1: b.spec1||'', spec2: b.spec2||'', spec3: b.spec3||'', rechtsvorm: b.rechtsvorm||'', kvk: b.kvk||'', source: b.source||'Onbekend' }); setEditMode(true); }} title="Bewerken" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-[#009FE3]"><Pencil className="w-4 h-4" /></button>
                   <button onClick={() => { if (window.confirm(`"${b.naam}"${b.straat ? ` (${b.straat})` : ''} verwijderen?`)) { handleDeleteEntry(b.naam, b.straat); setSelectedCompany(null); setEditMode(false); } }} title="Verwijderen" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
                   <button onClick={() => { setSelectedCompany(null); setEditMode(false); }} className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-900"><X className="w-5 h-5" /></button>
                 </div>
@@ -4073,6 +4091,24 @@ const App: React.FC = () => {
                         <div className="bg-white border border-slate-200 p-3 rounded-sm space-y-2">
                           {field('rechtsvorm', 'Rechtsvorm')}
                           {field('kvk', 'KvK')}
+                          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 text-sm">
+                            <span className="text-slate-400 text-xs sm:w-28 sm:flex-shrink-0">Bron</span>
+                            <select
+                              className="flex-1 border border-slate-200 rounded-sm px-2 py-1.5 text-sm text-slate-800 focus:outline-none focus:border-[#009FE3] bg-white"
+                              value={editDraft.source ?? 'Onbekend'}
+                              onChange={e => setEditDraft(d => ({ ...d, source: e.target.value }))}
+                            >
+                              <option value="Onbekend">Onbekend</option>
+                              <option value="Bouwgarant">Bouwgarant</option>
+                              <option value="BNA">BNA</option>
+                              <option value="Architectenweb">Architectenweb</option>
+                              <option value="Stiho">Stiho</option>
+                              <option value="Jongeneel">Jongeneel</option>
+                              <option value="BouwPartner">BouwPartner</option>
+                              <option value="PontMeyer">PontMeyer</option>
+                              <option value="Van Wijnen">Van Wijnen</option>
+                            </select>
+                          </div>
                         </div>
                       </div>
                       <div>
