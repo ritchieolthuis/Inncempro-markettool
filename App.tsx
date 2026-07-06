@@ -4606,7 +4606,7 @@ const App: React.FC = () => {
                 <div>
                   <p className="text-sm font-bold text-slate-900 mb-3">In welke stad?</p>
                   <input type="text" placeholder="Amsterdam, Rotterdam..." value={aiSelected.city} onChange={(e) => setAiSelected({...aiSelected, city: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-sm text-sm focus:outline-none focus:border-[#009FE3]" />
-                  <button onClick={() => aiSelected.city && setAiStep('count')} className="w-full mt-3 px-4 py-2 bg-[#009FE3] text-white rounded-sm hover:bg-[#0088c8] font-medium text-sm">
+                  <button onClick={() => { if (aiSelected.city?.trim()) setAiStep('count'); }} disabled={!aiSelected.city?.trim()} className="w-full mt-3 px-4 py-2 bg-[#009FE3] disabled:bg-slate-300 text-white disabled:text-slate-500 rounded-sm hover:bg-[#0088c8] disabled:hover:bg-slate-300 font-medium text-sm transition-colors">
                     Volgende
                   </button>
                 </div>
@@ -4617,7 +4617,7 @@ const App: React.FC = () => {
                 <div>
                   <p className="text-sm font-bold text-slate-900 mb-3">Hoeveel bedrijven? (1-20)</p>
                   <input type="number" min="1" max="20" value={aiSelected.count || ''} onChange={(e) => setAiSelected({...aiSelected, count: parseInt(e.target.value) || 0})} className="w-full px-3 py-2 border border-slate-300 rounded-sm text-sm focus:outline-none focus:border-[#009FE3]" />
-                  <button onClick={() => aiSelected.count > 0 && executeAIRoute()} className="w-full mt-3 px-4 py-2 bg-[#E85E26] text-white rounded-sm hover:bg-[#d94d15] font-bold text-sm">
+                  <button onClick={() => { if (aiSelected.count > 0) executeAIRoute(); }} disabled={aiSelected.count <= 0} className="w-full mt-3 px-4 py-2 bg-[#E85E26] disabled:bg-slate-300 text-white disabled:text-slate-500 rounded-sm hover:bg-[#d94d15] disabled:hover:bg-slate-300 font-bold text-sm transition-colors">
                     Route maken
                   </button>
                 </div>
