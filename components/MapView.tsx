@@ -805,8 +805,23 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
           iconSize: [25, 41],
           shadowSize: [41, 41],
         }),
-      })
-        .bindPopup(`<b>${selectedCompany.naam}</b><br>${selectedCompany.straat || ''} ${selectedCompany.postcode || ''} ${stad}`)
+      });
+
+      // Build popup with logo if available
+      let popupContent = `<div style="width: 320px; padding: 12px;">`;
+      if (selectedCompany.logo) {
+        popupContent += `<img src="${selectedCompany.logo}" alt="${selectedCompany.naam}" style="width: 120px; height: auto; margin-bottom: 12px; object-fit: contain; display: block; margin-left: auto; margin-right: auto;" />`;
+      }
+      popupContent += `<b style="font-size: 14px; display: block; margin-bottom: 8px;">${selectedCompany.naam}</b>`;
+      popupContent += `<div style="font-size: 12px; color: #666; line-height: 1.6;">`;
+      popupContent += `${selectedCompany.straat || ''}<br/>`;
+      popupContent += `${selectedCompany.postcode || ''} ${stad}`;
+      if (selectedCompany.telefoon) popupContent += `<br/><strong>📞</strong> ${selectedCompany.telefoon}`;
+      if (selectedCompany.email) popupContent += `<br/><strong>📧</strong> ${selectedCompany.email}`;
+      popupContent += `</div></div>`;
+
+      marker
+        .bindPopup(popupContent)
         .addTo(mapRef.current)
         .openPopup();
 
