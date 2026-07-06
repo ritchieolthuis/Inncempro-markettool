@@ -4236,7 +4236,6 @@ const App: React.FC = () => {
                   <div className="flex items-center gap-2 text-[#E85E26] text-[10px] font-bold uppercase tracking-[0.2em] mb-1">
                     <Building className="w-3 h-3" /> Bedrijfsprofiel
                   </div>
-                  <h2 className="text-lg sm:text-2xl font-bold text-slate-900 uppercase tracking-tight leading-tight break-words">{b.naam}</h2>
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
                     <SourceBadges b={b} size="md" />
                     {b.rechtsvorm && <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-medium">{b.rechtsvorm}</span>}
