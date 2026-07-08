@@ -102,8 +102,8 @@ export function mergeEntries(entries: any[]): any[] {
   });
   for (const idxs of byAddrKey.values()) {
     if (idxs.length < 2) continue;
-    const onbekendIdxs = idxs.filter(i => (entries[i].source || 'Onbekend') === 'Onbekend');
-    const realIdxs = idxs.filter(i => entries[i].source && entries[i].source !== 'Onbekend');
+    const onbekendIdxs = idxs.filter(i => (entries[i].source || 'Web') === 'Web');
+    const realIdxs = idxs.filter(i => entries[i].source && entries[i].source !== 'Web');
     if (!onbekendIdxs.length || !realIdxs.length) continue;
     for (const oi of onbekendIdxs) {
       const oCore = coreNaam(entries[oi].naam);
@@ -146,7 +146,7 @@ export function mergeEntries(entries: any[]): any[] {
   const merged: any[] = [];
   for (const group of groups.values()) {
     // Prefer a properly-sourced entry's fields (naam, etc.) over an "Onbekend" duplicate
-    group.sort((a, b) => (a.source && a.source !== 'Onbekend' ? 0 : 1) - (b.source && b.source !== 'Onbekend' ? 0 : 1));
+    group.sort((a, b) => (a.source && a.source !== 'Web' ? 0 : 1) - (b.source && b.source !== 'Web' ? 0 : 1));
     if (group.length === 1) { merged.push(group[0]); continue; }
     const base = group.reduce((acc, cur) => ({
       ...acc,
@@ -183,19 +183,19 @@ export function mergeEntries(entries: any[]): any[] {
     const completeness = (e: any) => ['telefoon', 'email', 'website', 'spec1', 'spec2', 'spec3', 'kvk', 'rechtsvorm'].filter(f => e[f]).length;
     const completenessBySource = new Map<string, number>();
     for (const e of group) {
-      const src = e.source || 'Onbekend';
+      const src = e.source || 'Web';
       const score = completeness(e);
       if (!completenessBySource.has(src) || score > completenessBySource.get(src)!) completenessBySource.set(src, score);
     }
     const rawSources = group.map(e => e.source).filter(Boolean);
-    const realSources = Array.from(new Set(rawSources.filter(s => s !== 'Onbekend')))
+    const realSources = Array.from(new Set(rawSources.filter(s => s !== 'Web')))
       .sort((a, b) => (completenessBySource.get(b) || 0) - (completenessBySource.get(a) || 0));
-    const sources = realSources.length > 0 ? realSources : (rawSources.length > 0 ? ['Onbekend'] : []);
-    base.source = sources[0] || 'Onbekend';
+    const sources = realSources.length > 0 ? realSources : (rawSources.length > 0 ? ['Web'] : []);
+    base.source = sources[0] || 'Web';
     base._sources = sources; // all sources as array
     // The "Onbekend" bron's address wins ties — it's leading for location, even when a
     // known bron (Bouwgarant, ...) is also present in the group.
-    const onbekendEntry = group.find(e => (e.source || 'Onbekend') === 'Onbekend' && (e.straat || e.postcode || e.stad));
+    const onbekendEntry = group.find(e => (e.source || 'Web') === 'Web' && (e.straat || e.postcode || e.stad));
     if (onbekendEntry) {
       base.straat    = onbekendEntry.straat    || base.straat;
       base.postcode  = onbekendEntry.postcode  || base.postcode;

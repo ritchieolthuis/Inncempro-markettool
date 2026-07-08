@@ -1321,19 +1321,19 @@ const SOURCE_COLORS: Record<string, { bg: string; text: string; btn: string; btn
   'Van Wijnen':    { bg: 'bg-teal-100',     text: 'text-teal-700',   btn: 'bg-teal-600',   btnHover: 'hover:bg-teal-700' },
   'Plegt-Vos':     { bg: 'bg-indigo-100',   text: 'text-indigo-700', btn: 'bg-indigo-600', btnHover: 'hover:bg-indigo-700' },
   'VolkerWessels': { bg: 'bg-pink-100',     text: 'text-pink-700',   btn: 'bg-pink-600',   btnHover: 'hover:bg-pink-700' },
-  'Onbekend':      { bg: 'bg-slate-100',    text: 'text-slate-500',  btn: 'bg-slate-500',  btnHover: 'hover:bg-slate-600' },
+  'Web':      { bg: 'bg-slate-100',    text: 'text-slate-500',  btn: 'bg-slate-500',  btnHover: 'hover:bg-slate-600' },
 };
-const srcColor = (source: string) => SOURCE_COLORS[source] || SOURCE_COLORS['Onbekend'];
+const srcColor = (source: string) => SOURCE_COLORS[source] || SOURCE_COLORS['Web'];
 // De uitgaande "bezoek bron"-knop is bij elk bedrijf hetzelfde blauw, ongeacht bron — alleen
 // het kleine badge/label naast de bedrijfsnaam (SourceBadges, via srcColor().bg/.text) en de
 // kaart/filter-kleuren per bron blijven ongemoeid. Bij "Onbekend" tonen we sowieso geen knop
-// (zie de `!== 'Onbekend'`-check bij elke render hieronder) — die link heeft toch geen waarde.
+// (zie de `!== 'Web'`-check bij elke render hieronder) — die link heeft toch geen waarde.
 const SOURCE_LINK_BTN = { btn: 'bg-[#009FE3]', btnHover: 'hover:bg-[#0086c9]' };
 // A "real" source (Bouwgarant, Architectenweb, ...) always outranks "Onbekend" —
 // if a company also has a known source, the meaningless "Onbekend" badge/button is dropped.
 const visibleSources = (b: any): string[] => {
   const all: string[] = b._sources?.length ? b._sources : b.source ? [b.source] : [];
-  const real = all.filter((s: string) => s !== 'Onbekend');
+  const real = all.filter((s: string) => s !== 'Web');
   return real.length ? real : all;
 };
 
@@ -1698,8 +1698,8 @@ const App: React.FC = () => {
       let migrated = false;
       Object.keys(raw).forEach(naam => {
         const e = raw[naam];
-        if (e?.source === 'Handmatig') { e.source = 'Onbekend'; migrated = true; }
-        if (e?.bron === 'Handmatig')   { e.bron   = 'Onbekend'; migrated = true; }
+        if (e?.source === 'Handmatig') { e.source = 'Web'; migrated = true; }
+        if (e?.bron === 'Handmatig')   { e.bron   = 'Web'; migrated = true; }
       });
       if (migrated) localStorage.setItem('inncempro_manual_edits', JSON.stringify(raw));
       return raw;
@@ -1740,7 +1740,7 @@ const App: React.FC = () => {
       const cleaned = raw.map((e: any) => {
         if (e && (e.source === 'Handmatig' || e.bron === 'Handmatig')) {
           migrated = true;
-          return { ...e, source: e.source === 'Handmatig' ? 'Onbekend' : e.source, bron: e.bron === 'Handmatig' ? 'Onbekend' : e.bron };
+          return { ...e, source: e.source === 'Handmatig' ? 'Web' : e.source, bron: e.bron === 'Handmatig' ? 'Web' : e.bron };
         }
         return e;
       });
@@ -1775,11 +1775,11 @@ const App: React.FC = () => {
     if (blocks.length === 0) {
       // Try line-by-line if no blank-line separation
       const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-      return lines.map(line => ({ naam: line, straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Onbekend' }));
+      return lines.map(line => ({ naam: line, straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Web' }));
     }
     return blocks.map(block => {
       const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-      const entry: any = { naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Onbekend' };
+      const entry: any = { naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Web' };
       const emailRe = /[\w.+-]+@[\w-]+\.[a-z]{2,}/i;
       const urlRe   = /(?:https?:\/\/)?(?:www\.)?[\w-]+\.[a-z]{2,}(?:\/\S*)?/i;
       const telRe   = /(?:\+31|0)[\s\-]?[\d\s\-]{7,}/;
@@ -1826,7 +1826,7 @@ const App: React.FC = () => {
     const hoaKey = 'House of Architects||Leen Jongewaardkade 109';
     const deletedRaw: string[] = JSON.parse(localStorage.getItem('inncempro_deleted_entries') || '[]');
     if (!deletedRaw.includes(hoaKey) && !(bouwgarantData as any[]).find((b: any) => b.naam === 'House of Architects' && b.straat === 'Leen Jongewaardkade 109')) {
-      const hoa = { naam: 'House of Architects', straat: 'Leen Jongewaardkade 109', postcode: '1031 HS', stad: 'Amsterdam', provincie: 'Noord-Holland', telefoon: '020 235 7402', email: 'info@houseofarchitects.nl', website: 'houseofarchitects.nl', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Onbekend', _custom: true };
+      const hoa = { naam: 'House of Architects', straat: 'Leen Jongewaardkade 109', postcode: '1031 HS', stad: 'Amsterdam', provincie: 'Noord-Holland', telefoon: '020 235 7402', email: 'info@houseofarchitects.nl', website: 'houseofarchitects.nl', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Web', _custom: true };
       (bouwgarantData as any[]).push(hoa);
       const stored: any[] = JSON.parse(localStorage.getItem('inncempro_custom_entries') || '[]');
       if (!stored.find((e: any) => e.naam === 'House of Architects' && e.straat === 'Leen Jongewaardkade 109')) {
@@ -2131,8 +2131,8 @@ const App: React.FC = () => {
               telefoon: (row.telefoon || row.phone || '').trim() || '',
               email: (row.email || '').trim() || '',
               website: (row.website || '').trim() || '',
-              source: row.source || row.bron || 'Onbekend',
-              bron: row.source || row.bron || 'Onbekend',
+              source: row.source || row.bron || 'Web',
+              bron: row.source || row.bron || 'Web',
               provincie: row.provincie || row.province || stad,
               rechtsvorm: row.rechtsvorm || row.legalform || '',
               spec1: row.spec1 || '',
@@ -2545,7 +2545,7 @@ const App: React.FC = () => {
 
           // Bron filter
           if (selectedBron.length > 0) {
-              const src = (b._sources?.length ? b._sources : [b.source || 'Onbekend']);
+              const src = (b._sources?.length ? b._sources : [b.source || 'Web']);
               const match = selectedBron.some(sel => src.includes(sel));
               if (!match) return false;
           }
@@ -2974,7 +2974,7 @@ const App: React.FC = () => {
 
       companiesToExport.forEach(c => {
           const raw = (c as any)._raw || {};
-          const discoveredDate = c.discoveredAt ? new Date(c.discoveredAt).toLocaleString('nl-NL') : 'Onbekend';
+          const discoveredDate = c.discoveredAt ? new Date(c.discoveredAt).toLocaleString('nl-NL') : 'Web';
 
           const row = [
               `"${c.name || ''}"`,
@@ -3380,7 +3380,7 @@ const App: React.FC = () => {
                  />
                  <CollapsibleFilterGroup title="Discipline" items={['Architecten', 'Bouwbedrijven', 'Aannemers', 'Bouwmaterialen']} selectedItems={selectedTypes} onToggleItem={(item) => toggleFilter(setSelectedTypes, item)} dataset={activeData} countFn={(item: string, b: any) => { const t = detectType(b); if (item === 'Architecten') return t === 'architect'; if (item === 'Bouwbedrijven') return t === 'bouwbedrijf'; if (item === 'Aannemers') return t === 'aannemer'; if (item === 'Bouwmaterialen') return t === 'materialen'; return false; }} />
                  <CollapsibleFilterGroup title="Werksoort" items={['Nieuwbouw', 'Renovatie', 'Verduurzaming', 'Restauratie', 'Onderhoud', 'Interieur', 'Utiliteitsbouw', 'Allround']} selectedItems={selectedWerksoort} onToggleItem={(item) => toggleFilter(setSelectedWerksoort, item)} dataset={activeData} countFn={(item: string, b: any) => { const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase(); if (item === 'Nieuwbouw') return specs.includes('nieuwbouw'); if (item === 'Renovatie') return specs.includes('renovatie') || specs.includes('verbouw') || specs.includes('aanbouw') || specs.includes('transformatie'); if (item === 'Verduurzaming') return specs.includes('verduurzam') || specs.includes('isoler') || specs.includes('duurzaam') || specs.includes('energie') || specs.includes('warmtepomp') || specs.includes('zonnepanelen'); if (item === 'Restauratie') return specs.includes('restauratie') || specs.includes('monument'); if (item === 'Onderhoud') return specs.includes('onderhoud') || specs.includes('beheer') || specs.includes('service'); if (item === 'Interieur') return specs.includes('interieur') || specs.includes('afbouw') || specs.includes('binneninrichting'); if (item === 'Utiliteitsbouw') return specs.includes('utiliteit') || specs.includes('kantoor') || specs.includes('bedrijfsgebouw') || specs.includes('zakelijk'); if (item === 'Allround') return specs.includes('allround'); return false; }} />
-                 <CollapsibleFilterGroup title="Bron" items={['Bouwgarant', 'BNA', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Plegt-Vos', 'VolkerWessels', 'Onbekend']} selectedItems={selectedBron} onToggleItem={(item) => toggleFilter(setSelectedBron, item)} dataset={activeData} countFn={(item: string, b: any) => { const srcs = b._sources?.length ? b._sources : [b.source || 'Onbekend']; return srcs.includes(item); }} />
+                 <CollapsibleFilterGroup title="Bron" items={['Bouwgarant', 'BNA', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Plegt-Vos', 'VolkerWessels', 'Web']} selectedItems={selectedBron} onToggleItem={(item) => toggleFilter(setSelectedBron, item)} dataset={activeData} countFn={(item: string, b: any) => { const srcs = b._sources?.length ? b._sources : [b.source || 'Web']; return srcs.includes(item); }} />
                  <CollapsibleFilterGroup title="Rechtsvorm" items={['B.V.', 'V.O.F.', 'Eenmanszaak', 'Stichting', 'N.V.']} selectedItems={selectedRechtsvorm} onToggleItem={(item) => toggleFilter(setSelectedRechtsvorm, item)} dataset={activeData} countFn={(item: string, b: any) => { const rv = (b.rechtsvorm || '').toLowerCase(); const naam = (b.naam || '').toLowerCase(); if (item === 'B.V.') return rv.includes('b.v') || rv.includes('bv') || naam.includes(' bv') || naam.endsWith(' b.v.') || naam.endsWith(' bv'); if (item === 'V.O.F.') return rv.includes('vof') || rv.includes('v.o.f') || naam.includes(' vof'); if (item === 'Eenmanszaak') return rv.includes('eenmanszaak') || rv.includes('zzp'); if (item === 'Stichting') return rv.includes('stichting') || naam.startsWith('stichting'); if (item === 'N.V.') return rv.includes('n.v') || rv.includes('nv') || naam.includes(' nv'); return false; }} />
                  <CollapsibleFilterGroup title="Contactgegevens" items={['Heeft telefoon', 'Heeft e-mail', 'Heeft website', 'Heeft KVK']} selectedItems={selectedContact} onToggleItem={(item) => toggleFilter(setSelectedContact, item)} dataset={activeData} countFn={(item: string, b: any) => { if (item === 'Heeft telefoon') return !!(b.telefoon || b.telefoon_sales || b.telefoon_admin); if (item === 'Heeft e-mail') return !!(b.email || b.email_sales || b.email_overig); if (item === 'Heeft website') return !!(b.website || b.url); if (item === 'Heeft KVK') return !!(b.kvk); return false; }} />
             </div>
@@ -3506,7 +3506,7 @@ const App: React.FC = () => {
                    if (lijst === 'Van Wijnen') return naam.includes('van wijnen');
                    return false;
                  });
-                 const dbSrc = b._sources?.length ? b._sources : [b.source || 'Onbekend'];
+                 const dbSrc = b._sources?.length ? b._sources : [b.source || 'Web'];
                  const matchBronSidebar = selectedBron.length === 0 || selectedBron.some(sel => dbSrc.includes(sel));
                  const rv = (b.rechtsvorm || '').toLowerCase();
                  const matchRvSidebar = selectedRechtsvorm.length === 0 || selectedRechtsvorm.some(sel => {
@@ -3746,7 +3746,7 @@ const App: React.FC = () => {
                              {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
                              {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
                              {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2]`}><Linkedin className="w-3 h-3"/>LinkedIn</a>}
-                             {b.url && visibleSources(b)[0] !== 'Onbekend' && (visibleSources(b).length > 1
+                             {b.url && visibleSources(b)[0] !== 'Web' && (visibleSources(b).length > 1
                                ? visibleSources(b).map((s: string, si: number) => (
                                    <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3 h-3"/>{s}</a>
                                  ))
@@ -4499,7 +4499,7 @@ const App: React.FC = () => {
                                     {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
                                     {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
                                     {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2]`}><Linkedin className="w-3 h-3"/>LinkedIn</a>}
-                                    {b.url && visibleSources(b)[0] !== 'Onbekend' && (visibleSources(b).length > 1
+                                    {b.url && visibleSources(b)[0] !== 'Web' && (visibleSources(b).length > 1
                                       ? visibleSources(b).map((s: string, si: number) => (
                                           <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3 h-3"/>{s}</a>
                                         ))
@@ -4657,7 +4657,7 @@ const App: React.FC = () => {
                   { label: 'Website', fn: b => b.website || b.url || null },
                   { label: 'Rechtsvorm', fn: b => b.rechtsvorm || null },
                   { label: 'KVK', fn: b => b.kvk || null },
-                  { label: 'Bron', fn: b => (b._sources?.length ? b._sources : [b.source || 'Onbekend']).join(', ') },
+                  { label: 'Bron', fn: b => (b._sources?.length ? b._sources : [b.source || 'Web']).join(', ') },
                 ];
                 return (
                   <table className="w-full text-xs border-collapse">
@@ -4760,7 +4760,7 @@ const App: React.FC = () => {
                         value={addForm.source}
                         onChange={e => setAddForm(d => ({ ...d, source: e.target.value }))}
                       >
-                        <option value="">Onbekend</option>
+                        <option value="">Web</option>
                         <option value="Bouwgarant">Bouwgarant</option>
                         <option value="BNA">BNA</option>
                         <option value="Architectenweb">Architectenweb</option>
@@ -4778,7 +4778,7 @@ const App: React.FC = () => {
                         <p className="font-bold mb-1">⚠ Mogelijk al in database</p>
                         <p className="mb-2">Gevonden: <span className="font-semibold">{addDuplicate.naam}</span>{addDuplicate.stad ? ` — ${addDuplicate.stad}` : ''}{addDuplicate.straat ? `, ${addDuplicate.straat}` : ''}</p>
                         <div className="flex gap-2">
-                          <button onClick={() => { addCustomEntries([{ ...addForm, source: addForm.source || 'Onbekend' }]); setAddDuplicate(null); setShowAddModal(false); }} className="flex-1 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-sm">Toch toevoegen</button>
+                          <button onClick={() => { addCustomEntries([{ ...addForm, source: addForm.source || 'Web' }]); setAddDuplicate(null); setShowAddModal(false); }} className="flex-1 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-sm">Toch toevoegen</button>
                           <button onClick={() => setAddDuplicate(null)} className="flex-1 py-1.5 border border-amber-300 text-amber-700 font-bold rounded-sm hover:bg-amber-100">Annuleren</button>
                         </div>
                       </div>
@@ -4790,7 +4790,7 @@ const App: React.FC = () => {
                           if (!addForm.naam.trim()) return;
                           const dup = findDuplicate(addForm.naam, addForm.straat, addForm.stad);
                           if (dup) { setAddDuplicate(dup); return; }
-                          addCustomEntries([{ ...addForm, source: addForm.source || 'Onbekend' }]);
+                          addCustomEntries([{ ...addForm, source: addForm.source || 'Web' }]);
                           setShowAddModal(false);
                         }}
                         className="w-full flex items-center justify-center gap-1.5 px-4 py-3 text-xs font-bold uppercase tracking-wider bg-[#009FE3] hover:bg-[#008ac5] disabled:opacity-40 text-white rounded-sm transition-all mt-2"
@@ -4867,7 +4867,7 @@ const App: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-1 ml-2 flex-shrink-0">
-                  <button onClick={() => { setEditDraft({ naam: b.naam||'', straat: b.straat||'', postcode: b.postcode||'', stad: b.stad||'', provincie: b.provincie||'', telefoon: b.telefoon||'', telefoon_sales: b.telefoon_sales||'', telefoon_admin: b.telefoon_admin||'', email: b.email||'', email_sales: b.email_sales||'', email_overig: b.email_overig||'', website: b.website||'', spec1: b.spec1||'', spec2: b.spec2||'', spec3: b.spec3||'', rechtsvorm: b.rechtsvorm||'', kvk: b.kvk||'', source: b.source||'Onbekend' }); setEditMode(true); }} title="Bewerken" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-[#009FE3]"><Pencil className="w-4 h-4" /></button>
+                  <button onClick={() => { setEditDraft({ naam: b.naam||'', straat: b.straat||'', postcode: b.postcode||'', stad: b.stad||'', provincie: b.provincie||'', telefoon: b.telefoon||'', telefoon_sales: b.telefoon_sales||'', telefoon_admin: b.telefoon_admin||'', email: b.email||'', email_sales: b.email_sales||'', email_overig: b.email_overig||'', website: b.website||'', spec1: b.spec1||'', spec2: b.spec2||'', spec3: b.spec3||'', rechtsvorm: b.rechtsvorm||'', kvk: b.kvk||'', source: b.source||'Web' }); setEditMode(true); }} title="Bewerken" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-[#009FE3]"><Pencil className="w-4 h-4" /></button>
                   <button onClick={() => { if (window.confirm(`"${b.naam}"${b.straat ? ` (${b.straat})` : ''} verwijderen?`)) { handleDeleteEntry(b.naam, b.straat); setSelectedCompany(null); setEditMode(false); } }} title="Verwijderen" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
                   <button onClick={() => { setSelectedCompany(null); setEditMode(false); }} className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-900"><X className="w-5 h-5" /></button>
                 </div>
@@ -4923,10 +4923,10 @@ const App: React.FC = () => {
                             <span className="text-slate-400 text-xs sm:w-28 sm:flex-shrink-0">Bron</span>
                             <select
                               className="flex-1 border border-slate-200 rounded-sm px-2 py-1.5 text-sm text-slate-800 focus:outline-none focus:border-[#009FE3] bg-white"
-                              value={editDraft.source ?? 'Onbekend'}
+                              value={editDraft.source ?? 'Web'}
                               onChange={e => setEditDraft(d => ({ ...d, source: e.target.value }))}
                             >
-                              <option value="Onbekend">Onbekend</option>
+                              <option value="Web">Web</option>
                               <option value="Bouwgarant">Bouwgarant</option>
                               <option value="BNA">BNA</option>
                               <option value="Architectenweb">Architectenweb</option>
@@ -5131,7 +5131,7 @@ const App: React.FC = () => {
                   {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-700 rounded-sm transition-all bg-white"><Globe className="w-3.5 h-3.5"/>Website</a>}
                   {hasAddress && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26] text-slate-700 rounded-sm transition-all bg-white"><MapPin className="w-3.5 h-3.5"/>Route</a>}
                   {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2] text-slate-700 rounded-sm transition-all bg-white"><Linkedin className="w-3.5 h-3.5"/>LinkedIn</a>}
-                  {b.url && visibleSources(b)[0] !== 'Onbekend' && (visibleSources(b).length > 1
+                  {b.url && visibleSources(b)[0] !== 'Web' && (visibleSources(b).length > 1
                     ? visibleSources(b).map((s: string, si: number) => (
                         <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3.5 h-3.5"/>{s}</a>
                       ))
