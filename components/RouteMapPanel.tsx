@@ -1341,48 +1341,6 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
           </div>
         )}
       </div>
-
-      {/* Bron-informatie panel */}
-      {stops.length > 0 && (
-        <div className="flex-shrink-0 bg-white border-t border-slate-200 px-4 py-3 max-h-32 overflow-y-auto">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Bronnen</p>
-          <div className="space-y-1.5">
-            {stops.map((stop, idx) => {
-              const raw = (stop.company as any)._raw || stop.company;
-              const sources = raw._sources?.length ? raw._sources : raw.source ? [raw.source] : [];
-              const realSources = sources.filter((s: string) => s !== 'Web');
-              const displaySources = realSources.length > 0 ? realSources : sources;
-
-              return (
-                <div key={idx} className="text-[10px]">
-                  <p className="font-semibold text-slate-700 mb-0.5">{raw.naam || stop.company.name}</p>
-                  <div className="flex flex-wrap gap-1">
-                    {displaySources.map((src: string, si: number) => (
-                      <a
-                        key={si}
-                        href={raw.url && src !== 'Web' ? (raw.url.startsWith('http') ? raw.url : `https://${raw.url}`) : '#'}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-1.5 py-0.5 bg-slate-100 text-slate-600 hover:bg-[#009FE3] hover:text-white rounded-sm transition-colors font-medium">
-                        {src}
-                      </a>
-                    ))}
-                    {displaySources.includes('Web') && (
-                      <a
-                        href={`https://www.google.com/search?q=${encodeURIComponent((raw.naam || stop.company.name) + ' ' + (raw.straat || '') + ' ' + (raw.stad || ''))}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-1.5 py-0.5 bg-slate-100 text-slate-600 hover:bg-[#E85E26] hover:text-white rounded-sm transition-colors font-medium">
-                        Web Search
-                      </a>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 };

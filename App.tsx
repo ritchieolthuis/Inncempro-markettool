@@ -1445,6 +1445,14 @@ const App: React.FC = () => {
     try { return JSON.parse(localStorage.getItem('inncempro_pref_address_coords') || 'null'); } catch { return null; }
   });
   const [prefAddressGeocoding, setPrefAddressGeocoding] = useState(false);
+  // Welk adres de HUIDIGE prefAddressCoords daadwerkelijk representeren. Zonder dit kon de UI
+  // "✓ Adres gevonden" tonen puur omdat er ÓÓIT coördinaten zijn opgeslagen (bv. van het vorige
+  // adres), terwijl het zojuist ingevoerde adres in werkelijkheid niet gevonden werd (netwerkfout,
+  // Nominatim rate-limit, etc.) — dan bleven de OUDE coördinaten stilzwijgend in gebruik en klopte
+  // de getoonde afstand niet meer met het ingevulde adres, zonder dat de gebruiker dat kon zien.
+  const [prefAddressCoordsFor, setPrefAddressCoordsFor] = useState<string | null>(() =>
+    localStorage.getItem('inncempro_pref_address_coords') ? localStorage.getItem('inncempro_pref_address') : null);
+  const [prefAddressGeocodeError, setPrefAddressGeocodeError] = useState(false);
   const [prefSort, setPrefSort] = useState<'relevant' | 'az'>(() =>
     (localStorage.getItem('inncempro_pref_sort') as 'relevant' | 'az') || 'relevant');
   const [prefResultsPerPage, setPrefResultsPerPage] = useState<number>(() =>
@@ -1477,19 +1485,42 @@ const App: React.FC = () => {
   // en de afstandsweergave een precies punt hebben in plaats van alleen een plaatsnaam.
   const geocodeAddress = async (address: string) => {
     setPrefAddressGeocoding(true);
+    setPrefAddressGeocodeError(false);
     try {
       const res = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address + ', Nederland')}&countrycodes=nl&limit=1`,
-        { headers: { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' } },
+        { headers: { 'Accept-Language': 'nl' } },
       );
       const data = await res.json();
       const hit = data?.[0];
       if (hit) {
         const coords = { lat: parseFloat(hit.lat), lng: parseFloat(hit.lon) };
         setPrefAddressCoords(coords);
+        setPrefAddressCoordsFor(address);
         localStorage.setItem('inncempro_pref_address_coords', JSON.stringify(coords));
+        setPrefAddressGeocoding(false);
+        return;
       }
-    } catch { /* laat de vorige (of standaard) coördinaten staan bij een netwerkfout */ }
+      throw new Error('geen resultaat');
+    } catch {
+      // Nominatim onbereikbaar/geen resultaat voor het volledige adres: val terug op de
+      // plaatsnaam (laatste kommadeel van het adres) zodat er ALTIJD een up-to-date punt is
+      // dat bij het NIEUWE adres hoort — beter een city-center-benadering die klopt met wat
+      // je net intypte, dan stilzwijgend de coördinaten van je VORIGE adres laten staan
+      // terwijl de UI "gevonden" toont.
+      const cityGuess = address.split(',').pop()?.replace(/\b\d{4}\s?[A-Z]{2}\b/i, '').trim() || '';
+      const cityCoordsFallback = cityGuess ? getCityCoords(cityGuess) : null;
+      if (cityCoordsFallback) {
+        setPrefAddressCoords(cityCoordsFallback);
+        setPrefAddressCoordsFor(address);
+        localStorage.setItem('inncempro_pref_address_coords', JSON.stringify(cityCoordsFallback));
+      } else {
+        // Ook de plaatsnaam-fallback mislukte: laat de oude coördinaten ONGEMOEID (horen niet
+        // bij dit adres) en toon dat expliciet, in plaats van een vals "✓ gevonden".
+        setPrefAddressCoordsFor(null);
+      }
+      setPrefAddressGeocodeError(true);
+    }
     setPrefAddressGeocoding(false);
   };
 
@@ -1521,12 +1552,18 @@ const App: React.FC = () => {
     if (!navigator.geolocation) return;
 
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const nearest = findNearestCity(pos.coords.latitude, pos.coords.longitude);
-        const displayName = nearest ? toDisplayCityName(nearest.name) : 'Mijn locatie';
+      async (pos) => {
         const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
 
-        // Sla BEIDE op: de plaatsnaam PLUS de exacte GPS-coördinaten
+        // Reverse-geocode naar het EXACTE straatadres (niet alleen de dichtstbijzijnde
+        // plaatsnaam) — anders toont Instellingen straks bv. "Amsterdam" terwijl de
+        // coördinaten (en dus de afstandsberekening) wél exact zijn, wat verwarrend
+        // oogt alsof afstand alleen op stad/dorp-niveau zou werken.
+        const reverse = await getAddressFromCoords(coords.lat, coords.lng);
+        const displayName = reverse?.address
+          || (findNearestCity(coords.lat, coords.lng) ? toDisplayCityName(findNearestCity(coords.lat, coords.lng)!.name) : 'Mijn locatie');
+
+        // Sla BEIDE op: het (liefst exacte) adres PLUS de exacte GPS-coördinaten
         setPrefAddressState(displayName);
         localStorage.setItem('inncempro_pref_address', displayName);
         setPrefAddressCoords(coords);
@@ -2923,16 +2960,20 @@ const App: React.FC = () => {
     setReplaceQuery('');
   };
 
-  // Live zoeken: debounce 350ms op city-, straal-, geavanceerd-zoeken- én
+  // Live zoeken: debounce 350ms op city-, straal-, geavanceerd-zoeken-, adres- én
   // data-mutatie-wijziging. Wanneer een gebruiker in Live Zoeken zit en een bedrijf
   // bewerkt/verwijdert/toevoegt vanuit een detailpaneel, moet de zoekresultatenlijst
   // meteen mee-updaten — anders blijft hij hangen op de oude snapshot.
+  // prefAddressCoords hoort hier expliciet bij: zonder deze dependency wijzigt de
+  // getoonde "X km van ..." afstand NIET mee als je je adres in Instellingen aanpast —
+  // searchOriginCoords/de per-bedrijf afstand blijven dan vastzitten op de oude locatie
+  // totdat er toevallig een nieuwe zoekopdracht wordt uitgevoerd.
   useEffect(() => {
     if (!didMountRef.current) { didMountRef.current = true; return; }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => { executeSearch(); }, 350);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [city, radiusKm, advancedSearch, manualEdits, customEntries, deletedEntries, selectedRegions, selectedTypes, selectedWerksoort, selectedContact, selectedLijsten, selectedBron, selectedRechtsvorm]);
+  }, [city, radiusKm, advancedSearch, manualEdits, customEntries, deletedEntries, selectedRegions, selectedTypes, selectedWerksoort, selectedContact, selectedLijsten, selectedBron, selectedRechtsvorm, prefAddressCoords]);
 
   const handleManualSearch = (e?: React.FormEvent) => {
       if (e) e.preventDefault();
@@ -3248,7 +3289,9 @@ const App: React.FC = () => {
                                   <p className="text-[10px] mt-1 h-3.5">
                                       {prefAddressGeocoding
                                           ? <span className="text-slate-400">Adres opzoeken…</span>
-                                          : prefAddressCoords
+                                          : prefAddressGeocodeError
+                                          ? <span className="text-amber-600">Exact adres niet gevonden — plaatsnaam-schatting wordt gebruikt{!prefAddressCoordsFor ? ' (vorige locatie behouden)' : ''}</span>
+                                          : prefAddressCoords && prefAddressCoordsFor === prefAddress
                                           ? <span className="text-green-600">✓ Adres gevonden</span>
                                           : <span className="text-amber-600">Adres niet gevonden — standaard Hengelo-locatie wordt gebruikt</span>}
                                   </p>
@@ -3714,7 +3757,6 @@ const App: React.FC = () => {
                                <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wide leading-tight">{b.naam}</h3>
                              </div>
                              <div className="flex items-center gap-1.5 flex-wrap mt-1">
-                               <SourceBadges b={b} />
                                {/* Journey-statussen: alle ingevulde statussen tonen */}
                                {(crmData[crmKey(b)]?.statuses || []).length > 0 && (
                                  <div className="flex items-center gap-0.5 flex-wrap">
@@ -3751,12 +3793,6 @@ const App: React.FC = () => {
                              {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
                              {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
                              {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2]`}><Linkedin className="w-3 h-3"/>LinkedIn</a>}
-                             {b.url && visibleSources(b)[0] !== 'Web' && (visibleSources(b).length > 1
-                               ? visibleSources(b).map((s: string, si: number) => (
-                                   <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3 h-3"/>{s}</a>
-                                 ))
-                               : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3 h-3"/>{visibleSources(b)[0] || 'Bronpagina'}</a>
-                             )}
                            </div>
                            <div className="flex gap-2">
                              <button onClick={() => { setSelectedRegions([]); setSelectedTypes([]); setSelectedWerksoort([]); setSelectedContact([]); setRadiusKm(null); setCity(b.naam); setViewMode('search'); executeSearch(undefined, undefined, b.naam, null, null); }} className={`${btnBase} bg-[#E85E26]/5 text-[#E85E26] border-[#E85E26]/30 hover:border-[#E85E26] hover:bg-[#E85E26]/10`}><Search className="w-3 h-3"/>Zoeken in Live</button>
@@ -4513,12 +4549,6 @@ const App: React.FC = () => {
                                     {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
                                     {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
                                     {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2]`}><Linkedin className="w-3 h-3"/>LinkedIn</a>}
-                                    {b.url && visibleSources(b)[0] !== 'Web' && (visibleSources(b).length > 1
-                                      ? visibleSources(b).map((s: string, si: number) => (
-                                          <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3 h-3"/>{s}</a>
-                                        ))
-                                      : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3 h-3"/>{visibleSources(b)[0] || 'Info'}</a>
-                                    )}
                                   </div>
                                   <FavButton company={company} favorites={favorites} onToggle={toggleFavorite} />
                                   <AddToListButton company={company} lists={lists} onToggle={toggleCompanyInList} onCreateAndAdd={createListAndAddCompany} />
@@ -4865,7 +4895,7 @@ const App: React.FC = () => {
         const hasBedrijf = b.rechtsvorm || b.kvk;
         return (
           <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/80 backdrop-blur-sm" onClick={() => { setSelectedCompany(null); setEditMode(false); }}>
-            <div className="bg-[#F8FAFC] w-full max-w-2xl max-h-[92vh] sm:max-h-[90vh] shadow-2xl flex flex-col rounded-t-xl sm:rounded-none" onClick={e => e.stopPropagation()}>
+            <div className="bg-[#F8FAFC] w-full max-w-3xl max-h-[92vh] sm:max-h-[90vh] shadow-2xl flex flex-col rounded-t-xl sm:rounded-none" onClick={e => e.stopPropagation()}>
               {/* Drag indicator on mobile */}
               <div className="sm:hidden w-10 h-1 bg-slate-300 rounded-full mx-auto mt-3 mb-1 flex-shrink-0" />
               {/* Header */}
@@ -5142,18 +5172,16 @@ const App: React.FC = () => {
 
                 {/* Acties */}
                 <div className="flex flex-wrap gap-2 pt-2">
-                  {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-700 rounded-sm transition-all bg-white"><Globe className="w-3.5 h-3.5"/>Website</a>}
-                  {hasAddress && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26] text-slate-700 rounded-sm transition-all bg-white"><MapPin className="w-3.5 h-3.5"/>Route</a>}
-                  {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2] text-slate-700 rounded-sm transition-all bg-white"><Linkedin className="w-3.5 h-3.5"/>LinkedIn</a>}
-                  {b.url && visibleSources(b)[0] !== 'Web' && (visibleSources(b).length > 1
-                    ? visibleSources(b).map((s: string, si: number) => (
-                        <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3.5 h-3.5"/>{s}</a>
-                      ))
-                    : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3.5 h-3.5"/>Bronpagina</a>
-                  )}
-                  {visibleSources(b)[0] === 'Web' && (
-                    <a href={`https://www.google.com/search?q=${encodeURIComponent([b.naam, b.straat, b.stad].filter(Boolean).join(' '))}`} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><Search className="w-3.5 h-3.5"/>Google</a>
-                  )}
+                  {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className="flex-none whitespace-nowrap flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-700 rounded-sm transition-all bg-white"><Globe className="w-3.5 h-3.5"/>Website</a>}
+                  {hasAddress && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className="flex-none whitespace-nowrap flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26] text-slate-700 rounded-sm transition-all bg-white"><MapPin className="w-3.5 h-3.5"/>Route</a>}
+                  {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className="flex-none whitespace-nowrap flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2] text-slate-700 rounded-sm transition-all bg-white"><Linkedin className="w-3.5 h-3.5"/>LinkedIn</a>}
+                  {/* Bronnen: ALLE bronnen waar dit bedrijf in voorkomt (BNA, Architectenweb, ...),
+                      elk als eigen link — alleen hier, nergens anders op de kaarten. Google-zoeken
+                      staat er altijd bij, als extra optie naast de echte bronnen. */}
+                  {b.url && visibleSources(b).filter(s => s !== 'Web').map((s: string, si: number) => (
+                    <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-none whitespace-nowrap flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3.5 h-3.5"/>{s}</a>
+                  ))}
+                  <a href={`https://www.google.com/search?q=${encodeURIComponent([b.naam, b.straat, b.stad].filter(Boolean).join(' '))}`} target="_blank" rel="noreferrer" className={`flex-none whitespace-nowrap flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><Search className="w-3.5 h-3.5"/>Google</a>
                 </div>
                   </>
                 )}
