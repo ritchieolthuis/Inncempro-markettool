@@ -2653,13 +2653,23 @@ const App: React.FC = () => {
         return best;
       };
 
-      // Relevantiescore: naam-match > bekende naam > type-prioriteit > volledigheid data
+      // Relevantiescore: naam-match > bekende naam > type-prioriteit.
+      // BELANGRIJK: bevat GEEN data-volledigheid (website/e-mail/telefoon/etc.) — dat mag nooit
+      // een naam-match-tie doorbreken vóórdat afstand aan bod komt (anders wint "meer velden
+      // ingevuld" altijd van "dichterbij", en klopt de sortering niet meer met wat je verwacht).
       const relevanceScore = (b: any): number => {
         let score = 0;
         score += queryMatchScore(b);    // hoe goed matcht query op naam — domineert de volgorde
         score += getNameBoost(b.naam);  // bekende/grote namen krijgen forse bonus
         const typePrio = TYPE_PRIORITY[detectType(b)] ?? 3;
         score += (3 - typePrio) * 30; // architect=90, bouwbedrijf=60, aannemer=30, overig=0
+        return score;
+      };
+
+      // Volledigheid van contactgegevens — ALLEEN gebruikt als naam-match ÉN afstand identiek zijn
+      // (uiterste tiebreaker, na afstand).
+      const completenessScore = (b: any): number => {
+        let score = 0;
         if (b.website) score += 20;
         if (b.email) score += 15;
         if (b.telefoon) score += 15;
@@ -2696,6 +2706,15 @@ const App: React.FC = () => {
         }
       }
 
+      // ÉÉN bron van waarheid voor "waar ben ik": live GPS > ingesteld adres > Hengelo-fallback.
+      // Dit wordt gebruikt voor ZOWEL de sortering ALS de getoonde "X km van ..." labels —
+      // anders klopt de volgorde niet met de getoonde afstand (bug: sorteerde op live locatie,
+      // maar toonde altijd "km van Hengelo").
+      const searchOrigin = liveLocationCoords || prefAddressCoords || hqCoords;
+      const searchOriginLabel = liveLocationCoords
+        ? (findNearestCity(liveLocationCoords.lat, liveLocationCoords.lng)?.name ? toDisplayCityName(findNearestCity(liveLocationCoords.lat, liveLocationCoords.lng)!.name) : 'mijn locatie')
+        : hqShortLabel;
+
       const activeSort = overrideSort ?? sortMode;
       if (activeRadiusKm && radiusCenter) {
         // Sort by distance when radius is active
@@ -2704,10 +2723,7 @@ const App: React.FC = () => {
         results.sort((a: any, b2: any) => (a.naam || '').localeCompare(b2.naam || '', 'nl', { sensitivity: 'base' }));
       } else {
         // 'Relevant': naam-match/bekendheid domineert, maar bij gelijke score sorteren we op AFSTAND
-        // Gebruiken ALTIJD real-time geolocation als beschikbaar, anders fallback naar ingesteld adres
-        const searchOrigin = liveLocationCoords || prefAddressCoords || hqCoords;
-        // Priority: 1) live GPS location 2) geocoded settings address 3) fallback Hengelo
-
+        // vanaf searchOrigin (dezelfde bron als het getoonde label hieronder)
         const hqDistCache = new Map<any, number>();
         const distTo = (b: any): number => {
           const cached = hqDistCache.get(b);
@@ -2720,18 +2736,20 @@ const App: React.FC = () => {
         results.sort((a: any, b2: any) => {
           const scoreA = relevanceScore(a);
           const scoreB = relevanceScore(b2);
-          if (scoreA !== scoreB) return scoreB - scoreA; // Naam-match/bekendheid eerst
+          if (scoreA !== scoreB) return scoreB - scoreA; // 1) Naam-match/bekendheid/type eerst
           const distA = distTo(a);
           const distB = distTo(b2);
-          if (distA !== distB) return distA - distB; // Dan dichtstbij (minst naar meer km)
-          return (a.naam || '').localeCompare(b2.naam || '', 'nl', { sensitivity: 'base' }); // Alfabetisch als laatste
+          if (distA !== distB) return distA - distB; // 2) Dan dichtstbij (minst naar meer km)
+          const compA = completenessScore(a);
+          const compB = completenessScore(b2);
+          if (compA !== compB) return compB - compA; // 3) Pas dáárna: meest complete gegevens
+          return (a.naam || '').localeCompare(b2.naam || '', 'nl', { sensitivity: 'base' }); // 4) Alfabetisch als laatste
         });
       }
 
-      const HQ_COORDS = hqCoords;
       const companies = results.map((b: any, i: number) => {
           const cityCoords = getBedrijfCoords(b);
-          const hqDist = cityCoords ? haversineKm(HQ_COORDS.lat, HQ_COORDS.lng, cityCoords.lat, cityCoords.lng) : undefined;
+          const hqDist = cityCoords ? haversineKm(searchOrigin.lat, searchOrigin.lng, cityCoords.lat, cityCoords.lng) : undefined;
           return {
             id: `local-${i}`,
             name: b.naam,
@@ -2740,6 +2758,7 @@ const App: React.FC = () => {
             _raw: b,
             _distanceKm: distanceMap.has(b) ? distanceMap.get(b) : hqDist,
             _hqDistanceKm: hqDist,
+            _hqLabel: searchOriginLabel,
           };
       });
 
@@ -4357,7 +4376,7 @@ const App: React.FC = () => {
                                       <SourceBadges b={b} />
                                       {crmData[crmKey(b)]?.status && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm border flex-shrink-0 ${CRM_COLORS[crmData[crmKey(b)]!.status!]}`}>{CRM_LABELS[crmData[crmKey(b)]!.status!]}</span>}
                                       {isNew(b) && <span className="text-[9px] bg-green-500 text-white px-1.5 py-0.5 font-bold rounded-sm flex-shrink-0">Nieuw</span>}
-                                      {distKm !== undefined && showField('afstand') && <span title={distIsDriving ? 'Rijafstand over de weg' : 'Hemelsbrede schatting — rijafstand wordt geladen...'} className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`} van {hqShortLabel}{!distIsDriving && ' *'}</span>}
+                                      {distKm !== undefined && showField('afstand') && <span title={distIsDriving ? 'Rijafstand over de weg' : 'Hemelsbrede schatting — rijafstand wordt geladen...'} className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`} van {(company as any)._hqLabel || hqShortLabel}{!distIsDriving && ' *'}</span>}
                                     </div>
                                     {(b.straat || b.postcode || b.stad || company.city) && (
                                       <p className="text-slate-500 text-xs mt-1 flex items-start gap-1 flex-wrap">
