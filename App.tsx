@@ -2428,7 +2428,7 @@ const App: React.FC = () => {
                 // Geolocation geweigerd/failed — fallback naar ingesteld adres
                 resolve();
               },
-              { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
+              { enableHighAccuracy: false, timeout: 3000, maximumAge: 300000 } // 3s timeout, cache 5 min
             );
           });
         } catch {
