@@ -1448,6 +1448,10 @@ const App: React.FC = () => {
   };
   const showField = (key: string) => prefCardFields[key] !== undefined ? prefCardFields[key] : cardFieldDefault[key];
 
+  // REAL-TIME SEARCH LOCATION (voor Live Zoeken sortering)
+  // Dit is ANDERS dan prefAddress (instellingen). Dit is WHERE YOU ARE NOW (via GPS/geolocation)
+  const [searchOriginCoords, setSearchOriginCoords] = useState<{ lat: number; lng: number } | null>(null);
+
   const savePrefSort = (v: 'relevant' | 'az') => { setPrefSort(v); setSortMode(v); localStorage.setItem('inncempro_pref_sort', v); };
   const savePrefRpp = (v: number) => { setPrefResultsPerPage(v); localStorage.setItem('inncempro_pref_rpp', String(v)); };
   const toggleCardField = (key: string) => {
@@ -2388,7 +2392,7 @@ const App: React.FC = () => {
   };
 
   // SEARCH EXECUTION — zoekt lokaal in bouwgarant_data.json
-  const executeSearch = (overrideCity?: string, overrideSort?: 'relevant' | 'az', overrideQuery?: string, overrideRadiusCenter?: { lat: number; lng: number } | null, overrideRadiusKm?: number | null, overrideRegions?: string[]) => {
+  const executeSearch = async (overrideCity?: string, overrideSort?: 'relevant' | 'az', overrideQuery?: string, overrideRadiusCenter?: { lat: number; lng: number } | null, overrideRadiusKm?: number | null, overrideRegions?: string[]) => {
       // Geen actieve zoekopdracht = leeg laten (Live Zoeken begint blanco)
       const effectiveQuery = (overrideQuery ?? city).trim();
       const effectiveRegions = overrideRegions !== undefined ? overrideRegions : selectedRegions;
@@ -2407,6 +2411,30 @@ const App: React.FC = () => {
       setFoundCompanies([]);
       setTotalMatches(0);
       setCurrentPage(1);
+
+      // Haal real-time geolocation op — dit is WHERE YOU ARE NOW (niet je ingestelde adres)
+      // Nodig voor Live Zoeken sortering: dichtstbijzijnde bedrijven VANAF JE HUIDIGE LOCATIE
+      let liveLocationCoords: { lat: number; lng: number } | null = null;
+      if (navigator.geolocation) {
+        try {
+          await new Promise<void>((resolve) => {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => {
+                liveLocationCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                setSearchOriginCoords(liveLocationCoords);
+                resolve();
+              },
+              () => {
+                // Geolocation geweigerd/failed — fallback naar ingesteld adres
+                resolve();
+              },
+              { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
+            );
+          });
+        } catch {
+          // Geolocation error — fallback naar ingesteld adres
+        }
+      }
 
       const regions = overrideRegions !== undefined
           ? overrideRegions
@@ -2675,12 +2703,13 @@ const App: React.FC = () => {
       } else if (activeSort === 'az') {
         results.sort((a: any, b2: any) => (a.naam || '').localeCompare(b2.naam || '', 'nl', { sensitivity: 'base' }));
       } else {
-        // 'Relevant': naam-match/bekendheid/compleetheid domineert (relevanceScore), maar bij
-        // een gelijke score sorteren we op afstand vanaf de huidige locatie (dichtstbij eerst)
-        // i.p.v. meteen alfabetisch — zoek je bv. "Wijnen", dan komt een vestiging in Dalfsen
-        // of Deventer eerder dan één in Amsterdam, als hun naam-match verder gelijk scoort.
-        // BELANGRIJK: Gebruik ALTIJD de werkelijke user-locatie (van geolocation of handmatig ingesteld)
-        const searchOrigin = hqCoords; // Dit is ALTIJD de user-locatie (fallback Hengelo als er niets is)
+        // 'Relevant': naam-match/bekendheid domineert, maar bij gelijke score sorteren we op AFSTAND
+        // VAN JE HUIDIGE LOCATIE (niet je ingestelde adres!)
+        // Dus: zoek je "Wijnen" vanuit Wierden, dan komtDeventer eerder dan Arnhem
+        // (zelfs als ze beide dezelfde naam-match score hebben)
+        const searchOrigin = liveLocationCoords || prefAddressCoords || hqCoords;
+        // Priority: 1) live GPS location 2) geocoded settings address 3) fallback Hengelo
+
         const hqDistCache = new Map<any, number>();
         const distTo = (b: any): number => {
           const cached = hqDistCache.get(b);
@@ -2696,7 +2725,7 @@ const App: React.FC = () => {
           if (scoreA !== scoreB) return scoreB - scoreA; // Naam-match/bekendheid eerst
           const distA = distTo(a);
           const distB = distTo(b2);
-          if (distA !== distB) return distA - distB; // Dan dichtstbij (afstand tiebreaker)
+          if (distA !== distB) return distA - distB; // Dan DICHTSTBIJ VAN JE LOCATIE (tiebreaker)
           return (a.naam || '').localeCompare(b2.naam || '', 'nl', { sensitivity: 'base' }); // Alfabetisch als laatste
         });
       }

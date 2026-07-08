@@ -37,6 +37,14 @@ export interface DiscoveryResult {
     companies: DiscoveredCompany[];
 }
 
+// Door de gebruiker aangemaakte lijsten van opgeslagen bedrijven (bv. "Architecten Rotterdam")
+export interface CompanyList {
+    id: string;
+    name: string;
+    createdAt: number;
+    companies: DiscoveredCompany[];
+}
+
 export interface EnrichedCompanyData {
     markdownContent: string;
     groundingChunks: GroundingChunk[];

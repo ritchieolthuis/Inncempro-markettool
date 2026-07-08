@@ -1,20 +1,34 @@
 
 import React, { useState } from 'react';
-import { User as UserIcon, LogOut, Settings, ChevronDown } from 'lucide-react';
+import { User as UserIcon, LogOut, Settings, ChevronDown, Loader2 } from 'lucide-react';
 import { User } from '../types';
+import { GeoclusterProgress } from '../services/geoclusterService';
 
 interface HeaderProps {
   onHomeClick?: () => void;
   user?: User;
   onLogout?: () => void;
   onOpenSettings?: () => void;
+  geoclusterProgress?: GeoclusterProgress;
 }
 
-const Header: React.FC<HeaderProps> = ({ onHomeClick, user, onLogout, onOpenSettings }) => {
+const Header: React.FC<HeaderProps> = ({ onHomeClick, user, onLogout, onOpenSettings, geoclusterProgress }) => {
   const [showDropdown, setShowDropdown] = useState(false);
+  const isLoading = geoclusterProgress?.status === 'loading' || geoclusterProgress?.status === 'geocoding';
+  const progressPercent = geoclusterProgress?.total ? Math.round((geoclusterProgress.current / geoclusterProgress.total) * 100) : 0;
 
   return (
-    <header className="bg-white border-b-2 border-[#009FE3] sticky top-0 z-30 h-16 sm:h-24 flex items-center shadow-md">
+    <>
+      {/* Geocluster progress bar */}
+      {isLoading && (
+        <div className="fixed top-0 left-0 right-0 h-1 bg-slate-100 z-50">
+          <div
+            className="h-full bg-gradient-to-r from-[#009FE3] to-[#E85E26] transition-all duration-300"
+            style={{ width: `${progressPercent}%` }}
+          ></div>
+        </div>
+      )}
+      <header className="bg-white border-b-2 border-[#009FE3] sticky top-0 z-30 h-16 sm:h-24 flex items-center shadow-md" style={{ top: isLoading ? '4px' : '0' }}>
       <div className="max-w-[1400px] w-full mx-auto px-4 sm:px-6 lg:px-10 flex justify-between items-center h-full">
 
         {/* Brand Logo */}
@@ -36,6 +50,13 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, user, onLogout, onOpenSett
 
         {/* User Profile & Status */}
         <div className="flex items-center gap-6">
+            {/* Geocluster loading indicator */}
+            {isLoading && (
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-[#009FE3]/30 rounded-sm text-xs">
+                <Loader2 className="w-3 h-3 text-[#009FE3] animate-spin" />
+                <span className="text-[#009FE3] font-medium truncate max-w-[200px]">{geoclusterProgress?.message}</span>
+              </div>
+            )}
             {user ? (
                 <div className="relative">
                     <button 
@@ -81,7 +102,8 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, user, onLogout, onOpenSett
             )}
         </div>
       </div>
-    </header>
+      </header>
+    </>
   );
 };
 

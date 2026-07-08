@@ -6,6 +6,7 @@ import {
   CalendarDays, Plus, Repeat,
 } from 'lucide-react';
 import { scoreBedrijven, scoreInsertionCandidates, detectType, BezoekType } from '../utils/dagbezoek';
+import { getClusterData, makeId as clusterMakeId } from '../services/geoclusterService';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -305,9 +306,15 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return;
     mapRef.current = L.map(mapDiv.current, { center: [52.3, 5.3], zoom: 7 });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxZoom: 19,
+    const googleMapsApiKey = 'AIzaSyDtsaBhb-Uq3xWvqE6mnmv3sXYM3dM3TUY';
+    // scale=2 vraagt Google's tile-server om dubbele pixeldichtheid op (256px logisch, 512px
+    // beeldmateriaal) — zonder dit worden de standaard 256px tiles opgerekt op elk retina/
+    // high-DPI scherm en oogt de kaart wazig t.o.v. Google Maps zelf.
+    L.tileLayer(`https://mt1.google.com/vt/lyrs=r&x={x}&y={y}&z={z}&scale=2&key=${googleMapsApiKey}`, {
+      attribution: '© Google Maps',
+      maxZoom: 20,
+      minZoom: 1,
+      tileSize: 256,
     }).addTo(mapRef.current);
     const ro = new ResizeObserver(() => mapRef.current?.invalidateSize());
     ro.observe(mapDiv.current);
@@ -327,16 +334,52 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
     const keptIds = new Set(kept.map(s => s.id));
     const newCompanies = companies.filter(c => !keptIds.has(c.id) && companyIds.has(c.id));
 
+    // The KAART page (geoclusterService) already geocodes every bedrijf in the background
+    // and keeps it cached — reuse those coordinates here so a company that's already
+    // plotted there shows up on the route map instantly instead of waiting on its own
+    // live Nominatim lookup ("laden, laden, laden" while the data already exists).
+    const clusterData = getClusterData();
+
+    const placeMarker = (stop: Stop) => {
+      if (!stop.coords || !mapRef.current) return;
+      const raw = (stop.company as any)._raw || stop.company;
+      const idx = stopsRef.current.indexOf(stop) + 1;
+      stop.marker = L.marker(stop.coords, { icon: makePin('#E85E26', idx) })
+        .bindPopup(
+          `<div style="font-family:system-ui;min-width:180px">
+            <b style="font-size:13px;color:#1e293b">${raw.naam || stop.company.name || ''}</b>
+            <div style="color:#64748b;font-size:12px;margin-top:2px">${[raw.straat, raw.postcode, raw.stad].filter(Boolean).join(', ')}</div>
+          </div>`,
+          { maxWidth: 240 },
+        ).addTo(mapRef.current!);
+    };
+
     const newStops: Stop[] = [
       ...kept,
-      ...newCompanies.map(c => ({ id: c.id, company: c, coords: null, marker: null, loading: true, origin: 'selection' as const })),
+      ...newCompanies.map(c => {
+        const raw = (c as any)._raw || c;
+        const clusterCoords = clusterData?.get(clusterMakeId(raw))?.coords || null;
+        return { id: c.id, company: c, coords: clusterCoords, marker: null, loading: !clusterCoords, origin: 'selection' as const };
+      }),
     ];
     stopsRef.current = newStops;
     setStops([...newStops]);
     setRouteMode(false);
     setOrderedStops([]);
 
-    newCompanies.forEach(async (c) => {
+    // Instantly plot the stops we already had coordinates for.
+    const instantlyResolved = newStops.filter(s => s.coords && !s.marker && s.origin === 'selection');
+    if (instantlyResolved.length > 0 && mapRef.current) {
+      instantlyResolved.forEach(placeMarker);
+      const allCoords = stopsRef.current.filter(s => s.coords).map(s => s.coords!);
+      if (allCoords.length > 0)
+        mapRef.current.fitBounds(allCoords as L.LatLngBoundsExpression, { padding: [40, 40], maxZoom: 14 });
+      setStops([...stopsRef.current]);
+    }
+
+    // Only fall back to a live Nominatim lookup for companies the cluster cache doesn't know yet.
+    const stillNeedGeocode = newCompanies.filter(c => !stopsRef.current.find(s => s.id === c.id)?.coords);
+    stillNeedGeocode.forEach(async (c) => {
       const raw    = (c as any)._raw || c;
       const coords = await geocode(raw, cache);
       const stop   = stopsRef.current.find(s => s.id === c.id);
@@ -345,16 +388,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
       stop.loading = false;
 
       if (coords && mapRef.current) {
-        const idx    = stopsRef.current.indexOf(stop) + 1;
-        stop.marker  = L.marker(coords, { icon: makePin('#E85E26', idx) })
-          .bindPopup(
-            `<div style="font-family:system-ui;min-width:180px">
-              <b style="font-size:13px;color:#1e293b">${raw.naam || c.name || ''}</b>
-              <div style="color:#64748b;font-size:12px;margin-top:2px">${[raw.straat, raw.postcode, raw.stad].filter(Boolean).join(', ')}</div>
-            </div>`,
-            { maxWidth: 240 },
-          ).addTo(mapRef.current!);
-
+        placeMarker(stop);
         const allCoords = stopsRef.current.filter(s => s.coords).map(s => s.coords!);
         if (allCoords.length > 0)
           mapRef.current.fitBounds(allCoords as L.LatLngBoundsExpression, { padding: [40, 40], maxZoom: 14 });

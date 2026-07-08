@@ -1,9 +1,10 @@
 
-import { User, DiscoveredCompany } from "../types";
+import { User, DiscoveredCompany, CompanyList } from "../types";
 
 const USERS_KEY = "inncempro_users_db";
 const CURRENT_USER_KEY = "inncempro_current_session";
 const FAVS_PREFIX = "inncempro_favs_";
+const LISTS_PREFIX = "inncempro_lists_";
 
 // PERMANENTE DATABASE GEBRUIKERS (Hardcoded)
 const PERMANENT_USERS: User[] = [
@@ -137,5 +138,52 @@ export const authService = {
 
         localStorage.setItem(key, JSON.stringify(newFavs));
         return newFavs;
+    },
+
+    // LISTS (meerdere naam-lijsten met bedrijven, gekoppeld aan User ID)
+    getLists: (userId: string): CompanyList[] => {
+        const key = `${LISTS_PREFIX}${userId}`;
+        return JSON.parse(localStorage.getItem(key) || "[]");
+    },
+
+    saveLists: (userId: string, lists: CompanyList[]) => {
+        localStorage.setItem(`${LISTS_PREFIX}${userId}`, JSON.stringify(lists));
+    },
+
+    createList: (userId: string, name: string): CompanyList[] => {
+        const lists = authService.getLists(userId);
+        const newList: CompanyList = { id: generateId(), name: name.trim(), createdAt: Date.now(), companies: [] };
+        const next = [...lists, newList];
+        authService.saveLists(userId, next);
+        return next;
+    },
+
+    renameList: (userId: string, listId: string, name: string): CompanyList[] => {
+        const next = authService.getLists(userId).map(l => l.id === listId ? { ...l, name: name.trim() } : l);
+        authService.saveLists(userId, next);
+        return next;
+    },
+
+    deleteList: (userId: string, listId: string): CompanyList[] => {
+        const next = authService.getLists(userId).filter(l => l.id !== listId);
+        authService.saveLists(userId, next);
+        return next;
+    },
+
+    addToList: (userId: string, listId: string, company: DiscoveredCompany): CompanyList[] => {
+        const isSame = (c: DiscoveredCompany) => c.name === company.name && c.city === company.city;
+        const next = authService.getLists(userId).map(l => {
+            if (l.id !== listId || l.companies.some(isSame)) return l;
+            return { ...l, companies: [...l.companies, company] };
+        });
+        authService.saveLists(userId, next);
+        return next;
+    },
+
+    removeFromList: (userId: string, listId: string, company: DiscoveredCompany): CompanyList[] => {
+        const isSame = (c: DiscoveredCompany) => c.name === company.name && c.city === company.city;
+        const next = authService.getLists(userId).map(l => l.id === listId ? { ...l, companies: l.companies.filter(c => !isSame(c)) } : l);
+        authService.saveLists(userId, next);
+        return next;
     }
 };
