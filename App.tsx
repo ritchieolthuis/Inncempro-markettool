@@ -1,15 +1,20 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Loader2, ArrowRight, X, BarChart3, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, TrendingUp, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send } from 'lucide-react';
+import { Search, Loader2, ArrowRight, X, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send, Clock, Eye, List, Linkedin } from 'lucide-react';
 import Papa from 'papaparse';
 import bouwgarantData from './bouwgarant_data.json';
 import cityCoords from './city_coords.json';
 import Header from './components/Header';
 import MapView from './components/MapView';
+import ClusterMapView from './components/ClusterMapView';
 import RouteMapPanel from './components/RouteMapPanel';
+import AIAgentPanel, { AgentOrb, SUGGESTIONS } from './components/AIAgentPanel';
 import { authService } from './services/authService';
-import { SearchState, DiscoveredCompany, User } from './types';
+import { preloadAllAddresses, onGeoclusterProgress, GeoclusterProgress, clearClusterCache } from './services/geoclusterService';
+import { SearchState, DiscoveredCompany, User, CompanyList } from './types';
 import { scoreInsertionCandidates } from './utils/dagbezoek';
+import { mergeEntries, isNederlandBedrijf } from './utils/mergeBedrijven';
+import { getDrivingDistancesKm } from './services/routingService';
 
 // ── Plaatsnaam-normalisatie ──────────────────────────────────────────────────
 // Sommige bronnen leveren dezelfde plaats onder net iets andere spelling aan
@@ -1033,6 +1038,13 @@ Object.entries(cityCoords as Record<string, { lat: number; lng: number }>).forEa
   CITY_COORDS_MAP[k.toLowerCase().trim()] = v;
 });
 
+// Gebruikt de exacte, geverifieerde lat/lng van een vestiging (Jongeneel/PontMeyer API,
+// of PDOK-geocoding voor Stiho) als die er is, anders valt terug op het stads-centrum.
+const getBedrijfCoords = (b: { lat?: number; lng?: number; stad?: string }): { lat: number; lng: number } | null => {
+  if (typeof b.lat === 'number' && typeof b.lng === 'number') return { lat: b.lat, lng: b.lng };
+  return getCityCoords(b.stad || '');
+};
+
 const getCityCoords = (city: string): { lat: number; lng: number } | null => {
   const key = city.toLowerCase().trim();
   if (!key) return null;
@@ -1053,6 +1065,56 @@ const getCityCoords = (city: string): { lat: number; lng: number } | null => {
   }
   return null;
 };
+
+// Reverse geocoding via Nominatim (gratis, geen API-key) — zet lat/lng om naar adres
+async function getAddressFromCoords(lat: number, lng: number): Promise<{ address: string; city: string; coords: { lat: number; lng: number } } | null> {
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`, {
+      headers: { 'Accept-Language': 'nl' }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.address) return null;
+    const street = data.address.road || data.address.street || '';
+    const house = data.address.house_number || '';
+    const address = [street, house].filter(Boolean).join(' ').trim();
+    const city = data.address.town || data.address.city || data.address.village || '';
+    if (!address || !city) return null;
+    return { address: `${address}, ${city}`, city, coords: { lat, lng } };
+  } catch (err) {
+    return null;
+  }
+}
+
+// "Gebruik mijn locatie": de browser geeft alleen lat/lng terug, dus zoeken we de
+// dichtstbijzijnde bekende plaats op in onze eigen city_coords.json (geen externe
+// geocoding-API nodig, werkt ook offline en kost geen API-kosten).
+function findNearestCity(lat: number, lng: number): { name: string; coords: { lat: number; lng: number }; km: number } | null {
+  let best: { name: string; coords: { lat: number; lng: number }; km: number } | null = null;
+  for (const [name, coords] of Object.entries(cityCoords as Record<string, { lat: number; lng: number }>)) {
+    const km = haversineKm(lat, lng, coords.lat, coords.lng);
+    if (!best || km < best.km) best = { name, coords, km };
+  }
+  return best;
+}
+
+// city_coords.json bevat plaatsnamen soms in ALL-CAPS of all-lowercase — dat oogt
+// onprofessioneel in de zoekbalk, dus normaliseren we naar nette titelcasing.
+const CITY_NAME_LOWERCASE_WORDS = new Set(['aan', 'de', 'den', 'der', 'van', 'het', 'in', 'op', 'te', 'ten', 'ter']);
+function toDisplayCityName(raw: string): string {
+  const isAllCaps = raw === raw.toUpperCase();
+  const isAllLower = raw === raw.toLowerCase();
+  if (!isAllCaps && !isAllLower) return raw; // al nette gemengde casing — met rust laten
+  return raw
+    .toLowerCase()
+    .split(' ')
+    .map((word, i) => {
+      if (i > 0 && CITY_NAME_LOWERCASE_WORDS.has(word)) return word;
+      if (word.startsWith("'s-")) return "'s-" + word.slice(3).charAt(0).toUpperCase() + word.slice(4);
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(' ');
+}
 
 // Module-level stad normalization (used by ProvinceFilter + App)
 const STAD_ALIASES_GLOBAL: Record<string, string> = {
@@ -1090,6 +1152,34 @@ function getMapIFrameUrl(bedrijf: any): string {
 
   // OpenStreetMap export embed - toont kaart met marker op zoeken naar adres
   return `https://www.openstreetmap.org/export/embed.html?bbox=3,50.5,7.5,53.5&layer=mapnik&marker=${lat},${lon}`;
+}
+
+// Postcodegebied-filter: ondersteunt een los prefix ("30", "3011") of een bereik ("3000-3099").
+function matchesPostcodeFilter(postcode: string, filterValue: string): boolean {
+  const term = filterValue.trim().replace(/\s+/g, '');
+  if (!term) return true;
+  const pc = (postcode || '').toUpperCase().replace(/\s+/g, '');
+  if (!pc) return false;
+  const rangeMatch = term.match(/^(\d{1,4})-(\d{1,4})$/);
+  if (rangeMatch) {
+    const from = parseInt(rangeMatch[1].padEnd(4, '0'), 10);
+    const to = parseInt(rangeMatch[2].padEnd(4, '9'), 10);
+    const pcNum = parseInt(pc.slice(0, 4), 10);
+    if (isNaN(pcNum)) return false;
+    return pcNum >= from && pcNum <= to;
+  }
+  return pc.startsWith(term.toUpperCase());
+}
+
+function timeAgo(timestamp: number): string {
+  const diffSec = Math.floor((Date.now() - timestamp) / 1000);
+  if (diffSec < 60) return 'zojuist';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m geleden`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour}u geleden`;
+  const diffDay = Math.floor(diffHour / 24);
+  return `${diffDay}d geleden`;
 }
 
 function buildProvinceGroups(dataset: any[]) {
@@ -1320,6 +1410,14 @@ const App: React.FC = () => {
   const [regPass, setRegPass] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
 
+  // GEOCLUSTER PRELOADING (background)
+  const [geoclusterProgress, setGeoclusterProgress] = useState<GeoclusterProgress>({
+    status: 'idle',
+    current: 0,
+    total: 0,
+    message: ''
+  });
+
   // SETTINGS MODAL
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'profiel' | 'voorkeuren' | 'audit'>('profiel');
@@ -1390,6 +1488,69 @@ const App: React.FC = () => {
     if (!prefAddressCoords && prefAddress.trim()) geocodeAddress(prefAddress.trim());
   }, []);
 
+  // Dit account wordt door meerdere collega's op verschillende apparaten gebruikt — iedereen
+  // stilzwijgend het gedeelde Hengelo-kantooradres laten gebruiken voor afstanden/relevantie
+  // klopt dan niet. Heeft dít specifieke apparaat/deze browser nog nooit zelf een adres
+  // ingesteld (fris toestel, geen 'inncempro_pref_address' in localStorage), vraag dan
+  // automatisch de locatie van het toestel op en gebruik die voortaan als uitgangspunt.
+  // Wie zelf al bewust iets instelde, wordt met rust gelaten — draait dus maar één keer
+  // per apparaat/browser, niet bij elke page load.
+  useEffect(() => {
+    const hasUserPreference = localStorage.getItem('inncempro_pref_address');
+    const hasCoords = localStorage.getItem('inncempro_pref_address_coords');
+
+    // Alleen als gebruiker ECHT niets ingesteld heeft, probeer geolocation
+    if (hasUserPreference && hasCoords) return;
+    if (!navigator.geolocation) return;
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const nearest = findNearestCity(pos.coords.latitude, pos.coords.longitude);
+        const displayName = nearest ? toDisplayCityName(nearest.name) : 'Mijn locatie';
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+
+        // Sla BEIDE op: de plaatsnaam PLUS de exacte GPS-coördinaten
+        setPrefAddressState(displayName);
+        localStorage.setItem('inncempro_pref_address', displayName);
+        setPrefAddressCoords(coords);
+        localStorage.setItem('inncempro_pref_address_coords', JSON.stringify(coords));
+      },
+      (error) => {
+        // Geweigerd, timeout, of niet beschikbaar
+        // Fallback: gebruik standaard adres (Hengelo) — coordinates worden via geocoding gezet
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 } // cache 5 min
+    );
+  }, []);
+
+  // Start background preloading of all addresses for map clustering
+  useEffect(() => {
+    let unsubscribe: (() => void) | null = null;
+
+    const startPreload = async () => {
+      unsubscribe = onGeoclusterProgress((progress) => {
+        setGeoclusterProgress(progress);
+      });
+
+      try {
+        await preloadAllAddresses();
+      } catch (e) {
+        console.error('Geocluster preload failed:', e);
+        setGeoclusterProgress(prev => ({
+          ...prev,
+          status: 'error',
+          error: 'Kaartgegevens kon niet worden geladen'
+        }));
+      }
+    };
+
+    startPreload();
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
+
   // Coördinaten van het bedrijfsadres — valt terug op Hengelo-centrum zolang het adres nog
   // niet (opnieuw) gegeocodeerd is.
   const hqCoords = prefAddressCoords || DUTCH_CITY_COORDS['hengelo'] || { lat: 52.2549, lng: 6.7782 };
@@ -1400,7 +1561,7 @@ const App: React.FC = () => {
   // APP STATE
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'dashboard'>('search');
+  const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'lists'>('search');
 
   // BATCH IMPORT
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -1425,11 +1586,26 @@ const App: React.FC = () => {
   // VERGELIJKING
   const [showCompare, setShowCompare] = useState(false);
   const [dbSearch, setDbSearch] = useState('');
+  const [dbPostcodeFilter, setDbPostcodeFilter] = useState('');
+  const [dbCrmFilter, setDbCrmFilter] = useState<string[]>([]); // Multi-select CRM status filter
+  const [showStatusFilter, setShowStatusFilter] = useState(false);
   const [dbPage, setDbPage] = useState(1);
   const DB_PAGE_SIZE = 50;
   const [favorites, setFavorites] = useState<DiscoveredCompany[]>([]);
+  const [lists, setLists] = useState<CompanyList[]>([]);
+  const [activeListId, setActiveListId] = useState<string | null>(null);
+  const [showNewListModal, setShowNewListModal] = useState(false);
+  const [newListName, setNewListName] = useState('');
+  const [renameListId, setRenameListId] = useState<string | null>(null);
+  const [renameListName, setRenameListName] = useState('');
+  // Bedrijven selecteren binnen een lijst (vergelijkbaar met selectedIds in database/zoeken)
+  const [selectedListCompanyIndices, setSelectedListCompanyIndices] = useState<Set<number>>(new Set());
+  // Laat een suggestie-knop op de Live Zoeken-pagina het AI-agent-paneel openen én
+  // meteen de vraag versturen (ts erbij zodat twee keer dezelfde suggestie ook opnieuw triggert)
+  const [agentPromptRequest, setAgentPromptRequest] = useState<{ text: string; ts: number } | null>(null);
   const [selectedCompany, setSelectedCompany] = useState<any | null>(null);
   const [mapMarkerCount, setMapMarkerCount] = useState(0);
+  const [mapFocusTarget, setMapFocusTarget] = useState<{ naam: string; straat: string; stad: string; provincie: string } | null>(null);
   const [editMode, setEditMode] = useState(false);
 
   // Recent bekeken kaarten
@@ -1445,57 +1621,55 @@ const App: React.FC = () => {
     localStorage.setItem('inncempro_recent_viewed', JSON.stringify(limited));
   };
 
-  // AI Route Helper - Wizard Mode
-  const [showAIHelper, setShowAIHelper] = useState(false);
-  const [aiStep, setAiStep] = useState<'type' | 'city' | 'count' | 'results'>('type');
-  const [aiSelected, setAiSelected] = useState({ type: '', city: '', count: 0 });
+  // Tabblad + paginering voor het "Recent Searches / Saved Searches" blok op de lege zoekpagina
+  const [searchLandingTab, setSearchLandingTab] = useState<'recent' | 'saved'>('recent');
+  const [recentViewedPage, setRecentViewedPage] = useState(1);
+  const RECENT_VIEWED_PAGE_SIZE = 10;
+
+  // CRM: bezoekstatus + notitie per bedrijf (key = naam|straat|stad, zodat gelijknamige
+  // bedrijven in andere plaatsen niet botsen). Alles lokaal opgeslagen, per gebruiker.
+  // Journey-statussen: je kunt meerdere markeren naarmate je vordert met de prospect
+  type CrmStatus = 'nieuwe_lead' | 'contact_gelegd' | 'gekwalificeerd' | 'offerte' | 'opvolging' | 'niet_geinteresseerd';
+  interface CrmEntry { statuses?: CrmStatus[]; note?: string; updatedAt: number }
+  const crmKey = (b: any) => `${(b.naam || '').toLowerCase().trim()}|${(b.straat || '').toLowerCase().trim()}|${(b.stad || '').toLowerCase().trim()}`;
+  const CRM_LABELS: Record<CrmStatus, string> = {
+    nieuwe_lead: 'Nieuwe lead',
+    contact_gelegd: 'Contact gelegd',
+    gekwalificeerd: 'Gekwalificeerd',
+    offerte: 'Offerte uitgebracht',
+    opvolging: 'Opvolging gepland',
+    niet_geinteresseerd: 'Niet geïnteresseerd',
+  };
+  const CRM_COLORS: Record<CrmStatus, string> = {
+    nieuwe_lead: 'bg-slate-50 text-slate-700 border-slate-300',
+    contact_gelegd: 'bg-blue-50 text-blue-700 border-blue-200',
+    gekwalificeerd: 'bg-purple-50 text-purple-700 border-purple-200',
+    offerte: 'bg-amber-50 text-amber-700 border-amber-200',
+    opvolging: 'bg-green-50 text-green-700 border-green-200',
+    niet_geinteresseerd: 'bg-red-50 text-red-700 border-red-200',
+  };
+  const [crmData, setCrmData] = useState<Record<string, CrmEntry>>({});
+  const crmStorageKey = currentUser ? `inncempro_crm_${currentUser.id}` : null;
+
+  useEffect(() => {
+    if (!crmStorageKey) { setCrmData({}); return; }
+    try { setCrmData(JSON.parse(localStorage.getItem(crmStorageKey) || '{}')); } catch { setCrmData({}); }
+  }, [crmStorageKey]);
+
+  const updateCrm = (b: any, patch: Partial<CrmEntry>) => {
+    if (!crmStorageKey) return;
+    const key = crmKey(b);
+    setCrmData(prev => {
+      const next = { ...prev, [key]: { ...prev[key], ...patch, updatedAt: Date.now() } };
+      localStorage.setItem(crmStorageKey, JSON.stringify(next));
+      return next;
+    });
+  };
 
   // Saved Routes
   const [savedRoutes, setSavedRoutes] = useState<any[]>(() => {
     try { return JSON.parse(localStorage.getItem('inncempro_saved_routes') || '[]'); } catch { return []; }
   });
-
-  const executeAIRoute = () => {
-    const { type, city, count } = aiSelected;
-    if (!city || count === 0) return;
-
-    // Filter bedrijven
-    let filtered = activeData.filter(b => {
-      const bcity = (b.stad || '').toLowerCase().trim();
-      const inCity = bcity.includes(city.toLowerCase());
-      if (!inCity) return false;
-
-      if (!type) return true;
-      const naam = (b.naam || '').toLowerCase();
-      const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase();
-      const compStr = `${naam} ${specs}`;
-
-      if (type === 'architecten' && compStr.includes('architect')) return true;
-      if (type === 'bouwbedrijven' && (compStr.includes('bouwbedrijf') || compStr.includes(' bouw'))) return true;
-      if (type === 'aannemers' && compStr.includes('aannemer')) return true;
-      if (type === 'materialen' && (compStr.includes('hout') || compStr.includes('materiaal'))) return true;
-      return false;
-    });
-
-    const available = Math.min(count, filtered.length);
-
-    // Maak route en sla op
-    const route = {
-      id: Math.random().toString(36).substr(2, 9),
-      name: `Route: ${type || 'gemengd'} in ${city}`,
-      bedrijven: filtered.slice(0, count).map(b => ({ naam: b.naam, stad: b.stad, straat: b.straat })),
-      createdAt: new Date().toISOString(),
-    };
-
-    try {
-      const saved = [...savedRoutes, route];
-      localStorage.setItem('inncempro_saved_routes', JSON.stringify(saved));
-      setSavedRoutes(saved);
-      setAiStep('results');
-    } catch (e) {
-      console.error('Route save failed');
-    }
-  };
 
   const [editDraft, setEditDraft] = useState<Record<string, string>>({});
   const MANUAL_EDITS_KEY = 'inncempro_manual_edits';
@@ -1518,9 +1692,19 @@ const App: React.FC = () => {
   const [sortMode, setSortMode] = useState<'relevant' | 'az'>(() =>
     (localStorage.getItem('inncempro_pref_sort') as 'relevant' | 'az') || 'relevant');
   const [showRouteMap, setShowRouteMap] = useState(false);
+  const [autoOptimizeRoute, setAutoOptimizeRoute] = useState(false);
+  const [routeMapFullscreen, setRouteMapFullscreen] = useState(false);
   const [splitRatio,   setSplitRatio]   = useState(58); // left panel %
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
+  const tabBarRef = useRef<HTMLDivElement>(null);
+
+  // Op mobiel scrollt de tabbalk horizontaal (6 tabs passen niet altijd) — scroll de
+  // actieve tab automatisch in beeld zodat je 'm niet kwijtraakt na het wisselen.
+  useEffect(() => {
+    const activeTab = tabBarRef.current?.querySelector('[data-active="true"]') as HTMLElement | null;
+    activeTab?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  }, [viewMode]);
 
   // Address corrections: stored in localStorage, applied to in-memory data
   const CORRECTIONS_KEY = 'inncempro_address_corrections';
@@ -1639,6 +1823,9 @@ const App: React.FC = () => {
     setCustomEntries(prev => [...prev]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Bij page load: GEEN auto-detect meer (dat cache de oude locatie)
+  // User klikt gewoon opnieuw op locatie-icoontje als hij verhuisd is
 
   const DELETED_KEY = 'inncempro_deleted_entries';
   const [deletedEntries, setDeletedEntries] = useState<Set<string>>(() => {
@@ -1766,6 +1953,15 @@ const App: React.FC = () => {
     setSavedFilters(next);
     localStorage.setItem('inncempro_saved_filters', JSON.stringify(next));
   };
+
+  const describeSavedFilter = (f: typeof savedFilters[0]) => {
+    const parts = [
+      f.query,
+      ...(f.regions || []).filter(r => r !== 'Heel Nederland'),
+      ...(f.types || []), ...(f.werksoort || []), ...(f.bron || []), ...(f.rechtsvorm || []), ...(f.contact || []),
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(' • ') : 'Alle bedrijven';
+  };
   
   // SEARCH HISTORY
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
@@ -1786,6 +1982,9 @@ const App: React.FC = () => {
   // SEARCH STATES
   const [city, setCity] = useState('');
   const [radiusKm, setRadiusKm] = useState<number | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [locationNote, setLocationNote] = useState<string | null>(null);
   const [advancedSearch, setAdvancedSearch] = useState(false);
   const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
@@ -1796,6 +1995,10 @@ const App: React.FC = () => {
   const [selectedRechtsvorm, setSelectedRechtsvorm] = useState<string[]>([]);
 
   const [foundCompanies, setFoundCompanies] = useState<DiscoveredCompany[]>([]);
+  // Echte rijafstand (over de weg, via OSRM) per bedrijf-id — vult de snelle hemelsbrede
+  // haversine-schatting aan zodra de precieze afstand terug is. Alleen voor wat zichtbaar
+  // is op de huidige pagina (currentItems), niet voor de hele dataset — zie routingService.ts.
+  const [drivingKm, setDrivingKm] = useState<Map<string, number>>(new Map());
   const [cardMenuOpen, setCardMenuOpen] = useState<string | null>(null);
   const [replacingId, setReplacingId] = useState<string | null>(null);
   const [replaceQuery, setReplaceQuery] = useState('');
@@ -1809,6 +2012,7 @@ const App: React.FC = () => {
       if (user) {
           setCurrentUser(user);
           setFavorites(authService.getFavorites(user.id));
+          setLists(authService.getLists(user.id));
           const histKey = `inncempro_search_history_${user.id}`;
           setSearchHistory(JSON.parse(localStorage.getItem(histKey) || '[]'));
           setEditName(user.username);
@@ -1842,6 +2046,7 @@ const App: React.FC = () => {
   const finishLogin = (user: User) => {
       setCurrentUser(user);
       setFavorites(authService.getFavorites(user.id));
+      setLists(authService.getLists(user.id));
       setEditName(user.username);
       setEditEmail(user.email);
       setEditAvatar(user.avatarUrl || '');
@@ -1979,6 +2184,87 @@ const App: React.FC = () => {
       if (!currentUser) return;
       const newFavs = authService.toggleFavorite(currentUser.id, company);
       setFavorites(newFavs);
+  };
+
+  // LIJSTEN: bedrijven opslaan in zelf aangemaakte, benoemde lijsten
+  const createList = (name: string): CompanyList | null => {
+      if (!currentUser || !name.trim()) return null;
+      const next = authService.createList(currentUser.id, name.trim());
+      setLists(next);
+      return next[next.length - 1];
+  };
+
+  const renameList = (listId: string, name: string) => {
+      if (!currentUser || !name.trim()) return;
+      setLists(authService.renameList(currentUser.id, listId, name.trim()));
+  };
+
+  const deleteList = (listId: string) => {
+      if (!currentUser) return;
+      const next = authService.deleteList(currentUser.id, listId);
+      setLists(next);
+      setActiveListId(prev => (prev === listId ? (next[0]?.id ?? null) : prev));
+  };
+
+  const toggleCompanyInList = (listId: string, company: DiscoveredCompany) => {
+      if (!currentUser) return;
+      const list = lists.find(l => l.id === listId);
+      if (!list) return;
+      const already = list.companies.some(c => c.name === company.name && c.city === company.city);
+      const next = already
+        ? authService.removeFromList(currentUser.id, listId, company)
+        : authService.addToList(currentUser.id, listId, company);
+      setLists(next);
+  };
+
+  const createListAndAddCompany = (name: string, company: DiscoveredCompany) => {
+      if (!currentUser || !name.trim()) return;
+      const existing = lists.find(l => l.name.toLowerCase() === name.trim().toLowerCase());
+      const listsAfterCreate = existing ? lists : authService.createList(currentUser.id, name.trim());
+      const listId = existing ? existing.id : listsAfterCreate[listsAfterCreate.length - 1].id;
+      const next = authService.addToList(currentUser.id, listId, company);
+      setLists(next);
+  };
+
+  const removeCompanyFromList = (listId: string, companyIndex: number) => {
+      if (!currentUser) return;
+      const list = lists.find(l => l.id === listId);
+      if (!list || !list.companies[companyIndex]) return;
+      const company = list.companies[companyIndex];
+      toggleCompanyInList(listId, company);
+  };
+
+  const moveCompaniesToList = (fromListId: string, toListId: string, indices: number[]) => {
+      if (!currentUser) return;
+      const fromList = lists.find(l => l.id === fromListId);
+      const toList = lists.find(l => l.id === toListId);
+      if (!fromList || !toList) return;
+      const companies = indices.map(i => fromList.companies[i]).filter(Boolean);
+      let updated = lists;
+      for (const company of companies) {
+        updated = authService.addToList(currentUser.id, toListId, company);
+        updated = authService.removeFromList(currentUser.id, fromListId, company);
+      }
+      setLists(updated);
+      setSelectedListCompanyIndices(new Set());
+  };
+
+  const addSelectionToList = (listId: string, companies: DiscoveredCompany[]) => {
+      if (!currentUser) return;
+      let next = authService.getLists(currentUser.id);
+      companies.forEach(c => { next = authService.addToList(currentUser.id, listId, c); });
+      setLists(next);
+      clearSelection(); // Ledig selectie na het toevoegen — gebruiker weet dat actie klaar is
+  };
+
+  const createListAndAddSelection = (name: string, companies: DiscoveredCompany[]) => {
+      if (!currentUser || !name.trim()) return;
+      const existing = lists.find(l => l.name.toLowerCase() === name.trim().toLowerCase());
+      let next = existing ? lists : authService.createList(currentUser.id, name.trim());
+      const listId = existing ? existing.id : next[next.length - 1].id;
+      companies.forEach(c => { next = authService.addToList(currentUser.id, listId, c); });
+      setLists(next);
+      clearSelection(); // Ledig selectie na het aanmaken/toevoegen
   };
 
   const toggleFilter = (set: React.Dispatch<React.SetStateAction<string[]>>, item: string) => {
@@ -2359,14 +2645,22 @@ const App: React.FC = () => {
         return score;
       };
 
-      // Radius filter (radiusCenter is hierboven al berekend, vóór de tekstfilter)
+      // Radius filter (radiusCenter is hierboven al berekend, vóór de tekstfilter).
+      // Gebruikt bewust haversine (hemelsbreed), niet rijafstand: hemelsbreed is altijd
+      // ≤ de werkelijke rijafstand, dus dit filter laat nooit ten onrechte een bedrijf
+      // wég dat écht binnen de straal ligt — hooguit af en toe eentje ietsje over de rand
+      // erbij (bv. binnen 20km hemelsbreed, 21km rijdend). Preciezere rijafstand met een
+      // routing-API voor de hele (mogelijk duizenden bedrijven tellende) kandidatenlijst
+      // zou de gratis publieke OSRM-server overbelasten; de getóónde km-waarde per bedrijf
+      // wordt daarom pas ná dit filter, alleen voor de zichtbare pagina, verfijnd — zie de
+      // drivingKm-state en bijbehorende useEffect verderop.
       const distanceMap = new Map<any, number>();
 
       if (activeRadiusKm && radiusCenter) {
         const center = radiusCenter;
         for (let i = results.length - 1; i >= 0; i--) {
           const b = results[i];
-          const coords = getCityCoords(b.stad || '');
+          const coords = getBedrijfCoords(b);
           if (!coords) { results.splice(i, 1); continue; }
           const dist = haversineKm(center.lat, center.lng, coords.lat, coords.lng);
           if (dist > activeRadiusKm) { results.splice(i, 1); continue; }
@@ -2381,12 +2675,35 @@ const App: React.FC = () => {
       } else if (activeSort === 'az') {
         results.sort((a: any, b2: any) => (a.naam || '').localeCompare(b2.naam || '', 'nl', { sensitivity: 'base' }));
       } else {
-        results.sort((a: any, b2: any) => relevanceScore(b2) - relevanceScore(a) || (a.naam || '').localeCompare(b2.naam || '', 'nl', { sensitivity: 'base' }));
+        // 'Relevant': naam-match/bekendheid/compleetheid domineert (relevanceScore), maar bij
+        // een gelijke score sorteren we op afstand vanaf de huidige locatie (dichtstbij eerst)
+        // i.p.v. meteen alfabetisch — zoek je bv. "Wijnen", dan komt een vestiging in Dalfsen
+        // of Deventer eerder dan één in Amsterdam, als hun naam-match verder gelijk scoort.
+        // BELANGRIJK: Gebruik ALTIJD de werkelijke user-locatie (van geolocation of handmatig ingesteld)
+        const searchOrigin = hqCoords; // Dit is ALTIJD de user-locatie (fallback Hengelo als er niets is)
+        const hqDistCache = new Map<any, number>();
+        const distTo = (b: any): number => {
+          const cached = hqDistCache.get(b);
+          if (cached !== undefined) return cached;
+          const coords = getBedrijfCoords(b);
+          const d = coords ? haversineKm(searchOrigin.lat, searchOrigin.lng, coords.lat, coords.lng) : Infinity;
+          hqDistCache.set(b, d);
+          return d;
+        };
+        results.sort((a: any, b2: any) => {
+          const scoreA = relevanceScore(a);
+          const scoreB = relevanceScore(b2);
+          if (scoreA !== scoreB) return scoreB - scoreA; // Naam-match/bekendheid eerst
+          const distA = distTo(a);
+          const distB = distTo(b2);
+          if (distA !== distB) return distA - distB; // Dan dichtstbij (afstand tiebreaker)
+          return (a.naam || '').localeCompare(b2.naam || '', 'nl', { sensitivity: 'base' }); // Alfabetisch als laatste
+        });
       }
 
       const HQ_COORDS = hqCoords;
       const companies = results.map((b: any, i: number) => {
-          const cityCoords = getCityCoords(b.stad || '');
+          const cityCoords = getBedrijfCoords(b);
           const hqDist = cityCoords ? haversineKm(HQ_COORDS.lat, HQ_COORDS.lng, cityCoords.lat, cityCoords.lng) : undefined;
           return {
             id: `local-${i}`,
@@ -2405,13 +2722,59 @@ const App: React.FC = () => {
       if (q) addToHistory(q);
   };
 
+  // "Gebruik mijn locatie" — haalt WiFi networks op je device op (via browser's native Geolocation)
+  // en zet die om naar lat/lng, daarna naar dichtstbijzijnde plaats. 100% gratis, geen rate-limits!
+  const useMyLocation = () => {
+    localStorage.setItem('inncempro_location_used', 'true'); // Onthoud voor volgende page load
+    setLocationError(null);
+    setLocationNote(null);
+    setLocating(true);
+
+    // Methode 1: Browser's native Geolocation (vraagt toestemming, haalt WiFi/IP op)
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const nearest = findNearestCity(pos.coords.latitude, pos.coords.longitude);
+          setLocating(false);
+          if (!nearest) {
+            setLocationError('Kon geen plaats bij je locatie vinden. Typ handmatig in.');
+            return;
+          }
+          const displayName = toDisplayCityName(nearest.name);
+          const nextRadius = radiusKm ?? 20;
+          setCity(displayName);
+          setRadiusKm(nextRadius);
+          setSelectedRegions([]);
+          setLocationNote(
+            `📍 Gedetecteerd: ${displayName}` +
+            (nearest.km > 15 ? ` (${Math.round(nearest.km)} km verderop)` : '') +
+            '. Klopt dit niet? Pas het aan.'
+          );
+          executeSearch(undefined, undefined, '', nearest.coords, nextRadius, []);
+        },
+        (err) => {
+          setLocating(false);
+          setLocationError(
+            err.code === err.PERMISSION_DENIED
+              ? 'Locatietoegang geweigerd. Typ de plaats handmatig in.'
+              : 'Kon je locatie niet bepalen. Probeer het opnieuw.'
+          );
+        },
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 }
+      );
+    } else {
+      setLocating(false);
+      setLocationError('Locatiebepaling niet ondersteund door je browser.');
+    }
+  };
+
   const removeFoundCompany = (id: string) => {
     setFoundCompanies(prev => prev.filter(c => c.id !== id));
     setTotalMatches(prev => Math.max(0, prev - 1));
   };
 
   const replaceFoundCompany = (id: string, raw: any) => {
-    const cityCoords = getCityCoords(raw.stad || '');
+    const cityCoords = getBedrijfCoords(raw);
     const hqDist = cityCoords ? haversineKm(hqCoords.lat, hqCoords.lng, cityCoords.lat, cityCoords.lng) : undefined;
     setFoundCompanies(prev => prev.map(c => c.id !== id ? c : ({
       id: c.id,
@@ -2435,7 +2798,7 @@ const App: React.FC = () => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => { executeSearch(); }, 350);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [city, radiusKm, advancedSearch, manualEdits, customEntries, deletedEntries]);
+  }, [city, radiusKm, advancedSearch, manualEdits, customEntries, deletedEntries, selectedRegions, selectedTypes, selectedWerksoort, selectedContact, selectedLijsten, selectedBron, selectedRechtsvorm]);
 
   const handleManualSearch = (e?: React.FormEvent) => {
       if (e) e.preventDefault();
@@ -2510,214 +2873,6 @@ const App: React.FC = () => {
 
   const sidebarRegionsActive = selectedRegions.filter(r => r !== 'Heel Nederland');
 
-  // Active data — bouwgarantData minus manually deleted entries
-  // Merge duplicate entries across sources into one enriched record
-  const mergeEntries = (entries: any[]): any[] => {
-    const normNaam = (s: string) => (s || '').toLowerCase()
-      .replace(/\b(b\.?v\.?|nv|vof|cv|stichting|bna)\b/g, '')
-      .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
-    // Same company is often scraped a second time with a marketing tagline bolted on
-    // ("&WA architecten" vs "&WA architecten - ontwerpen is luisteren") — strip anything
-    // after a dash/pipe separator before comparing base names.
-    const normNaamBase = (s: string) => normNaam((s || '').split(/\s[-–|]\s/)[0]);
-    const normStreet = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
-    const normPc = (s: string) => (s || '').replace(/\s/g, '').toUpperCase().slice(0, 6);
-    // A generic descriptor bolted onto the actual (distinctive) trade name — one source may
-    // list "cepezed", another "architectenbureau cepezed" for the exact same company.
-    const stripGenericPrefix = (s: string) => s.replace(/^(architectenbureau|architectenburo|architektenburo|architectuurbureau|bureau|aannemersbedrijf|aannemingsbedrijf|bouwbedrijf|bouwonderneming|bouwgroep|bouwprojekten|timmerbedrijf|klussenbedrijf|installatiebedrijf)\s+/, '');
-    const coreNaam = (s: string) => stripGenericPrefix(normNaamBase(s));
-    // Some scrapers bolt the vestiging's own city onto the brand name ("INBO Rotterdam"),
-    // others don't ("INBO"). Stripping the entry's own city from its core name lets both
-    // forms normalize to the same key so they can be recognised as the same vestiging.
-    const coreNaamCityFree = (naam: string, stad: string) => {
-      let n = coreNaam(naam);
-      const city = (stad || '').toLowerCase().trim();
-      if (!city) return n;
-      if (n === city) return '';
-      if (n.endsWith(' ' + city)) return n.slice(0, -(city.length + 1)).trim();
-      return n;
-    };
-
-    // Union-Find: two entries belong to the same company if they share a postcode-based
-    // key, a street+city-based key, or (for specific-enough names) just a name+city key —
-    // an "Onbekend" scrape often has a stale/relocated address while a real bron (Bouwgarant,
-    // BNA, Architectenweb) has the current one, so requiring the street to match too would
-    // keep missing them.
-    const parent = entries.map((_, i) => i);
-    const find = (x: number): number => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
-    const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
-
-    const byPrimaryKey = new Map<string, number[]>();
-    const bySecondaryKey = new Map<string, number[]>();
-    const byNameCityKey = new Map<string, number[]>();
-    const byCoreCityKey = new Map<string, number[]>();
-    entries.forEach((e, i) => {
-      const nn = normNaam(e.naam);
-      const pc = normPc(e.postcode);
-      const pkey = pc ? `${nn}||${pc}` : `${nn}||${(e.stad || '').toLowerCase().trim()}`;
-      (byPrimaryKey.get(pkey) || byPrimaryKey.set(pkey, []).get(pkey)!).push(i);
-
-      const base = normNaamBase(e.naam);
-      const street = normStreet(e.straat);
-      const city = (e.stad || '').toLowerCase().trim();
-      if (base && street && city) {
-        const skey = `${base}||${street}||${city}`;
-        (bySecondaryKey.get(skey) || bySecondaryKey.set(skey, []).get(skey)!).push(i);
-      }
-      // Name+city only (no street) — restricted to reasonably specific names so generic
-      // ones ("de vries bouw") can't accidentally merge two different companies.
-      if (base.length >= 8 && city) {
-        const nckey = `${base}||${city}`;
-        (byNameCityKey.get(nckey) || byNameCityKey.set(nckey, []).get(nckey)!).push(i);
-      }
-      // Same as above but with the entry's own city stripped from the core name first, so a
-      // bare brand name ("INBO") and a city-suffixed one ("INBO Eindhoven") key the same way
-      // even when one source has a stale/different street for that vestiging.
-      const cnc = coreNaamCityFree(e.naam, e.stad);
-      if (cnc.length >= 4 && city) {
-        const cckey = `${cnc}||${city}`;
-        (byCoreCityKey.get(cckey) || byCoreCityKey.set(cckey, []).get(cckey)!).push(i);
-      }
-    });
-    for (const idxs of byPrimaryKey.values()) for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
-    for (const idxs of bySecondaryKey.values()) for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
-    for (const idxs of byNameCityKey.values()) for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
-    for (const idxs of byCoreCityKey.values()) for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
-
-    // Same exact address (postcode+street), name only loosely related — this catches an
-    // "Onbekend" entry whose name differs more than a suffix/tagline (e.g. "cepezed" vs.
-    // "architectenbureau cepezed"). Address at this precision is a strong enough signal on
-    // its own, but shared office buildings mean several *different* companies can sit at the
-    // same address — so only merge a 1-to-1 pairing (an exact core-name match wins ties;
-    // anything still ambiguous after that is left alone rather than risk a wrong merge).
-    const byAddrKey = new Map<string, number[]>();
-    entries.forEach((e, i) => {
-      const pc = normPc(e.postcode);
-      const street = normStreet(e.straat);
-      if (!pc || !street) return;
-      const akey = `${pc}||${street}`;
-      (byAddrKey.get(akey) || byAddrKey.set(akey, []).get(akey)!).push(i);
-    });
-    for (const idxs of byAddrKey.values()) {
-      if (idxs.length < 2) continue;
-      const onbekendIdxs = idxs.filter(i => (entries[i].source || 'Onbekend') === 'Onbekend');
-      const realIdxs = idxs.filter(i => entries[i].source && entries[i].source !== 'Onbekend');
-      if (!onbekendIdxs.length || !realIdxs.length) continue;
-      for (const oi of onbekendIdxs) {
-        const oCore = coreNaam(entries[oi].naam);
-        if (oCore.length < 4) continue;
-        const hits = realIdxs.filter(ri => {
-          const rCore = coreNaam(entries[ri].naam);
-          return rCore.length >= 4 && (rCore.includes(oCore) || oCore.includes(rCore));
-        });
-        const exact = hits.filter(ri => coreNaam(entries[ri].naam) === oCore);
-        const pick = exact.length === 1 ? exact[0] : (exact.length === 0 && hits.length === 1 ? hits[0] : null);
-        if (pick != null) union(oi, pick);
-      }
-    }
-
-    // Same exact address, same core name once each entry's own city is stripped from it —
-    // this catches two *different* real sources (e.g. BNA "INBO" vs. Architectenweb "INBO
-    // Rotterdam") scraping the exact same vestiging under differently-formatted names.
-    // Pairwise within a small address bucket, so a shared office building housing several
-    // distinct companies only merges the ones whose (city-free) core name actually matches.
-    for (const idxs of byAddrKey.values()) {
-      if (idxs.length < 2) continue;
-      for (let a = 0; a < idxs.length; a++) {
-        for (let b = a + 1; b < idxs.length; b++) {
-          const ia = idxs[a], ib = idxs[b];
-          if (find(ia) === find(ib)) continue;
-          const coreA = coreNaamCityFree(entries[ia].naam, entries[ia].stad);
-          const coreB = coreNaamCityFree(entries[ib].naam, entries[ib].stad);
-          if (coreA.length >= 3 && coreA === coreB) union(ia, ib);
-        }
-      }
-    }
-
-    const groups = new Map<number, any[]>();
-    entries.forEach((e, i) => {
-      const root = find(i);
-      (groups.get(root) || groups.set(root, []).get(root)!).push(e);
-    });
-
-    const best = (a: any, b: any, field: string) => a[field] || b[field];
-    const merged: any[] = [];
-    for (const group of groups.values()) {
-      // Prefer a properly-sourced entry's fields (naam, etc.) over an "Onbekend" duplicate
-      group.sort((a, b) => (a.source && a.source !== 'Onbekend' ? 0 : 1) - (b.source && b.source !== 'Onbekend' ? 0 : 1));
-      if (group.length === 1) { merged.push(group[0]); continue; }
-      const base = group.reduce((acc, cur) => ({
-        ...acc,
-        naam:       acc.naam || cur.naam,
-        straat:     best(acc, cur, 'straat'),
-        postcode:   best(acc, cur, 'postcode'),
-        stad:       best(acc, cur, 'stad'),
-        provincie:  best(acc, cur, 'provincie'),
-        telefoon:   best(acc, cur, 'telefoon'),
-        email:      best(acc, cur, 'email'),
-        website:    best(acc, cur, 'website'),
-        kvk:        best(acc, cur, 'kvk'),
-        spec1:      best(acc, cur, 'spec1'),
-        spec2:      best(acc, cur, 'spec2'),
-        spec3:      best(acc, cur, 'spec3'),
-        url:        best(acc, cur, 'url'),
-        rechtsvorm: best(acc, cur, 'rechtsvorm'),
-        bna_projecten: best(acc, cur, 'bna_projecten'),
-        _custom:    acc._custom || cur._custom,
-      }));
-      // Prefer the most descriptive name in the group — one that already includes the city
-      // (e.g. "INBO Rotterdam") reads better than a bare brand name ("INBO") once several
-      // same-vestiging duplicates from different sources are merged into one record.
-      const stadLower = (base.stad || '').toLowerCase().trim();
-      const namesWithCity = group.map(e => e.naam).filter(n => n && stadLower && n.toLowerCase().includes(stadLower));
-      if (namesWithCity.length > 0) {
-        base.naam = namesWithCity.reduce((shortest, n) => n.length < shortest.length ? n : shortest);
-      }
-      // Collect all unique sources. A duplicate scraped without attribution (raw source
-      // literally "Onbekend") shouldn't count as a separate bron once a real bron is known
-      // for the same company — drop it whenever at least one real source is present.
-      // Among the real sources, the most complete underlying record (most filled fields)
-      // leads — that's the one shown as the primary badge on the main list.
-      const completeness = (e: any) => ['telefoon', 'email', 'website', 'spec1', 'spec2', 'spec3', 'kvk', 'rechtsvorm'].filter(f => e[f]).length;
-      const completenessBySource = new Map<string, number>();
-      for (const e of group) {
-        const src = e.source || 'Onbekend';
-        const score = completeness(e);
-        if (!completenessBySource.has(src) || score > completenessBySource.get(src)!) completenessBySource.set(src, score);
-      }
-      const rawSources = group.map(e => e.source).filter(Boolean);
-      const realSources = Array.from(new Set(rawSources.filter(s => s !== 'Onbekend')))
-        .sort((a, b) => (completenessBySource.get(b) || 0) - (completenessBySource.get(a) || 0));
-      const sources = realSources.length > 0 ? realSources : (rawSources.length > 0 ? ['Onbekend'] : []);
-      base.source = sources[0] || 'Onbekend';
-      base._sources = sources; // all sources as array
-      // The "Onbekend" bron's address wins ties — it's leading for location, even when a
-      // known bron (Bouwgarant, ...) is also present in the group.
-      const onbekendEntry = group.find(e => (e.source || 'Onbekend') === 'Onbekend' && (e.straat || e.postcode || e.stad));
-      if (onbekendEntry) {
-        base.straat    = onbekendEntry.straat    || base.straat;
-        base.postcode  = onbekendEntry.postcode  || base.postcode;
-        base.stad      = onbekendEntry.stad      || base.stad;
-        base.provincie = onbekendEntry.provincie || base.provincie;
-      }
-      // Flag address conflict
-      const addrs = Array.from(new Set(group.map(e => (e.straat || '').trim()).filter(Boolean)));
-      if (addrs.length > 1) base._adresConflict = addrs;
-      merged.push(base);
-    }
-    return merged;
-  };
-
-  // Bedrijven buiten Nederland (Caribisch deel, België, etc.) horen niet in deze tool
-  // — filter ze hier één keer weg, zodat álle downstream views (filters, kaarten,
-  // dashboard, marktoverzicht) automatisch NL-only zijn zonder aparte checks.
-  const isNederlandBedrijf = (b: any) => {
-    const stad = (b.stad || '').toLowerCase().trim();
-    const prov = (b.provincie || '').toLowerCase().trim();
-    if (prov === 'belgië' || prov === 'belgie' || prov === 'belgium') return false;
-    if (['willemstad','kralendijk','oranjestad','philipsburg','the bottom','sint-eustatius','saba'].includes(stad)) return false;
-    return true;
-  };
 
   const activeData = React.useMemo(
     () => {
@@ -2733,6 +2888,24 @@ const App: React.FC = () => {
     // derived count/filter/list — same as deletedEntries already does.
     [deletedEntries, customEntries, addressCorrections, manualEdits],
   );
+
+  // Zet een opgeslagen route (RouteMapPanel's `doSave` schrijft `stops: "naam|stad"[]`) om
+  // naar een selectie en opent 'm meteen fullscreen — hergebruikt dezelfde route-machinerie
+  // als de AI-knop, dus geen aparte "bekijk opgeslagen route"-weergave nodig.
+  const viewSavedRoute = (route: any) => {
+    const matched = new Map<string, any>();
+    (route.stops || []).forEach((s: string) => {
+      const naam = (s || '').split('|')[0];
+      const b = activeData.find((x: any) => (x.naam || '').toLowerCase() === naam.toLowerCase());
+      if (b) matched.set(b.naam, b);
+    });
+    if (matched.size === 0) return;
+    setSelectedRaws(matched);
+    setViewMode('search');
+    setShowRouteMap(true);
+    setRouteMapFullscreen(true);
+    setAutoOptimizeRoute(true);
+  };
 
   // Dataset fed into ProvinceFilter — changes with active tab so counts reflect current view
   const sidebarDataset = React.useMemo(() => {
@@ -2750,6 +2923,34 @@ const App: React.FC = () => {
   const itemsToShow = viewMode === 'favorites' ? filteredFavorites : foundCompanies;
   const totalPages = Math.ceil(itemsToShow.length / prefResultsPerPage);
   const currentItems = itemsToShow.slice((currentPage - 1) * prefResultsPerPage, currentPage * prefResultsPerPage);
+
+  // Zodra een nieuwe pagina met bedrijven zichtbaar wordt: vraag de echte rijafstand op
+  // (t.o.v. het HQ-adres) voor precies díe bedrijven — niet voor de hele dataset, want de
+  // gratis publieke routing-server is niet bedoeld voor duizenden aanvragen tegelijk.
+  const currentItemsKey = currentItems.map((c: any) => c.id).join('|');
+  useEffect(() => {
+    const withCoords = currentItems
+      .map((c: any) => ({ id: c.id, coords: getBedrijfCoords(c._raw || c) }))
+      .filter((c: any) => c.coords && !drivingKm.has(c.id));
+    if (withCoords.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const distances = await getDrivingDistancesKm(hqCoords, withCoords.map((c: any) => c.coords));
+      if (cancelled) return;
+      setDrivingKm(prev => {
+        const next = new Map(prev);
+        withCoords.forEach((c: any, i: number) => {
+          const km = distances[i];
+          if (km != null) next.set(c.id, km);
+        });
+        return next;
+      });
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentItemsKey, hqCoords.lat, hqCoords.lng]);
 
   const getPageNumbers = () => {
     const pages = [];
@@ -2850,7 +3051,7 @@ const App: React.FC = () => {
   // ----- RENDER: DASHBOARD -----
   return (
     <div className="min-h-screen bg-white flex flex-col font-sans text-slate-800">
-      <Header user={currentUser} onHomeClick={resetToHome} onLogout={handleLogout} onOpenSettings={() => setShowSettings(true)} />
+      <Header user={currentUser} onHomeClick={resetToHome} onLogout={handleLogout} onOpenSettings={() => setShowSettings(true)} geoclusterProgress={geoclusterProgress} />
 
       {/* SETTINGS MODAL */}
       {showSettings && (
@@ -3037,21 +3238,13 @@ const App: React.FC = () => {
         const filterGroupsContent = (
           <>
             <div className="flex-grow overflow-y-auto p-6 space-y-2 scrollbar-thin">
-                 {/* Opgeslagen filters */}
-                 {savedFilters.length > 0 && (
-                   <div className="border border-[#009FE3]/20 bg-[#009FE3]/5 rounded-sm p-3 mb-4">
-                     <p className="text-[10px] font-black uppercase tracking-widest text-[#009FE3] mb-2 flex items-center gap-1.5"><Bookmark className="w-3 h-3"/>Opgeslagen filters</p>
-                     <div className="space-y-1">
-                       {savedFilters.map(f => (
-                         <div key={f.name} className="flex items-center gap-1">
-                           <button onClick={() => applySavedFilter(f)} className="flex-1 text-left text-xs font-semibold text-slate-700 hover:text-[#009FE3] truncate">{f.name}</button>
-                           <button onClick={() => deleteSavedFilter(f.name)} className="text-slate-300 hover:text-red-400 flex-shrink-0"><X className="w-3 h-3" /></button>
-                         </div>
-                       ))}
-                     </div>
-                   </div>
-                 )}
-                 <ProvinceFilter selectedRegions={selectedRegions} onToggle={(item: string) => toggleFilter(setSelectedRegions, item)} dataset={sidebarDataset} />
+                 <ProvinceFilter
+                   selectedRegions={selectedRegions}
+                   onToggle={(item: string) => toggleFilter(setSelectedRegions, item)}
+                   dataset={sidebarDataset}
+                   onGoToMap={(stad, provincie) => { setMapFocusTarget({ naam: '', straat: '', stad, provincie }); setViewMode('map'); }}
+                   onGoToDatabase={(item) => { setSelectedRegions([item]); setViewMode('database'); setDbPage(1); }}
+                 />
                  <CollapsibleFilterGroup title="Discipline" items={['Architecten', 'Bouwbedrijven', 'Aannemers', 'Bouwmaterialen']} selectedItems={selectedTypes} onToggleItem={(item) => toggleFilter(setSelectedTypes, item)} dataset={activeData} countFn={(item: string, b: any) => { const t = detectType(b); if (item === 'Architecten') return t === 'architect'; if (item === 'Bouwbedrijven') return t === 'bouwbedrijf'; if (item === 'Aannemers') return t === 'aannemer'; if (item === 'Bouwmaterialen') return t === 'materialen'; return false; }} />
                  <CollapsibleFilterGroup title="Werksoort" items={['Nieuwbouw', 'Renovatie', 'Verduurzaming', 'Restauratie', 'Onderhoud', 'Interieur', 'Utiliteitsbouw', 'Allround']} selectedItems={selectedWerksoort} onToggleItem={(item) => toggleFilter(setSelectedWerksoort, item)} dataset={activeData} countFn={(item: string, b: any) => { const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase(); if (item === 'Nieuwbouw') return specs.includes('nieuwbouw'); if (item === 'Renovatie') return specs.includes('renovatie') || specs.includes('verbouw') || specs.includes('aanbouw') || specs.includes('transformatie'); if (item === 'Verduurzaming') return specs.includes('verduurzam') || specs.includes('isoler') || specs.includes('duurzaam') || specs.includes('energie') || specs.includes('warmtepomp') || specs.includes('zonnepanelen'); if (item === 'Restauratie') return specs.includes('restauratie') || specs.includes('monument'); if (item === 'Onderhoud') return specs.includes('onderhoud') || specs.includes('beheer') || specs.includes('service'); if (item === 'Interieur') return specs.includes('interieur') || specs.includes('afbouw') || specs.includes('binneninrichting'); if (item === 'Utiliteitsbouw') return specs.includes('utiliteit') || specs.includes('kantoor') || specs.includes('bedrijfsgebouw') || specs.includes('zakelijk'); if (item === 'Allround') return specs.includes('allround'); return false; }} />
                  <CollapsibleFilterGroup title="Bron" items={['Bouwgarant', 'BNA', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Plegt-Vos', 'VolkerWessels', 'Onbekend']} selectedItems={selectedBron} onToggleItem={(item) => toggleFilter(setSelectedBron, item)} dataset={activeData} countFn={(item: string, b: any) => { const srcs = b._sources?.length ? b._sources : [b.source || 'Onbekend']; return srcs.includes(item); }} />
@@ -3062,21 +3255,10 @@ const App: React.FC = () => {
                 {(city || selectedRegions.length > 0 || selectedTypes.length > 0 || selectedWerksoort.length > 0 || selectedBron.length > 0 || selectedRechtsvorm.length > 0 || selectedContact.length > 0) && (
                   <button
                     onClick={() => { setSaveFilterName(''); setShowSaveFilterModal(true); }}
-                    className="w-full py-2.5 bg-white border border-[#009FE3] text-[#009FE3] text-xs font-bold uppercase tracking-[0.1em] transition-colors flex items-center justify-center gap-2 rounded-sm hover:bg-[#009FE3]/5">
+                    className="w-full py-2.5 bg-[#009FE3] text-white text-xs font-bold uppercase tracking-[0.1em] transition-colors flex items-center justify-center gap-2 rounded-sm hover:bg-[#008ac5]">
                     <Bookmark className="w-3.5 h-3.5" /> Sla filter op
                   </button>
                 )}
-                <button
-                    onClick={() => {
-                      if (viewMode === 'favorites') setCurrentPage(1);
-                      else if (viewMode === 'database') setDbPage(1);
-                      else handleManualSearch();
-                      setShowMobileFilters(false);
-                    }}
-                    disabled={searchState.isLoading}
-                    className="w-full py-3.5 bg-[#009FE3] hover:bg-[#008ac5] disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-bold uppercase tracking-[0.1em] transition-colors shadow-sm flex items-center justify-center gap-2">
-                    Filters Toepassen
-                </button>
                 {(selectedRegions.length > 0 || selectedTypes.length > 0 || selectedWerksoort.length > 0 || selectedContact.length > 0 || selectedLijsten.length > 0 || selectedBron.length > 0 || selectedRechtsvorm.length > 0) && (
                     <button
                         onClick={() => {
@@ -3103,7 +3285,7 @@ const App: React.FC = () => {
 
         return (
       <div className={`flex flex-col md:flex-row max-w-[1400px] mx-auto w-full flex-grow ${selectedIds.size > 0 ? 'pb-20' : ''}`}>
-          {viewMode !== 'map' && (
+          {viewMode !== 'map' && viewMode !== 'lists' && (
           <aside className={`bg-white border-r border-slate-200 flex-shrink-0 hidden md:flex flex-col h-[calc(100vh-112px)] sticky top-28 transition-all duration-200 ${sidebarCollapsed ? 'w-12' : 'w-80'}`}>
               <div className="p-4 border-b border-slate-100 flex items-center justify-between">
                   {!sidebarCollapsed && <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest font-condensed flex items-center gap-2"><Filter className="w-4 h-4 text-[#009FE3]" /> Filters</h2>}
@@ -3116,37 +3298,41 @@ const App: React.FC = () => {
           )}
 
           <main className="flex-grow p-3 sm:p-6 lg:p-10 min-w-0 flex flex-col">
-             <div className="max-w-4xl mx-auto w-full mb-4 sm:mb-6 flex gap-1 border-b border-slate-200 overflow-x-auto">
-                 <button onClick={() => setViewMode('search')} className={`flex-1 min-w-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'search' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+             <div className="relative max-w-4xl mx-auto w-full mb-4 sm:mb-6">
+             <div ref={tabBarRef} className="flex gap-1 border-b border-slate-200 overflow-x-auto scroll-smooth">
+                 <button data-active={viewMode === 'search'} onClick={() => setViewMode('search')} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'search' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                      <LayoutGrid className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
                      <span className="hidden sm:inline">Live Zoeken</span>
                      <span className="sm:hidden">Zoeken</span>
                  </button>
-                 <button onClick={() => { setViewMode('favorites'); setCurrentPage(1); setShowRouteMap(false); }} className={`flex-1 min-w-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'favorites' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                 <button data-active={viewMode === 'favorites'} onClick={() => { setViewMode('favorites'); setCurrentPage(1); setShowRouteMap(false); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'favorites' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                      <Heart className={`hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0 ${viewMode === 'favorites' ? 'fill-current' : ''}`} />
                      <span className="hidden sm:inline">Mijn Favorieten ({favorites.length})</span>
                      <span className="sm:hidden">Favorieten ({favorites.length})</span>
                  </button>
-                 <button onClick={() => { setViewMode('database'); setDbPage(1); }} className={`flex-1 min-w-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'database' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                 <button data-active={viewMode === 'lists'} onClick={() => { setViewMode('lists'); setActiveListId(prev => prev ?? (lists[0]?.id ?? null)); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'lists' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                     <List className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                     <span className="hidden sm:inline">Lijsten ({lists.length})</span>
+                     <span className="sm:hidden">Lijsten ({lists.length})</span>
+                 </button>
+                 <button data-active={viewMode === 'database'} onClick={() => { setViewMode('database'); setDbPage(1); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'database' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                      <Database className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
                      <span className="hidden sm:inline">Bedrijvendatabase ({activeData.length})</span>
                      <span className="sm:hidden">Database</span>
                  </button>
-                 <button onClick={() => setViewMode('map')} className={`flex-1 min-w-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'map' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                 <button data-active={viewMode === 'map'} onClick={() => setViewMode('map')} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'map' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                      <MapPin className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" /> Kaart
                      {mapMarkerCount > 0 && (
                        <span className="ml-0.5 px-1.5 py-0.5 bg-[#E85E26] text-white rounded-full text-[9px] font-bold leading-none">{mapMarkerCount}</span>
                      )}
                  </button>
-                 <button onClick={() => setViewMode('dashboard')} className={`flex-1 min-w-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'dashboard' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <TrendingUp className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
-                     <span className="hidden sm:inline">Marktoverzicht</span>
-                     <span className="sm:hidden">Markt</span>
-                 </button>
+             </div>
+             {/* Mobiel: fade-hint dat de tabbalk verder scrollt (6 tabs passen niet op smalle schermen) */}
+             <div className="sm:hidden pointer-events-none absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent" />
              </div>
 
              {/* Mobiel: filters-knop + slide-up drawer (de aside hierboven is hidden md:flex, dus onzichtbaar op mobiel) */}
-             {viewMode !== 'map' && (
+             {viewMode !== 'map' && viewMode !== 'lists' && (
                <button
                  onClick={() => setShowMobileFilters(true)}
                  className="md:hidden flex items-center justify-center gap-2 w-full mb-4 py-2.5 bg-white border border-slate-200 rounded-sm text-xs font-bold uppercase tracking-wider text-slate-600"
@@ -3156,7 +3342,7 @@ const App: React.FC = () => {
                </button>
              )}
 
-             {viewMode !== 'map' && showMobileFilters && (
+             {viewMode !== 'map' && viewMode !== 'lists' && showMobileFilters && (
                <div className="md:hidden fixed inset-0 z-50 flex items-end bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowMobileFilters(false)}>
                  <div className="bg-white w-full max-h-[85vh] rounded-t-xl flex flex-col" onClick={e => e.stopPropagation()}>
                    <div className="w-10 h-1 bg-slate-300 rounded-full mx-auto mt-3 flex-shrink-0" />
@@ -3227,7 +3413,13 @@ const App: React.FC = () => {
                    if (sel === 'Heeft KVK') return !!(b.kvk);
                    return false;
                  });
-                 return matchSearch && matchSidebar && matchLijsten && matchBronSidebar && matchRvSidebar && matchTypeSidebar && matchWerksoortSidebar && matchContactSidebar;
+                 const matchPostcode = matchesPostcodeFilter(b.postcode || '', dbPostcodeFilter);
+                 // Multi-select status filtering: als bedrijf ALLE geselecteerde statussen heeft, dan matcht het
+                 const matchCrmStatus = dbCrmFilter.length === 0 || dbCrmFilter.every((s: string) => {
+                   if (s === 'bevat_notitie') return !!crmData[crmKey(b)]?.note;
+                   return s === 'geen' ? !(crmData[crmKey(b)]?.statuses || []).length : (crmData[crmKey(b)]?.statuses || []).includes(s as CrmStatus);
+                 });
+                 return matchSearch && matchSidebar && matchLijsten && matchBronSidebar && matchRvSidebar && matchTypeSidebar && matchWerksoortSidebar && matchContactSidebar && matchPostcode && matchCrmStatus;
                });
                const totalPages = Math.ceil(filtered.length / DB_PAGE_SIZE);
                const paged = filtered.slice((dbPage - 1) * DB_PAGE_SIZE, dbPage * DB_PAGE_SIZE);
@@ -3238,6 +3430,78 @@ const App: React.FC = () => {
                      <div className="relative w-full">
                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
                        <input type="text" value={dbSearch} onChange={e => { setDbSearch(e.target.value); setDbPage(1); }} placeholder="Zoek op naam, stad, email..." className="w-full pl-9 pr-4 py-2.5 border border-slate-200 text-sm focus:outline-none focus:border-[#009FE3]" />
+                     </div>
+                   </div>
+                   <div className="flex gap-2 sm:gap-3 mb-3 flex-wrap">
+                     <input
+                       type="text"
+                       value={dbPostcodeFilter}
+                       onChange={e => { setDbPostcodeFilter(e.target.value); setDbPage(1); }}
+                       placeholder="Postcodegebied (bv. 30 of 3000-3099)"
+                       className="flex-1 min-w-[180px] px-3 py-2 border border-slate-200 text-sm focus:outline-none focus:border-[#009FE3] rounded-sm"
+                     />
+                     <div className="relative">
+                       <button
+                         onClick={() => setShowStatusFilter(!showStatusFilter)}
+                         className="px-3 py-2 border border-slate-200 text-sm focus:outline-none focus:border-[#009FE3] rounded-sm bg-white text-slate-700 hover:border-slate-300 flex items-center gap-2"
+                       >
+                         Status & notitie
+                         <ChevronDown className="w-4 h-4" style={{ transform: showStatusFilter ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }} />
+                       </button>
+                       {showStatusFilter && (
+                         <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-sm shadow-lg z-10 min-w-[280px]">
+                           <div className="p-3 space-y-2 max-h-[300px] overflow-y-auto">
+                             <label className="flex items-center gap-2 px-2 py-2 hover:bg-slate-50 rounded cursor-pointer">
+                               <input
+                                 type="checkbox"
+                                 checked={dbCrmFilter.includes('geen')}
+                                 onChange={() => {
+                                   const next = dbCrmFilter.includes('geen')
+                                     ? dbCrmFilter.filter(s => s !== 'geen')
+                                     : [...dbCrmFilter, 'geen'];
+                                   setDbCrmFilter(next);
+                                   setDbPage(1);
+                                 }}
+                                 className="w-4 h-4 accent-[#009FE3]"
+                               />
+                               <span className="text-sm text-slate-700">Zonder status</span>
+                             </label>
+                             {(Object.keys(CRM_LABELS) as CrmStatus[]).map(s => (
+                               <label key={s} className="flex items-center gap-2 px-2 py-2 hover:bg-slate-50 rounded cursor-pointer">
+                                 <input
+                                   type="checkbox"
+                                   checked={dbCrmFilter.includes(s)}
+                                   onChange={() => {
+                                     const next = dbCrmFilter.includes(s)
+                                       ? dbCrmFilter.filter(x => x !== s)
+                                       : [...dbCrmFilter, s];
+                                     setDbCrmFilter(next);
+                                     setDbPage(1);
+                                   }}
+                                   className="w-4 h-4 accent-[#009FE3]"
+                                 />
+                                 <span className="text-sm text-slate-700">{CRM_LABELS[s]}</span>
+                               </label>
+                             ))}
+                             <div className="h-px bg-slate-200 my-2" />
+                             <label className="flex items-center gap-2 px-2 py-2 hover:bg-slate-50 rounded cursor-pointer">
+                               <input
+                                 type="checkbox"
+                                 checked={dbCrmFilter.includes('bevat_notitie')}
+                                 onChange={() => {
+                                   const next = dbCrmFilter.includes('bevat_notitie')
+                                     ? dbCrmFilter.filter(s => s !== 'bevat_notitie')
+                                     : [...dbCrmFilter, 'bevat_notitie'];
+                                   setDbCrmFilter(next);
+                                   setDbPage(1);
+                                 }}
+                                 className="w-4 h-4 accent-[#009FE3]"
+                               />
+                               <span className="text-sm text-slate-700">Bevat notitie</span>
+                             </label>
+                           </div>
+                         </div>
+                       )}
                      </div>
                    </div>
                    <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
@@ -3267,11 +3531,36 @@ const App: React.FC = () => {
                        );
                      })()}
                      {selectedIds.size > 0 && (
+                       <div className="relative">
+                         <button
+                           onClick={() => {
+                             const companies: DiscoveredCompany[] = (Array.from(selectedRaws.values()) as any[]).map(b => ({ id: `${b.naam}|${b.stad}`, name: b.naam, city: b.stad || '', discoveredAt: new Date().toISOString() }));
+                             const listName = prompt(`Voeg ${selectedIds.size} bedrijf(ven) toe aan welke lijst?\n\nBestanden lijsten:\n${lists.map(l => l.name).join(', ') || '(geen)'}\n\nVoer een nieuwe naam in of kies bestaande:`, '');
+                             if (!listName) return;
+                             const existing = lists.find(l => l.name.toLowerCase() === listName.toLowerCase());
+                             if (existing) addSelectionToList(existing.id, companies);
+                             else createListAndAddSelection(listName, companies);
+                           }}
+                           className="px-3 py-1.5 bg-[#009FE3] hover:bg-[#008ac5] text-white text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 transition-colors"
+                         >
+                           <List className="w-3.5 h-3.5" /> Voeg toe aan lijst ({selectedIds.size})
+                         </button>
+                       </div>
+                     )}
+                     {selectedIds.size > 0 && (
                        <button
                          onClick={clearSelection}
                          className="px-3 py-1.5 bg-white text-red-500 border border-red-200 hover:bg-red-50 text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 transition-colors"
                        >
                          <X className="w-3.5 h-3.5" /> Alles deselecteren ({selectedIds.size})
+                       </button>
+                     )}
+                     {selectedIds.size >= 2 && selectedIds.size <= 4 && (
+                       <button
+                         onClick={() => setShowCompare(true)}
+                         className="px-3 py-1.5 bg-[#E85E26] hover:bg-[#d14d1b] text-white text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 transition-colors"
+                       >
+                         <Columns className="w-3.5 h-3.5" /> Vergelijk ({selectedIds.size})
                        </button>
                      )}
                    </div>
@@ -3288,6 +3577,16 @@ const App: React.FC = () => {
                              </div>
                              <div className="flex items-center gap-1.5 flex-wrap mt-1">
                                <SourceBadges b={b} />
+                               {/* Journey-statussen: alle ingevulde statussen tonen */}
+                               {(crmData[crmKey(b)]?.statuses || []).length > 0 && (
+                                 <div className="flex items-center gap-0.5 flex-wrap">
+                                   {(crmData[crmKey(b)]!.statuses || []).map((s: CrmStatus) => (
+                                     <span key={s} className={`text-[8px] font-bold px-1 py-0.5 rounded-sm border flex-shrink-0 ${CRM_COLORS[s]}`} title={CRM_LABELS[s]}>
+                                       {CRM_LABELS[s].split(' ')[0]}
+                                     </span>
+                                   ))}
+                                 </div>
+                               )}
                                {isNew(b) && <span className="text-[9px] bg-green-500 text-white px-1.5 py-0.5 font-bold rounded-sm flex-shrink-0">Nieuw</span>}
                                {coreSpecs(b).map((s: string, si: number) => (
                                  <span key={si} className="text-[10px] bg-[#E8F4FB] text-[#009FE3] px-2 py-0.5 font-semibold rounded-sm">{s}</span>
@@ -3313,6 +3612,7 @@ const App: React.FC = () => {
                            <div className="flex gap-2">
                              {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
                              {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
+                             {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2]`}><Linkedin className="w-3 h-3"/>LinkedIn</a>}
                              {b.url && (visibleSources(b).length > 1
                                ? visibleSources(b).map((s: string, si: number) => (
                                    <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${srcColor(s).btn} ${srcColor(s).btnHover}`}><ArrowRight className="w-3 h-3"/>{s}</a>
@@ -3323,6 +3623,7 @@ const App: React.FC = () => {
                            <div className="flex gap-2">
                              <button onClick={() => { setSelectedRegions([]); setSelectedTypes([]); setSelectedWerksoort([]); setSelectedContact([]); setRadiusKm(null); setCity(b.naam); setViewMode('search'); executeSearch(undefined, undefined, b.naam, null, null); }} className={`${btnBase} bg-[#E85E26]/5 text-[#E85E26] border-[#E85E26]/30 hover:border-[#E85E26] hover:bg-[#E85E26]/10`}><Search className="w-3 h-3"/>Zoeken in Live</button>
                              <FavButton company={{id:`db-${i}`, name: b.naam, city: b.stad, _raw: b}} favorites={favorites} onToggle={toggleFavorite} />
+                             <AddToListButton company={{id:`db-${i}`, name: b.naam, city: b.stad, _raw: b}} lists={lists} onToggle={toggleCompanyInList} onCreateAndAdd={createListAndAddCompany} />
                            </div>
                          </div>
                        </div>
@@ -3372,19 +3673,34 @@ const App: React.FC = () => {
                         <input
                           type="text"
                           value={city}
-                          onChange={(e) => setCity(e.target.value)}
+                          onChange={(e) => { setCity(e.target.value); setLocationNote(null); setLocationError(null); }}
                           onFocus={() => setShowHistory(true)}
                           onBlur={() => setTimeout(() => setShowHistory(false), 150)}
                           onKeyDown={(e) => e.key === 'Enter' && handleManualSearch()}
                           placeholder="Naam (OMA, BAM...), stad, straat of postcode"
-                          className="w-full pl-14 pr-4 py-4 bg-transparent text-slate-900 font-medium placeholder-slate-400 focus:outline-none text-base"
+                          className="w-full pl-14 pr-12 py-4 bg-transparent text-slate-900 font-medium placeholder-slate-400 focus:outline-none text-base"
                         />
+                        <button
+                          type="button"
+                          onClick={useMyLocation}
+                          disabled={locating}
+                          title="Gebruik mijn locatie"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full text-slate-400 hover:text-[#009FE3] hover:bg-[#009FE3]/10 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                        >
+                          {locating ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
+                        </button>
                     </div>
                     <button onClick={() => handleManualSearch()} disabled={searchState.isLoading} className="w-full sm:w-auto bg-[#E85E26] hover:bg-[#d14d1b] disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold py-4 px-8 transition-all flex items-center justify-center gap-3 text-sm uppercase tracking-wider min-w-[160px]">
                         {searchState.isLoading ? <Loader2 className="animate-spin w-4 h-4"/> : <ArrowRight className="w-4 h-4" />}
                         <span>Zoeken</span>
                     </button>
                  </div>
+                 {(locationNote || locationError) && (
+                   <p className={`mt-2 text-xs flex items-center gap-1.5 ${locationError ? 'text-red-500' : 'text-slate-500'}`}>
+                     {locationError ? <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> : <MapPin className="w-3.5 h-3.5 flex-shrink-0 text-[#009FE3]" />}
+                     {locationError || locationNote}
+                   </p>
+                 )}
                  {/* Straal filter — sleepbare slider */}
                  <div className="flex items-center gap-3 mt-2 flex-wrap">
                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex-shrink-0">Straal:</span>
@@ -3410,7 +3726,7 @@ const App: React.FC = () => {
                        />
                        <span className="text-[10px] font-bold text-[#009FE3] w-14 flex-shrink-0">{radiusKm} km</span>
                        <span className="text-[10px] text-slate-500">
-                         Zoek bedrijven binnen <strong>{radiusKm} km</strong> van de ingevoerde locatie
+                         Zoek bedrijven binnen <strong>{radiusKm} km</strong> van de ingevoerde locatie — hoe dichterbij, hoe hoger de match
                        </span>
                      </>
                    )}
@@ -3455,258 +3771,370 @@ const App: React.FC = () => {
                 </div>
             )}
 
-            {viewMode === 'search' && !foundCompanies.length && !searchState.isLoading && !searchState.error && (
-                <div className="py-16 text-center max-w-2xl mx-auto">
-                    <Search className="w-10 h-10 text-slate-200 mx-auto mb-4" />
-                    <p className="text-slate-400 text-sm font-medium">Typ een bedrijfsnaam, stad of postcode — of stel een filter in.</p>
-                    <p className="text-slate-400 text-xs mt-1">Alle {activeData.length.toLocaleString('nl-NL')} bedrijven staan in de <button onClick={() => { setViewMode('database'); setDbPage(1); }} className="underline hover:text-[#009FE3]">Bedrijvendatabase</button>.</p>
-                    <button onClick={() => setShowAIHelper(true)} className="mt-4 mx-auto px-4 py-2 bg-[#009FE3] hover:bg-[#0088c8] text-white text-sm font-bold rounded-sm flex items-center gap-2 transition-colors"><Bot className="w-4 h-4" /> AI Route Helper</button>
-                </div>
-            )}
-
-            {viewMode === 'dashboard' && (() => {
-              const total = activeData.length;
-              const bySource: Record<string, number> = {};
-              activeData.forEach(b => { const srcs: string[] = b._sources?.length ? b._sources : [b.source || 'Onbekend']; srcs.forEach(s => { bySource[s] = (bySource[s] || 0) + 1; }); });
-              const byType: Record<string, number> = { Architecten: 0, Bouwbedrijven: 0, Aannemers: 0, Materialen: 0, Overig: 0 };
-              activeData.forEach(b => { const t = detectType(b); if (t === 'architect') byType.Architecten++; else if (t === 'bouwbedrijf') byType.Bouwbedrijven++; else if (t === 'aannemer') byType.Aannemers++; else if (t === 'materialen') byType.Materialen++; else byType.Overig++; });
-              const byProv: Record<string, number> = {};
-              activeData.forEach(b => { if (b.provincie) byProv[b.provincie] = (byProv[b.provincie] || 0) + 1; });
-              const provSorted = Object.entries(byProv).sort((a, b) => b[1] - a[1]);
-              const maxProv = provSorted[0]?.[1] || 1;
-              // Plaatsen (steden + dorpen) per provincie, voor het "Bedrijven per plaats" overzicht
-              const byProvPlace: Record<string, Record<string, number>> = {};
-              activeData.forEach(b => {
-                const stad = (b.stad || '').trim();
-                if (!stad) return;
-                const prov = b.provincie || 'Onbekend';
-                if (!byProvPlace[prov]) byProvPlace[prov] = {};
-                byProvPlace[prov][stad] = (byProvPlace[prov][stad] || 0) + 1;
-              });
-              const provPlaceSorted = Object.entries(byProvPlace)
-                .map(([prov, places]) => ({
-                  prov,
-                  places: Object.entries(places).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'nl')),
-                  total: Object.values(places).reduce((s, c) => s + c, 0),
-                }))
-                .sort((a, b) => b.total - a.total);
-              const srcSorted = Object.entries(bySource).sort((a, b) => b[1] - a[1]);
-              const maxSrc = srcSorted[0]?.[1] || 1;
-              const typeColors: Record<string, string> = { Architecten: '#E85E26', Bouwbedrijven: '#009FE3', Aannemers: '#1B4F72', Materialen: '#16a34a', Overig: '#94a3b8' };
-              // Schematische tegelkaart van NL — kleurintensiteit = aantal bedrijven t.o.v. de drukste provincie
-              const NL_GRID: { naam: string; col: number; row: number; colSpan?: number; rowSpan?: number }[] = [
-                { naam: 'Friesland',     col: 2, row: 1 },
-                { naam: 'Groningen',     col: 3, row: 1 },
-                { naam: 'Noord-Holland', col: 1, row: 2 },
-                { naam: 'Drenthe',       col: 3, row: 2 },
-                { naam: 'Overijssel',    col: 4, row: 2 },
-                { naam: 'Flevoland',     col: 2, row: 3 },
-                { naam: 'Gelderland',    col: 3, row: 3, colSpan: 2, rowSpan: 2 },
-                { naam: 'Zuid-Holland',  col: 1, row: 4 },
-                { naam: 'Utrecht',       col: 2, row: 4 },
-                { naam: 'Zeeland',       col: 1, row: 5 },
-                { naam: 'Noord-Brabant', col: 2, row: 5, colSpan: 2 },
-                { naam: 'Limburg',       col: 4, row: 5 },
-              ];
-              const overigProv = provSorted.filter(([prov]) => !NL_GRID.some(g => g.naam === prov));
-              const goToProv = (prov: string) => { setSelectedRegions([prov]); setViewMode('database'); setDbPage(1); };
-              return (
-                <div className="max-w-5xl mx-auto w-full space-y-8 pb-10">
-                  <div>
-                    <h2 className="text-2xl font-bold uppercase font-condensed tracking-tight text-slate-900 mb-1">Marktoverzicht</h2>
-                    <p className="text-xs text-slate-400">Live statistieken over alle {total.toLocaleString('nl-NL')} bedrijven in de database</p>
-                  </div>
-                  {/* NL tegelkaart — dekking per provincie in één oogopslag */}
-                  <div className="bg-white border border-slate-200 rounded-sm p-5">
-                    <div className="flex items-baseline justify-between mb-4">
-                      <h3 className="text-xs font-black uppercase tracking-widest text-slate-600">Dekking op de kaart</h3>
-                      <p className="text-[10px] text-slate-400">Klik een provincie voor de bedrijven daarin</p>
-                    </div>
-                    <div className="grid gap-1.5 mx-auto max-w-md" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gridTemplateRows: 'repeat(6, 56px)' }}>
-                      {NL_GRID.map(({ naam, col, row, colSpan, rowSpan }) => {
-                        const cnt = byProv[naam] || 0;
-                        const intensity = cnt / maxProv; // 0..1
-                        const bg = `rgba(0, 159, 227, ${0.12 + intensity * 0.88})`;
-                        const light = intensity < 0.45;
-                        return (
+            {viewMode === 'search' && !foundCompanies.length && !searchState.isLoading && !searchState.error && (() => {
+                const totalRecentPages = Math.max(1, Math.ceil(recentViewed.length / RECENT_VIEWED_PAGE_SIZE));
+                const recentPage = Math.min(recentViewedPage, totalRecentPages);
+                return (
+                <div className="py-16 max-w-4xl mx-auto px-4">
+                    <div className="mb-12 text-center">
+                      <div className="mx-auto mb-4 relative" style={{ width: 64, height: 64 }}>
+                        <span className="absolute inset-0 rounded-full animate-orb-glow blur-lg opacity-50" style={{ background: 'linear-gradient(135deg, #009FE3, #16a34a, #E85E26)' }} />
+                        <AgentOrb size={64} />
+                      </div>
+                      <h3 className="text-lg font-bold text-slate-900">Vraag het je Inncempro Agent</h3>
+                      <p className="text-sm text-slate-400 mt-1 max-w-md mx-auto">Doorzoekt live alle bedrijven, vergelijkt ze en plant bezoekroutes.</p>
+                      <div className="mt-5 flex flex-wrap items-center justify-center gap-2 max-w-2xl mx-auto">
+                        {SUGGESTIONS.map((s, i) => (
                           <button
-                            key={naam}
-                            onClick={() => goToProv(naam)}
-                            title={`${naam}: ${cnt.toLocaleString('nl-NL')} bedrijven`}
-                            style={{ gridColumn: `${col} / span ${colSpan || 1}`, gridRow: `${row} / span ${rowSpan || 1}`, backgroundColor: bg }}
-                            className="rounded-sm flex flex-col items-center justify-center gap-0.5 p-1 transition-transform hover:scale-[1.03] hover:z-10 hover:shadow-md"
+                            key={i}
+                            onClick={() => setAgentPromptRequest({ text: s.text, ts: Date.now() })}
+                            className="group flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-slate-600 bg-white hover:bg-white border border-slate-200 hover:border-[#009FE3]/40 rounded-full shadow-sm hover:shadow transition-all"
                           >
-                            <span className={`text-[9px] font-bold uppercase tracking-tight text-center leading-tight ${light ? 'text-slate-600' : 'text-white'}`}>{naam}</span>
-                            <span className={`text-sm font-black font-condensed ${light ? 'text-slate-900' : 'text-white'}`}>{cnt.toLocaleString('nl-NL')}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {overigProv.length > 0 && (
-                      <div className="flex flex-wrap justify-center gap-2 mt-3 pt-3 border-t border-slate-100">
-                        {overigProv.map(([prov, cnt]) => (
-                          <button key={prov} onClick={() => goToProv(prov)} className="text-[10px] text-slate-400 hover:text-[#009FE3] transition-colors">
-                            {prov}: <span className="font-bold">{cnt.toLocaleString('nl-NL')}</span>
+                            <s.icon className="w-3.5 h-3.5 text-[#009FE3] flex-shrink-0" />
+                            <span className="group-hover:text-slate-800">{s.text}</span>
                           </button>
                         ))}
+                      </div>
+                    </div>
+
+                    {(recentViewed.length > 0 || savedFilters.length > 0) && (
+                      <div className="mb-12">
+                        <div className="inline-flex bg-white border border-slate-200 rounded-xl p-1 mb-5">
+                          <button
+                            onClick={() => setSearchLandingTab('recent')}
+                            className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${searchLandingTab === 'recent' ? 'bg-[#009FE3]/10 text-[#009FE3]' : 'text-slate-500 hover:text-slate-700'}`}
+                          >
+                            Recent bekeken
+                          </button>
+                          <button
+                            onClick={() => setSearchLandingTab('saved')}
+                            className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${searchLandingTab === 'saved' ? 'bg-[#009FE3]/10 text-[#009FE3]' : 'text-slate-500 hover:text-slate-700'}`}
+                          >
+                            Opgeslagen filters
+                          </button>
+                        </div>
+
+                        {searchLandingTab === 'recent' && (
+                          recentViewed.length > 0 ? (
+                            <>
+                              <div className="flex items-center justify-end mb-3">
+                                <button onClick={() => { setRecentViewed([]); setRecentViewedPage(1); localStorage.removeItem('inncempro_recent_viewed'); }} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-wider">Wis alles</button>
+                              </div>
+                              <div className="grid sm:grid-cols-2 gap-3">
+                                {recentViewed.slice((recentPage - 1) * RECENT_VIEWED_PAGE_SIZE, recentPage * RECENT_VIEWED_PAGE_SIZE).map((r, i) => {
+                                  const match = activeData.find(b => b.naam === r.naam);
+                                  return (
+                                    <button
+                                      key={i}
+                                      onClick={() => { setCity(r.naam); executeSearch(undefined, undefined, r.naam); }}
+                                      className="group flex items-center gap-4 bg-white border border-slate-200 rounded-xl px-5 py-4 text-left hover:border-[#009FE3] hover:shadow-md transition-all"
+                                    >
+                                      <div className="w-10 h-10 rounded-lg bg-slate-100 group-hover:bg-[#009FE3]/10 flex items-center justify-center flex-shrink-0 transition-colors">
+                                        <Search className="w-4 h-4 text-slate-400 group-hover:text-[#009FE3]" />
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <p className="font-bold text-slate-900 truncate">{r.naam}</p>
+                                        <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
+                                          {match?.stad && (
+                                            <span className="flex items-center gap-1 truncate">
+                                              <MapPin className="w-3 h-3 flex-shrink-0" />{match.stad}
+                                            </span>
+                                          )}
+                                          {match?.stad && <span>•</span>}
+                                          <span className="whitespace-nowrap">{timeAgo(r.timestamp)}</span>
+                                        </p>
+                                      </div>
+                                      <span className="flex-shrink-0 px-3 py-1.5 rounded-full border border-slate-200 text-xs font-bold text-slate-600 group-hover:border-[#009FE3] group-hover:text-[#009FE3] transition-colors">
+                                        Open
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              {totalRecentPages > 1 && (
+                                <div className="flex items-center justify-center gap-3 mt-5">
+                                  <button
+                                    onClick={() => setRecentViewedPage(p => Math.max(1, p - 1))}
+                                    disabled={recentPage === 1}
+                                    className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-500 disabled:opacity-30 disabled:cursor-not-allowed hover:border-[#009FE3] hover:text-[#009FE3]"
+                                  >
+                                    Vorige
+                                  </button>
+                                  <span className="text-xs text-slate-400 font-medium">Pagina {recentPage} van {totalRecentPages}</span>
+                                  <button
+                                    onClick={() => setRecentViewedPage(p => Math.min(totalRecentPages, p + 1))}
+                                    disabled={recentPage >= totalRecentPages}
+                                    className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-500 disabled:opacity-30 disabled:cursor-not-allowed hover:border-[#009FE3] hover:text-[#009FE3]"
+                                  >
+                                    Volgende
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <p className="text-sm text-slate-400 text-center py-8">Nog geen bedrijven recent bekeken.</p>
+                          )
+                        )}
+
+                        {searchLandingTab === 'saved' && (
+                          savedFilters.length > 0 ? (
+                            <div className="grid sm:grid-cols-2 gap-3">
+                              {savedFilters.map(f => (
+                                <div
+                                  key={f.name}
+                                  className="group flex items-center gap-4 bg-white border border-slate-200 rounded-xl px-5 py-4 hover:border-[#009FE3] hover:shadow-md transition-all"
+                                >
+                                  <button onClick={() => applySavedFilter(f)} className="flex items-center gap-4 flex-1 min-w-0 text-left">
+                                    <div className="w-10 h-10 rounded-lg bg-slate-100 group-hover:bg-[#009FE3]/10 flex items-center justify-center flex-shrink-0 transition-colors">
+                                      <Bookmark className="w-4 h-4 text-slate-400 group-hover:text-[#009FE3]" />
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <p className="font-bold text-slate-900 truncate">{f.name}</p>
+                                      <p className="text-xs text-slate-400 truncate mt-0.5">{describeSavedFilter(f)}</p>
+                                    </div>
+                                  </button>
+                                  <button onClick={() => applySavedFilter(f)} className="flex-shrink-0 px-3 py-1.5 rounded-full border border-slate-200 text-xs font-bold text-slate-600 group-hover:border-[#009FE3] group-hover:text-[#009FE3] transition-colors">
+                                    Open
+                                  </button>
+                                  <button onClick={() => deleteSavedFilter(f.name)} className="flex-shrink-0 text-slate-300 hover:text-red-400">
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-slate-400 text-center py-8">Nog geen filters opgeslagen. Stel links een filter in en klik op "Sla filter op".</p>
+                          )
+                        )}
                       </div>
                     )}
-                  </div>
-                  {/* Bron + Discipline naast elkaar */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Per bron */}
-                    <div className="bg-white border border-slate-200 rounded-sm p-5">
-                      <h3 className="text-xs font-black uppercase tracking-widest text-slate-600 mb-4">Bedrijven per bron</h3>
-                      <div className="space-y-2.5">
-                        {srcSorted.map(([src, cnt]) => (
-                          <div key={src}>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="font-semibold text-slate-700">{src}</span>
-                              <span className="text-slate-400 font-medium">{cnt.toLocaleString('nl-NL')}</span>
-                            </div>
-                            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                              <div className="h-full rounded-full transition-all" style={{width: `${cnt/maxSrc*100}%`, backgroundColor: srcColor(src).text.replace('text-[','').replace(']','') || '#009FE3', background: src === 'Bouwgarant' ? '#009FE3' : src === 'Architectenweb' ? '#E85E26' : src === 'BNA' ? '#1B4F72' : src === 'Stiho' ? '#ea580c' : src === 'Jongeneel' ? '#16a34a' : '#94a3b8'}}></div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+
+                    <div className="text-center">
+                      <Search className="w-10 h-10 text-slate-200 mx-auto mb-4" />
+                      <p className="text-slate-400 text-sm font-medium">Typ een bedrijfsnaam, stad of postcode — of stel een filter in.</p>
+                      <p className="text-slate-400 text-xs mt-1">Alle {activeData.length.toLocaleString('nl-NL')} bedrijven staan in de <button onClick={() => { setViewMode('database'); setDbPage(1); }} className="underline hover:text-[#009FE3]">Bedrijvendatabase</button>.</p>
                     </div>
-                    {/* Per discipline */}
-                    <div className="bg-white border border-slate-200 rounded-sm p-5">
-                      <h3 className="text-xs font-black uppercase tracking-widest text-slate-600 mb-4">Discipline verdeling</h3>
-                      <div className="space-y-2.5">
-                        {Object.entries(byType).map(([type, cnt]) => (
-                          <div key={type}>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="font-semibold text-slate-700">{type}</span>
-                              <span className="text-slate-400 font-medium">{cnt.toLocaleString('nl-NL')} ({Math.round(cnt/total*100)}%)</span>
-                            </div>
-                            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                              <div className="h-full rounded-full transition-all" style={{width: `${cnt/total*100}%`, backgroundColor: typeColors[type]}}></div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  {/* Provincie overzicht */}
-                  <div className="bg-white border border-slate-200 rounded-sm p-5">
-                    <h3 className="text-xs font-black uppercase tracking-widest text-slate-600 mb-4">Bedrijven per provincie</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2.5">
-                      {provSorted.map(([prov, cnt]) => (
-                        <div key={prov}>
-                          <div className="flex justify-between text-xs mb-1">
-                            <button onClick={() => { setSelectedRegions([prov]); setViewMode('database'); setDbPage(1); }} className="font-semibold text-slate-700 hover:text-[#009FE3] transition-colors text-left">{prov}</button>
-                            <span className="text-slate-400 font-medium">{cnt.toLocaleString('nl-NL')}</span>
-                          </div>
-                          <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-[#009FE3] rounded-full transition-all" style={{width: `${cnt/maxProv*100}%`}}></div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  {/* Plaatsen (steden + dorpen) overzicht, per provincie */}
-                  <div className="bg-white border border-slate-200 rounded-sm p-5">
-                    <h3 className="text-xs font-black uppercase tracking-widest text-slate-600 mb-1">Bedrijven per plaats</h3>
-                    <p className="text-[10px] text-slate-400 mb-4">Klik op een provincie voor alle steden en dorpen daarin. Klik op een plaats om er direct op te filteren in de database.</p>
-                    <div className="space-y-2">
-                      {provPlaceSorted.map(({ prov, places, total: provTotal }) => (
-                        <details key={prov} className="border border-slate-100 rounded-sm">
-                          <summary className="flex items-center justify-between px-3 py-2.5 cursor-pointer select-none hover:bg-slate-50 list-none">
-                            <button
-                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedRegions([prov]); setViewMode('database'); setDbPage(1); }}
-                              className="text-xs font-bold text-slate-700 hover:text-[#009FE3] transition-colors"
-                            >{prov}</button>
-                            <span className="text-[10px] text-slate-400 font-medium">{places.length.toLocaleString('nl-NL')} plaatsen · {provTotal.toLocaleString('nl-NL')} bedrijven</span>
-                          </summary>
-                          <div className="px-3 pb-3 pt-1 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 max-h-72 overflow-y-auto border-t border-slate-100">
-                            {places.map(([place, cnt]) => (
-                              <button
-                                key={place}
-                                onClick={() => { setSelectedRegions([place]); setViewMode('database'); setDbPage(1); }}
-                                className="flex items-center justify-between gap-2 text-left text-xs py-1 text-slate-600 hover:text-[#009FE3] transition-colors"
-                              >
-                                <span className="truncate">{place}</span>
-                                <span className="text-slate-300 flex-shrink-0">{cnt.toLocaleString('nl-NL')}</span>
-                              </button>
-                            ))}
-                          </div>
-                        </details>
-                      ))}
-                    </div>
-                  </div>
-                  {/* Opgeslagen filters overzicht */}
-                  {savedFilters.length > 0 && (
-                    <div className="bg-white border border-slate-200 rounded-sm p-5">
-                      <h3 className="text-xs font-black uppercase tracking-widest text-slate-600 mb-4">Opgeslagen zoekfilters</h3>
-                      <div className="flex flex-wrap gap-2">
-                        {savedFilters.map(f => (
-                          <div key={f.name} className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-sm px-3 py-2">
-                            <Bookmark className="w-3 h-3 text-[#009FE3]" />
-                            <button onClick={() => applySavedFilter(f)} className="text-xs font-bold text-slate-700 hover:text-[#009FE3]">{f.name}</button>
-                            <button onClick={() => deleteSavedFilter(f.name)} className="ml-1 text-slate-300 hover:text-red-400"><X className="w-3 h-3" /></button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
-              );
+                );
             })()}
 
             {viewMode === 'map' && (
-                <div className="w-full flex flex-col">
-                  <MapView
-                    allData={activeData}
-                    favorites={favorites}
-                    selectedItems={Array.from(selectedRaws.values())}
-                    selectedIds={selectedIds}
-                    selectedCompany={selectedCompany}
-                    onToggleSelect={(naam, raw) => { setSelectedIds(prev => { const next = new Set(prev); next.has(naam) ? next.delete(naam) : next.add(naam); return next; }); setSelectedRaws(prev => { const next = new Map(prev); next.has(naam) ? next.delete(naam) : next.set(naam, raw); return next; }); }}
-                    onClearSelection={clearSelection}
-                    onNavigate={(target, naam) => {
-                      if (target === 'database') {
-                        setDbSearch(naam);
-                        setDbPage(1);
-                        setViewMode('database');
-                      } else {
-                        setCity(naam);
-                        executeSearch(undefined, undefined, naam);
-                      }
-                    }}
-                    onAddressCorrection={handleAddressCorrection}
-                    onDeleteEntry={handleDeleteEntry}
-                    onMarkerCountChange={setMapMarkerCount}
+              <>
+                <div className="w-full flex flex-col" style={{ height: 'calc(100vh - 120px)' }}>
+                  <ClusterMapView
+                    onOpenInDatabase={(naam) => { setDbSearch(naam); setDbPage(1); setViewMode('database'); }}
+                    focusTarget={mapFocusTarget}
+                    onFocusHandled={() => setMapFocusTarget(null)}
                   />
+                </div>
 
-                  {/* Routes onder kaart */}
-                  {savedRoutes.length > 0 && (
-                    <div className="mt-8 max-w-6xl mx-auto w-full">
-                      <h3 className="text-lg font-bold text-slate-900 mb-3 px-4">Opgeslagen Routes ({savedRoutes.length})</h3>
-                      <div className="grid gap-3 px-4">
-                        {savedRoutes.map((route: any) => (
-                          <div key={route.id} className="bg-white border border-slate-200 rounded-sm p-4">
-                            <div className="flex items-start justify-between mb-2">
-                              <div>
-                                <h4 className="font-bold text-slate-900">{route.name}</h4>
-                                <p className="text-xs text-slate-500">{new Date(route.createdAt).toLocaleString('nl-NL')} • {route.bedrijven.length} bedrijven</p>
+                {/* Opgeslagen routes — hier i.p.v. onder Live Zoeken, want dit is de kaart-pagina
+                    waar je al filtert; hieronder kun je diezelfde opgeslagen routes bekijken. */}
+                {savedRoutes.length > 0 && (
+                  <div className="max-w-5xl mx-auto w-full px-4 py-10">
+                    <h3 className="text-xl font-bold text-slate-900 mb-1">Opgeslagen Routes</h3>
+                    <p className="text-sm text-slate-400 mb-6">{savedRoutes.length} {savedRoutes.length === 1 ? 'route' : 'routes'} opgeslagen</p>
+                    <div className="grid gap-4">
+                      {savedRoutes.map((route: any) => {
+                        const stopNamen = (route.stops || []).map((s: string) => (s || '').split('|')[0]);
+                        return (
+                          <div key={route.id} className="bg-white border border-slate-200 rounded-md p-5">
+                            <div className="flex items-start justify-between mb-3 gap-3">
+                              <div className="min-w-0">
+                                <h4 className="font-bold text-slate-900 text-base truncate">{route.name}</h4>
+                                <p className="text-xs text-slate-500 mt-1">
+                                  {route.savedAt ? new Date(route.savedAt).toLocaleString('nl-NL') : ''} • {stopNamen.length} bedrijven
+                                </p>
                               </div>
-                              <button onClick={() => { setSavedRoutes(savedRoutes.filter((r: any) => r.id !== route.id)); localStorage.setItem('inncempro_saved_routes', JSON.stringify(savedRoutes.filter((r: any) => r.id !== route.id))); }} className="text-slate-400 hover:text-red-500">
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              <div className="flex items-center gap-1.5 flex-shrink-0">
+                                <button onClick={() => viewSavedRoute(route)} className="px-3 py-1.5 bg-[#009FE3] hover:bg-[#008ac5] text-white text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 transition-colors">
+                                  <Eye className="w-3.5 h-3.5" /> Bekijken
+                                </button>
+                                <button
+                                  onClick={() => { const next = savedRoutes.filter((r: any) => r.id !== route.id); setSavedRoutes(next); localStorage.setItem('inncempro_saved_routes', JSON.stringify(next)); }}
+                                  className="text-slate-400 hover:text-red-500 flex-shrink-0 p-2"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
                             </div>
-                            <div className="flex flex-wrap gap-2 mt-2">
-                              {route.bedrijven.map((b: any, i: number) => (
-                                <span key={i} className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded-sm">{i+1}. {b.naam}</span>
+                            <div className="flex flex-wrap gap-2">
+                              {stopNamen.map((naam: string, i: number) => (
+                                <span key={i} className="text-xs bg-slate-100 text-slate-700 px-2.5 py-1.5 rounded-sm">{i + 1}. {naam}</span>
                               ))}
                             </div>
                           </div>
-                        ))}
-                      </div>
+                        );
+                      })}
                     </div>
-                  )}
+                  </div>
+                )}
+              </>
+            )}
+
+            {viewMode === 'lists' && (
+              <div className="max-w-6xl mx-auto w-full px-0 sm:px-4 py-4">
+                <div className="flex flex-col md:flex-row gap-6">
+                  {/* Lijst van lijsten */}
+                  <div className="md:w-64 flex-shrink-0">
+                    <button
+                      onClick={() => { setNewListName(''); setShowNewListModal(true); }}
+                      className="w-full mb-3 py-2.5 bg-[#009FE3] hover:bg-[#008ac5] text-white text-xs font-bold uppercase tracking-wider rounded-sm flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Nieuwe lijst
+                    </button>
+                    <div className="space-y-1">
+                      {lists.map(l => (
+                        <div
+                          key={l.id}
+                          onClick={() => setActiveListId(l.id)}
+                          className={`group flex items-center gap-2 px-3 py-2.5 rounded-sm cursor-pointer transition-colors ${activeListId === l.id ? 'bg-[#009FE3]/10 text-[#009FE3]' : 'hover:bg-slate-50 text-slate-700'}`}
+                        >
+                          <List className="w-3.5 h-3.5 flex-shrink-0" />
+                          <span className="flex-1 min-w-0 truncate text-sm font-semibold">{l.name}</span>
+                          <span className="text-[10px] text-slate-400 flex-shrink-0">{l.companies.length}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); if (confirm(`Lijst "${l.name}" verwijderen?`)) deleteList(l.id); }}
+                            className="opacity-0 group-hover:opacity-100 flex-shrink-0 text-slate-300 hover:text-red-400 transition-opacity"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      {lists.length === 0 && (
+                        <p className="text-xs text-slate-400 px-3 py-4 text-center">Nog geen lijsten aangemaakt.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Inhoud van geselecteerde lijst */}
+                  <div className="flex-1 min-w-0">
+                    {(() => {
+                      const active = lists.find(l => l.id === activeListId);
+                      if (!active) {
+                        return (
+                          <div className="py-20 text-center">
+                            <List className="w-10 h-10 text-slate-200 mx-auto mb-4" />
+                            <p className="text-slate-400 text-sm font-medium">Selecteer of maak een lijst om bedrijven op te slaan.</p>
+                          </div>
+                        );
+                      }
+                      if (active.companies.length === 0) {
+                        return (
+                          <div className="py-20 text-center">
+                            <List className="w-10 h-10 text-slate-200 mx-auto mb-4" />
+                            <p className="text-slate-400 text-sm font-medium">"{active.name}" is nog leeg.</p>
+                            <p className="text-slate-400 text-xs mt-1">Voeg bedrijven toe via het lijst-icoon op een bedrijfskaart, of selecteer meerdere bedrijven.</p>
+                          </div>
+                        );
+                      }
+                      const allCompaniesSelected = selectedListCompanyIndices.size > 0 && selectedListCompanyIndices.size === active.companies.length;
+                      return (
+                        <>
+                          <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
+                            <div className="flex items-center gap-2 flex-1">
+                              {renameListId === active.id ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    value={renameListName}
+                                    onChange={(e) => setRenameListName(e.target.value)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') renameList(active.id, renameListName); }}
+                                    onBlur={() => { if (renameListName.trim()) renameList(active.id, renameListName); else setRenameListId(null); }}
+                                    autoFocus
+                                    className="px-3 py-2 border border-[#009FE3] rounded-sm text-lg font-bold focus:outline-none focus:ring-1 focus:ring-[#009FE3]"
+                                  />
+                                  <button onClick={() => { if (renameListName.trim()) renameList(active.id, renameListName); else setRenameListId(null); }} className="px-2 py-1 bg-[#009FE3] text-white text-xs font-bold rounded-sm">✓</button>
+                                </div>
+                              ) : (
+                                <>
+                                  <h3 className="text-lg font-bold text-slate-900">{active.name}</h3>
+                                  <button onClick={() => { setRenameListId(active.id); setRenameListName(active.name); }} className="text-slate-400 hover:text-[#009FE3] p-1">
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                            <span className="text-xs text-slate-400 font-medium">{active.companies.length} bedrijven</span>
+                          </div>
+                          {selectedListCompanyIndices.size > 0 && (
+                            <div className="mb-4 flex items-center gap-2 flex-wrap">
+                              <label className="flex items-center gap-1.5 flex-shrink-0">
+                                <input
+                                  type="checkbox"
+                                  checked={allCompaniesSelected}
+                                  onChange={(e) => setSelectedListCompanyIndices(e.target.checked ? new Set(active.companies.map((_, i) => i)) : new Set())}
+                                  className="w-3.5 h-3.5 accent-[#009FE3]"
+                                />
+                                <span className="text-xs text-slate-600">{selectedListCompanyIndices.size} geselecteerd</span>
+                              </label>
+                              <button
+                                onClick={() => {
+                                  const companies: DiscoveredCompany[] = Array.from(selectedListCompanyIndices).map(i => active.companies[i]);
+                                  const targetList = prompt(`Verplaats naar welke lijst?\n\nBeschikbare lijsten:\n${lists.filter(l => l.id !== active.id).map(l => l.name).join(', ') || '(alleen deze lijst)'}\n\nVoer een lijstnaam in:`, '');
+                                  if (!targetList) return;
+                                  const target = lists.find(l => l.name.toLowerCase() === targetList.toLowerCase() && l.id !== active.id);
+                                  if (target) moveCompaniesToList(active.id, target.id, Array.from(selectedListCompanyIndices));
+                                  else alert(`Lijst "${targetList}" niet gevonden.`);
+                                }}
+                                className="px-3 py-1.5 bg-[#009FE3] hover:bg-[#008ac5] text-white text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 transition-colors"
+                              >
+                                <ArrowRightCircle className="w-3.5 h-3.5" /> Verplaats ({selectedListCompanyIndices.size})
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (confirm(`${selectedListCompanyIndices.size} bedrijf(ven) uit "${active.name}" verwijderen?`)) {
+                                    Array.from(selectedListCompanyIndices).reverse().forEach(i => removeCompanyFromList(active.id, i));
+                                    setSelectedListCompanyIndices(new Set());
+                                  }
+                                }}
+                                className="px-3 py-1.5 bg-white text-red-500 border border-red-200 hover:bg-red-50 text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" /> Verwijder ({selectedListCompanyIndices.size})
+                              </button>
+                            </div>
+                          )}
+                          <div className="grid sm:grid-cols-2 gap-3">
+                            {active.companies.map((c, i) => (
+                              <div
+                                key={i}
+                                className={`flex items-center gap-4 bg-white border rounded-xl px-5 py-4 transition-colors ${selectedListCompanyIndices.has(i) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedListCompanyIndices.has(i)}
+                                  onChange={(e) => {
+                                    const next = new Set(selectedListCompanyIndices);
+                                    if (e.target.checked) next.add(i);
+                                    else next.delete(i);
+                                    setSelectedListCompanyIndices(next);
+                                  }}
+                                  className="w-4 h-4 accent-[#009FE3] flex-shrink-0"
+                                />
+                                <button
+                                  onClick={() => { setCity(c.name); setViewMode('search'); executeSearch(undefined, undefined, c.name); }}
+                                  className="flex items-center gap-4 flex-1 min-w-0 text-left"
+                                >
+                                  <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
+                                    <Building className="w-4 h-4 text-slate-400" />
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="font-bold text-slate-900 truncate">{c.name}</p>
+                                    {c.city && <p className="text-xs text-slate-400 truncate mt-0.5">{c.city}</p>}
+                                  </div>
+                                </button>
+                                <button onClick={() => { if (confirm(`${c.name} uit deze lijst verwijderen?`)) removeCompanyFromList(active.id, i); }} className="flex-shrink-0 text-slate-300 hover:text-red-400">
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
                 </div>
+              </div>
             )}
 
             {viewMode === 'favorites' && favorites.length === 0 && (
@@ -3721,7 +4149,8 @@ const App: React.FC = () => {
                 </div>
             )}
 
-            {itemsToShow.length > 0 && (viewMode === 'search' || viewMode === 'favorites') && (
+            {(itemsToShow.length > 0 || (showRouteMap && viewMode === 'search')) && (viewMode === 'search' || viewMode === 'favorites') && (
+              <>
                 <div
                   ref={showRouteMap && viewMode === 'search' ? splitContainerRef : undefined}
                   className={`animate-fade-in w-full ${showRouteMap && viewMode === 'search' ? 'flex flex-col md:flex-row md:h-[calc(100vh-160px)] md:min-h-[500px]' : 'space-y-6 max-w-6xl mx-auto'}`}>
@@ -3741,7 +4170,7 @@ const App: React.FC = () => {
                              </div>
                              <div className="flex items-center gap-2 flex-wrap">
                                  {viewMode === 'search' && <button
-                                     onClick={() => setShowRouteMap(v => !v)}
+                                     onClick={() => { setShowRouteMap(v => !v); setRouteMapFullscreen(false); }}
                                      className={`px-3 py-1.5 sm:px-4 sm:py-2 text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 sm:gap-2 transition-colors border ${showRouteMap ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-[#009FE3] border-[#009FE3] hover:bg-[#f0f9ff]'}`}
                                  >
                                      <MapPin className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> {showRouteMap ? 'Kaart sluiten' : 'Route Kaart'}
@@ -3778,6 +4207,21 @@ const App: React.FC = () => {
                               </button>
                               {selectedIds.size > 0 && (
                                 <button
+                                  onClick={() => {
+                                    const companies: DiscoveredCompany[] = (Array.from(selectedRaws.values()) as any[]).map(b => ({ id: `${b.naam}|${b.stad}`, name: b.naam, city: b.stad || '', discoveredAt: new Date().toISOString() }));
+                                    const listName = prompt(`Voeg ${selectedIds.size} bedrijf(ven) toe aan welke lijst?\n\nBestanden lijsten:\n${lists.map(l => l.name).join(', ') || '(geen)'}\n\nVoer een nieuwe naam in of kies bestaande:`, '');
+                                    if (!listName) return;
+                                    const existing = lists.find(l => l.name.toLowerCase() === listName.toLowerCase());
+                                    if (existing) addSelectionToList(existing.id, companies);
+                                    else createListAndAddSelection(listName, companies);
+                                  }}
+                                  className="px-3 py-1.5 bg-[#009FE3] hover:bg-[#008ac5] text-white text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 transition-colors"
+                                >
+                                  <List className="w-3.5 h-3.5" /> Voeg toe aan lijst ({selectedIds.size})
+                                </button>
+                              )}
+                              {selectedIds.size > 0 && (
+                                <button
                                   onClick={clearSelection}
                                   className="px-3 py-1.5 bg-white text-red-500 border border-red-200 hover:bg-red-50 text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 transition-colors"
                                 >
@@ -3786,7 +4230,7 @@ const App: React.FC = () => {
                               )}
                               {selectedIds.size > 0 && refCoords && (
                                 <button
-                                  onClick={() => { const km = radiusKm ?? 20; setRadiusKm(km); setCity(refStad); setSelectedRegions([]); executeSearch(undefined, undefined, '', refCoords, km, []); }}
+                                  onClick={() => { const km = radiusKm ?? 20; setRadiusKm(km); setCity(refStad); setSelectedRegions([]); executeSearch(undefined, undefined, '', refCoords, km, []); clearSelection(); }}
                                   className="px-3 py-1.5 bg-[#009FE3] hover:bg-[#008ac5] text-white text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 transition-colors"
                                 >
                                   <Search className="w-3.5 h-3.5" /> Zoek in de buurt
@@ -3808,12 +4252,14 @@ const App: React.FC = () => {
                     <div className={`grid gap-4 ${showRouteMap ? 'grid-cols-1' : 'grid-cols-1 xl:grid-cols-2'}`}>
                         {currentItems.map((company: any) => {
                             const b = (company as any)._raw || company;
-                            const distKm: number | undefined = company._hqDistanceKm ?? company._distanceKm;
+                            // Echte rijafstand (over de weg) zodra bekend; anders de snelle hemelsbrede schatting.
+                            const distKm: number | undefined = drivingKm.get(company.id) ?? company._hqDistanceKm ?? company._distanceKm;
+                            const distIsDriving = drivingKm.has(company.id);
                             const btnBase = "flex items-center justify-center gap-1.5 px-3 py-2 text-[10px] font-bold uppercase tracking-wider border transition-all flex-1 whitespace-nowrap rounded-sm";
                             if (viewMode === 'search' && replacingId === company.id) {
                               const q = replaceQuery.toLowerCase().trim();
                               const existingNames = new Set<string>(foundCompanies.map(c => (c._raw?.naam || c.name || '').toLowerCase()));
-                              const refCoords = getCityCoords(b.stad || '');
+                              const refCoords = getBedrijfCoords(b);
                               const candidates = q.length < 2 ? [] : refCoords
                                 ? scoreInsertionCandidates(activeData, null, refCoords, cityCoords as any, existingNames, 6, q).map(c => c.bedrijf)
                                 : activeData
@@ -3856,7 +4302,7 @@ const App: React.FC = () => {
                                 draggable={showRouteMap}
                                 onDragStart={showRouteMap ? e => { e.dataTransfer.setData('application/company', JSON.stringify(b)); e.dataTransfer.effectAllowed = 'copy'; } : undefined}
                                 className={`relative bg-white border p-5 flex flex-col gap-3 transition-colors cursor-pointer ${showRouteMap ? 'cursor-grab active:cursor-grabbing' : ''} ${selectedIds.has(b.naam || company.name) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`}
-                                onClick={() => setSelectedCompany(b)}>
+                                onClick={() => { setSelectedCompany(b); addToRecentViewed(b.naam || company.name); }}>
                                 {viewMode === 'search' && (
                                   <div className="absolute top-2 right-2 z-10" onClick={e => e.stopPropagation()}>
                                     <button
@@ -3882,8 +4328,9 @@ const App: React.FC = () => {
                                       </div>
                                       <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wide leading-tight">{b.naam || company.name}</h3>
                                       <SourceBadges b={b} />
+                                      {crmData[crmKey(b)]?.status && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm border flex-shrink-0 ${CRM_COLORS[crmData[crmKey(b)]!.status!]}`}>{CRM_LABELS[crmData[crmKey(b)]!.status!]}</span>}
                                       {isNew(b) && <span className="text-[9px] bg-green-500 text-white px-1.5 py-0.5 font-bold rounded-sm flex-shrink-0">Nieuw</span>}
-                                      {distKm !== undefined && showField('afstand') && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`} van {hqShortLabel}</span>}
+                                      {distKm !== undefined && showField('afstand') && <span title={distIsDriving ? 'Rijafstand over de weg' : 'Hemelsbrede schatting — rijafstand wordt geladen...'} className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`} van {hqShortLabel}{!distIsDriving && ' *'}</span>}
                                     </div>
                                     {(b.straat || b.postcode || b.stad || company.city) && (
                                       <p className="text-slate-500 text-xs mt-1 flex items-start gap-1 flex-wrap">
@@ -3908,16 +4355,20 @@ const App: React.FC = () => {
                                     {showField('email') && b.email && <span className="flex items-center gap-1.5"><Mail className="w-3 h-3 flex-shrink-0" />{b.email}</span>}
                                   </div>
                                 )}
-                                <div className="flex flex-wrap gap-2 mt-auto pt-2 border-t border-slate-100" onClick={e => e.stopPropagation()}>
-                                  {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
-                                  {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
-                                  {b.url && (visibleSources(b).length > 1
-                                    ? visibleSources(b).map((s: string, si: number) => (
-                                        <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${srcColor(s).btn} ${srcColor(s).btnHover}`}><ArrowRight className="w-3 h-3"/>{s}</a>
-                                      ))
-                                    : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${srcColor(visibleSources(b)[0]).btn} ${srcColor(visibleSources(b)[0]).btnHover}`}><ArrowRight className="w-3 h-3"/>{visibleSources(b)[0] || 'Info'}</a>
-                                  )}
+                                <div className="flex items-start gap-2 mt-auto pt-2 border-t border-slate-100" onClick={e => e.stopPropagation()}>
+                                  <div className="flex flex-wrap gap-2 flex-1 min-w-0">
+                                    {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
+                                    {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
+                                    {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2]`}><Linkedin className="w-3 h-3"/>LinkedIn</a>}
+                                    {b.url && (visibleSources(b).length > 1
+                                      ? visibleSources(b).map((s: string, si: number) => (
+                                          <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${srcColor(s).btn} ${srcColor(s).btnHover}`}><ArrowRight className="w-3 h-3"/>{s}</a>
+                                        ))
+                                      : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${srcColor(visibleSources(b)[0]).btn} ${srcColor(visibleSources(b)[0]).btnHover}`}><ArrowRight className="w-3 h-3"/>{visibleSources(b)[0] || 'Info'}</a>
+                                    )}
+                                  </div>
                                   <FavButton company={company} favorites={favorites} onToggle={toggleFavorite} />
+                                  <AddToListButton company={company} lists={lists} onToggle={toggleCompanyInList} onCreateAndAdd={createListAndAddCompany} />
                                 </div>
                               </div>
                             );
@@ -3957,13 +4408,19 @@ const App: React.FC = () => {
                     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-8 rounded-full bg-slate-400 group-hover:bg-[#009FE3] transition-colors" />
                   </div>
                 )}
-                {/* Right: RouteMapPanel */}
+                {/* Right: RouteMapPanel — `fixed` overlay in fullscreen, dus zelfde component-
+                    instantie (geen remount) waardoor de al berekende route niet verloren gaat. */}
                 {showRouteMap && viewMode === 'search' && (
-                  <div className="md:flex-1 min-w-0 h-[55vh] min-h-[360px] md:h-full md:min-h-0 overflow-hidden border-l-0">
+                  <div className={routeMapFullscreen
+                    ? 'fixed inset-0 z-[70] bg-[#F8FAFC]'
+                    : 'md:flex-1 min-w-0 h-[55vh] min-h-[360px] md:h-full md:min-h-0 overflow-hidden border-l-0'}>
                     <RouteMapPanel
                       companies={(Array.from(selectedRaws.values()) as any[]).map(r => ({ id: r.naam, name: r.naam, city: r.stad || '', _raw: r }))}
                       allData={activeData}
-                      onClose={() => setShowRouteMap(false)}
+                      autoOptimize={autoOptimizeRoute}
+                      isFullscreen={routeMapFullscreen}
+                      onToggleFullscreen={() => setRouteMapFullscreen(v => !v)}
+                      onClose={() => { setShowRouteMap(false); setAutoOptimizeRoute(false); setRouteMapFullscreen(false); }}
                       onAddressCorrection={handleAddressCorrection}
                       onDeleteEntry={handleDeleteEntry}
                       onNavigate={(target, naam) => {
@@ -3977,6 +4434,7 @@ const App: React.FC = () => {
                   </div>
                 )}
                 </div>
+              </>
             )}
           </main>
       </div>
@@ -4011,13 +4469,40 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* ── Nieuwe lijst modal ──────────────────────────────────────────────── */}
+      {showNewListModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowNewListModal(false)}>
+          <div className="bg-white w-full max-w-sm rounded-sm shadow-xl p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-sm font-black uppercase tracking-widest text-slate-900 flex items-center gap-2"><List className="w-4 h-4 text-[#009FE3]" /> Nieuwe lijst</h3>
+            <input
+              type="text"
+              value={newListName}
+              onChange={e => setNewListName(e.target.value)}
+              placeholder="Naam van de lijst (bijv. 'Architecten Rotterdam')"
+              className="w-full border border-slate-200 rounded-sm px-3 py-2.5 text-sm focus:outline-none focus:border-[#009FE3]"
+              autoFocus
+              onKeyDown={e => { if (e.key === 'Enter' && newListName.trim()) { const created = createList(newListName.trim()); if (created) setActiveListId(created.id); setShowNewListModal(false); }}}
+            />
+            <div className="flex gap-2">
+              <button onClick={() => setShowNewListModal(false)} className="flex-1 py-2.5 border border-slate-200 text-slate-500 text-xs font-bold uppercase tracking-wider rounded-sm hover:bg-slate-50">Annuleren</button>
+              <button
+                disabled={!newListName.trim()}
+                onClick={() => { const created = createList(newListName.trim()); if (created) setActiveListId(created.id); setShowNewListModal(false); }}
+                className="flex-1 py-2.5 bg-[#009FE3] hover:bg-[#008ac5] disabled:opacity-40 text-white text-xs font-bold uppercase tracking-wider rounded-sm flex items-center justify-center gap-1.5">
+                <Plus className="w-3.5 h-3.5" /> Aanmaken
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Vergelijking modal ──────────────────────────────────────────────── */}
       {showCompare && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowCompare(false)}>
           <div className="bg-white w-full max-w-5xl max-h-[90vh] rounded-sm shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
               <h2 className="text-sm font-black uppercase tracking-widest text-slate-900 flex items-center gap-2"><Columns className="w-4 h-4 text-[#E85E26]" /> Bedrijven vergelijken</h2>
-              <button onClick={() => setShowCompare(false)} className="text-slate-400 hover:text-slate-800"><X className="w-5 h-5"/></button>
+              <button onClick={() => { setShowCompare(false); clearSelection(); }} className="text-slate-400 hover:text-slate-800"><X className="w-5 h-5"/></button>
             </div>
             <div className="overflow-auto flex-grow p-6">
               {(() => {
@@ -4072,7 +4557,7 @@ const App: React.FC = () => {
               })()}
             </div>
             <div className="px-6 py-3 border-t border-slate-100 flex-shrink-0 flex justify-end">
-              <button onClick={() => setShowCompare(false)} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold uppercase tracking-wider rounded-sm">Sluiten</button>
+              <button onClick={() => { setShowCompare(false); clearSelection(); }} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold uppercase tracking-wider rounded-sm">Sluiten</button>
             </div>
           </div>
         </div>
@@ -4333,6 +4818,51 @@ const App: React.FC = () => {
                   );
                 })() : (
                   <>
+                {/* CRM: bezoekstatus + notitie */}
+                {(() => {
+                  const key = crmKey(b);
+                  const entry = crmData[key] || {};
+                  return (
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Status & notitie</p>
+                      <div className="bg-white border border-slate-200 p-4 rounded-sm space-y-3">
+                        <div className="flex flex-wrap gap-1.5">
+                          {(Object.keys(CRM_LABELS) as CrmStatus[]).map(s => {
+                            const isSelected = (entry.statuses || []).includes(s);
+                            return (
+                              <button
+                                key={s}
+                                onClick={() => {
+                                  const next = isSelected
+                                    ? (entry.statuses || []).filter(st => st !== s)
+                                    : [...(entry.statuses || []), s];
+                                  updateCrm(b, { statuses: next.length > 0 ? next : undefined });
+                                }}
+                                className={`px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-sm border transition-all flex items-center gap-1 ${isSelected ? CRM_COLORS[s] : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => {}}
+                                  className="w-3 h-3 accent-current cursor-pointer"
+                                />
+                                {CRM_LABELS[s]}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <textarea
+                          defaultValue={entry.note || ''}
+                          onBlur={e => updateCrm(b, { note: e.target.value })}
+                          placeholder="Notitie toevoegen..."
+                          rows={3}
+                          className="w-full border border-slate-200 rounded-sm px-2.5 py-2 text-sm text-slate-800 focus:outline-none focus:border-[#009FE3] resize-none"
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Adres */}
                 {hasAddress && (
                   <div>
@@ -4346,9 +4876,9 @@ const App: React.FC = () => {
                       {(b.stad) && (
                         <button
                           onClick={() => {
-                            setSelectedCompany(b);
+                            setMapFocusTarget({ naam: b.naam || '', straat: b.straat || '', stad: b.stad || '', provincie: b.provincie || '' });
                             setViewMode('map');
-                            setShowDetailsModal(false);
+                            setSelectedCompany(null);
                           }}
                           className="w-full mt-4 pt-4 border-t border-slate-100 text-center hover:bg-[#009FE3]/5 transition-colors rounded-sm py-2 cursor-pointer"
                         >
@@ -4461,6 +4991,7 @@ const App: React.FC = () => {
                 <div className="flex flex-wrap gap-2 pt-2">
                   {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-700 rounded-sm transition-all bg-white"><Globe className="w-3.5 h-3.5"/>Website</a>}
                   {hasAddress && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26] text-slate-700 rounded-sm transition-all bg-white"><MapPin className="w-3.5 h-3.5"/>Route</a>}
+                  {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2] text-slate-700 rounded-sm transition-all bg-white"><Linkedin className="w-3.5 h-3.5"/>LinkedIn</a>}
                   {b.url && (visibleSources(b).length > 1
                     ? visibleSources(b).map((s: string, si: number) => (
                         <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${srcColor(s).btn} ${srcColor(s).btnHover}`}><ArrowRight className="w-3.5 h-3.5"/>{s}</a>
@@ -4485,6 +5016,15 @@ const App: React.FC = () => {
             setSelectedRaws(prev => { const n = new Map(prev); n.delete(naam); return n; });
           }}
           onClear={clearSelection}
+          lists={lists}
+          onAddToList={(listId) => {
+            const companies: DiscoveredCompany[] = (Array.from(selectedRaws.values()) as any[]).map(b => ({ id: `${b.naam}|${b.stad}`, name: b.naam, city: b.stad || '', discoveredAt: new Date().toISOString() }));
+            addSelectionToList(listId, companies);
+          }}
+          onCreateAndAddToList={(name) => {
+            const companies: DiscoveredCompany[] = (Array.from(selectedRaws.values()) as any[]).map(b => ({ id: `${b.naam}|${b.stad}`, name: b.naam, city: b.stad || '', discoveredAt: new Date().toISOString() }));
+            createListAndAddSelection(name, companies);
+          }}
         />
       )}
 
@@ -4572,78 +5112,51 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* AI Route Helper - Wizard Mode */}
-      {showAIHelper && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-md rounded-sm shadow-2xl border border-slate-200">
-            {/* Header */}
-            <div className="p-4 bg-gradient-to-r from-[#009FE3] to-[#0088c8] flex items-center justify-between rounded-t-sm">
-              <div className="flex items-center gap-2">
-                <Bot className="w-5 h-5 text-white" />
-                <h2 className="text-lg font-bold text-white">AI Route Maker</h2>
-              </div>
-              <button onClick={() => { setShowAIHelper(false); setAiStep('type'); setAiSelected({ type: '', city: '', count: 0 }); }} className="text-white/70 hover:text-white"><X className="w-5 h-5" /></button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              {/* Step 1: Type */}
-              {aiStep === 'type' && (
-                <div>
-                  <p className="text-sm font-bold text-slate-900 mb-3">Welk type bedrijf zoek je?</p>
-                  <div className="space-y-2">
-                    {['architecten', 'bouwbedrijven', 'aannemers', 'materialen'].map(t => (
-                      <button key={t} onClick={() => { setAiSelected({...aiSelected, type: t}); setAiStep('city'); }} className={`w-full px-4 py-2 rounded-sm font-medium text-sm transition-colors ${aiSelected.type === t ? 'bg-[#009FE3] text-white' : 'bg-slate-100 text-slate-800 hover:bg-slate-200'}`}>
-                        {t.charAt(0).toUpperCase() + t.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Step 2: City */}
-              {aiStep === 'city' && (
-                <div>
-                  <p className="text-sm font-bold text-slate-900 mb-3">In welke stad?</p>
-                  <input type="text" placeholder="Amsterdam, Rotterdam..." value={aiSelected.city} onChange={(e) => setAiSelected({...aiSelected, city: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-sm text-sm focus:outline-none focus:border-[#009FE3]" />
-                  <button onClick={() => { if (aiSelected.city?.trim()) setAiStep('count'); }} disabled={!aiSelected.city?.trim()} className="w-full mt-3 px-4 py-2 bg-[#009FE3] disabled:bg-slate-300 text-white disabled:text-slate-500 rounded-sm hover:bg-[#0088c8] disabled:hover:bg-slate-300 font-medium text-sm transition-colors">
-                    Volgende
-                  </button>
-                </div>
-              )}
-
-              {/* Step 3: Count */}
-              {aiStep === 'count' && (
-                <div>
-                  <p className="text-sm font-bold text-slate-900 mb-3">Hoeveel bedrijven? (1-20)</p>
-                  <input type="number" min="1" max="20" value={aiSelected.count || ''} onChange={(e) => setAiSelected({...aiSelected, count: parseInt(e.target.value) || 0})} className="w-full px-3 py-2 border border-slate-300 rounded-sm text-sm focus:outline-none focus:border-[#009FE3]" />
-                  <button onClick={() => { if (aiSelected.count > 0) executeAIRoute(); }} disabled={aiSelected.count <= 0} className="w-full mt-3 px-4 py-2 bg-[#E85E26] disabled:bg-slate-300 text-white disabled:text-slate-500 rounded-sm hover:bg-[#d94d15] disabled:hover:bg-slate-300 font-bold text-sm transition-colors">
-                    Route maken
-                  </button>
-                </div>
-              )}
-
-              {/* Step 4: Results */}
-              {aiStep === 'results' && (
-                <div className="text-center">
-                  <Bot className="w-12 h-12 text-[#009FE3] mx-auto mb-2" />
-                  <p className="font-bold text-slate-900 mb-1">Route gemaakt!</p>
-                  <p className="text-sm text-slate-600 mb-4">{aiSelected.count} {aiSelected.type} in {aiSelected.city}</p>
-                  <button onClick={() => { setShowAIHelper(false); setAiStep('type'); setAiSelected({ type: '', city: '', count: 0 }); }} className="w-full px-4 py-2 bg-slate-200 text-slate-800 rounded-sm hover:bg-slate-300 font-medium text-sm">
-                    Sluiten
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <AIAgentPanel
+        activeData={activeData}
+        onOpenInDatabase={(naam) => { setDbSearch(naam); setDbPage(1); setViewMode('database'); }}
+        onShowOnMap={(b) => { setMapFocusTarget({ naam: b.naam || '', straat: b.straat || '', stad: b.stad || '', provincie: b.provincie || '' }); setViewMode('map'); }}
+        onSetStatus={(naam, status) => { const b = activeData.find((x: any) => (x.naam || '').toLowerCase() === naam.toLowerCase()); if (b) updateCrm(b, { status: status as any }); }}
+        onAddNote={(naam, notitie) => { const b = activeData.find((x: any) => (x.naam || '').toLowerCase() === naam.toLowerCase()); if (b) updateCrm(b, { note: notitie }); }}
+        onCreateRoute={(bedrijven) => {
+          const matched = bedrijven
+            .map((b: any) => activeData.find((x: any) => (x.naam || '').toLowerCase() === (b.naam || '').toLowerCase()))
+            .filter(Boolean) as any[];
+          if (matched.length === 0) return;
+          setSelectedRaws(new Map(matched.map((r: any) => [r.naam, r])));
+          setAutoOptimizeRoute(true);
+          setShowRouteMap(true);
+          setViewMode('search');
+          clearSelection(); // Route gemaakt — selectie clearen
+        }}
+        openRequest={agentPromptRequest}
+        onOpenRequestHandled={() => setAgentPromptRequest(null)}
+      />
     </div>
   );
 };
 
 // Persistent bar met alle geselecteerde bedrijven (over pagina's/tabs heen), met per-item deselecteren
-const SelectionBar: React.FC<{ selected: any[]; onRemove: (naam: string) => void; onClear: () => void }> = ({ selected, onRemove, onClear }) => {
+const SelectionBar: React.FC<{
+  selected: any[];
+  onRemove: (naam: string) => void;
+  onClear: () => void;
+  lists: CompanyList[];
+  onAddToList: (listId: string) => void;
+  onCreateAndAddToList: (name: string) => void;
+}> = ({ selected, onRemove, onClear, lists, onAddToList, onCreateAndAddToList }) => {
   const [open, setOpen] = useState(false);
+  const [showListPicker, setShowListPicker] = useState(false);
+  const [newName, setNewName] = useState('');
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showListPicker) return;
+    const handler = (e: MouseEvent) => { if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) setShowListPicker(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showListPicker]);
+
   return (
     <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] max-w-md">
       {open && (
@@ -4665,15 +5178,56 @@ const SelectionBar: React.FC<{ selected: any[]; onRemove: (naam: string) => void
           </div>
         </div>
       )}
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between gap-3 px-4 py-3 bg-[#E85E26] hover:bg-[#d14d1b] text-white rounded-sm shadow-2xl transition-colors"
-      >
-        <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
-          <Check className="w-4 h-4" /> {selected.length} geselecteerd
-        </span>
-        {open ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
-      </button>
+      <div className="flex items-stretch gap-1.5">
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="flex-1 flex items-center justify-between gap-3 px-4 py-3 bg-[#E85E26] hover:bg-[#d14d1b] text-white rounded-sm shadow-2xl transition-colors"
+        >
+          <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
+            <Check className="w-4 h-4" /> {selected.length} geselecteerd
+          </span>
+          {open ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+        </button>
+        <div ref={pickerRef} className="relative flex-shrink-0">
+          <button
+            onClick={() => setShowListPicker(o => !o)}
+            title="Voeg toe aan lijst"
+            className="h-full flex items-center justify-center px-4 bg-white border border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-500 rounded-sm shadow-2xl transition-colors"
+          >
+            <List className="w-4 h-4" />
+          </button>
+          {showListPicker && (
+            <div className="absolute bottom-full right-0 mb-1 w-56 bg-white border border-slate-200 rounded-sm shadow-2xl overflow-hidden">
+              <div className="px-3 py-2 border-b border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400">Voeg {selected.length} toe aan</div>
+              <div className="max-h-40 overflow-y-auto">
+                {lists.length === 0 && <p className="text-xs text-slate-400 px-3 py-3 text-center">Nog geen lijsten</p>}
+                {lists.map(l => (
+                  <button key={l.id} onClick={() => { onAddToList(l.id); setShowListPicker(false); }} className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-slate-50">
+                    <List className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                    <span className="truncate flex-1 font-semibold text-slate-700">{l.name}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="border-t border-slate-100 p-2 flex gap-1">
+                <input
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) { onCreateAndAddToList(newName.trim()); setNewName(''); setShowListPicker(false); } }}
+                  placeholder="Nieuwe lijst..."
+                  className="flex-1 min-w-0 px-2 py-1.5 border border-slate-200 rounded-sm text-xs focus:outline-none focus:border-[#009FE3]"
+                />
+                <button
+                  disabled={!newName.trim()}
+                  onClick={() => { onCreateAndAddToList(newName.trim()); setNewName(''); setShowListPicker(false); }}
+                  className="px-2 py-1.5 bg-[#009FE3] text-white rounded-sm disabled:opacity-40"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
@@ -4694,7 +5248,77 @@ const FavButton: React.FC<{ company: any; favorites: any[]; onToggle: (c: any) =
   );
 };
 
-const ProvinceFilter: React.FC<{ selectedRegions: string[]; onToggle: (item: string) => void; dataset: any[] }> = ({ selectedRegions, onToggle, dataset }) => {
+const AddToListButton: React.FC<{
+  company: any;
+  lists: CompanyList[];
+  onToggle: (listId: string, company: DiscoveredCompany) => void;
+  onCreateAndAdd: (name: string, company: DiscoveredCompany) => void;
+}> = ({ company, lists, onToggle, onCreateAndAdd }) => {
+  const [open, setOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+  const b = company._raw || company;
+  const compData: DiscoveredCompany = {
+    id: `${b.naam || company.name}|${b.stad || company.city}`,
+    name: b.naam || company.name,
+    city: b.stad || company.city,
+    discoveredAt: new Date().toISOString(),
+  };
+  const inList = (l: CompanyList) => l.companies.some(c => c.name === compData.name && c.city === compData.city);
+  const anyIn = lists.some(inList);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative flex-shrink-0" onClick={e => e.stopPropagation()}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="Toevoegen aan lijst"
+        className={`flex items-center justify-center w-9 h-[34px] border rounded-sm transition-all ${anyIn ? 'bg-[#009FE3]/10 border-[#009FE3] text-[#009FE3]' : 'bg-white border-slate-200 text-slate-300 hover:border-[#009FE3] hover:text-[#009FE3]'}`}
+      >
+        <List className="w-4 h-4" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-20 w-56 bg-white border border-slate-200 rounded-sm shadow-xl overflow-hidden">
+          <div className="max-h-48 overflow-y-auto">
+            {lists.length === 0 && <p className="text-xs text-slate-400 px-3 py-3 text-center">Nog geen lijsten</p>}
+            {lists.map(l => (
+              <button key={l.id} onClick={() => onToggle(l.id, compData)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-slate-50">
+                <div className={`w-4 h-4 border-2 rounded-sm flex items-center justify-center flex-shrink-0 ${inList(l) ? 'bg-[#009FE3] border-[#009FE3]' : 'border-slate-300'}`}>
+                  {inList(l) && <Check className="w-2.5 h-2.5 text-white" />}
+                </div>
+                <span className="truncate flex-1 font-semibold text-slate-700">{l.name}</span>
+              </button>
+            ))}
+          </div>
+          <div className="border-t border-slate-100 p-2 flex gap-1">
+            <input
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) { onCreateAndAdd(newName.trim(), compData); setNewName(''); } }}
+              placeholder="Nieuwe lijst..."
+              className="flex-1 min-w-0 px-2 py-1.5 border border-slate-200 rounded-sm text-xs focus:outline-none focus:border-[#009FE3]"
+            />
+            <button
+              disabled={!newName.trim()}
+              onClick={() => { onCreateAndAdd(newName.trim(), compData); setNewName(''); }}
+              className="px-2 py-1.5 bg-[#009FE3] text-white rounded-sm disabled:opacity-40"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ProvinceFilter: React.FC<{ selectedRegions: string[]; onToggle: (item: string) => void; dataset: any[]; onGoToMap: (stad: string, provincie: string) => void; onGoToDatabase: (item: string) => void }> = ({ selectedRegions, onToggle, dataset, onGoToMap, onGoToDatabase }) => {
   const [openProvs, setOpenProvs] = React.useState<Set<string>>(new Set());
   const [citySearch, setCitySearch] = React.useState('');
   const [isOpen, setIsOpen] = React.useState(true);
@@ -4752,27 +5376,46 @@ const ProvinceFilter: React.FC<{ selectedRegions: string[]; onToggle: (item: str
                       {provSelected && <Check className="w-3 h-3 text-white" />}
                     </div>
                     <button onClick={() => toggleProv(provincie)}
-                      className="flex-1 flex items-center justify-between py-1.5 px-1 text-left hover:bg-[#009FE3]/5 rounded-sm">
+                      className="flex-1 py-1.5 px-1 text-left hover:bg-[#009FE3]/5 rounded-sm">
                       <span className={`text-xs font-bold uppercase tracking-wide ${provSelected ? 'text-[#009FE3]' : 'text-slate-700'}`}>{provincie}</span>
-                      <span className="flex items-center gap-1 text-[10px] text-slate-400">
-                        <span className="font-medium">{count}</span>
-                        {isPOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                      </span>
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); onGoToDatabase(provincie); }}
+                      title={`Bekijk alle ${count} in de database`}
+                      className="text-[10px] text-slate-400 hover:text-[#009FE3] hover:underline font-medium px-1">
+                      {count}
+                    </button>
+                    <button onClick={() => toggleProv(provincie)} className="p-0.5 text-slate-400 hover:text-[#009FE3]">
+                      {isPOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                     </button>
                   </div>
 
                   {/* Steden */}
                   {isPOpen && (
                     <div className="ml-5 mb-1 space-y-0.5">
-                      {filteredSteden.map(({ naam, count: c }) => (
-                        <label key={naam} onClick={() => onToggle(naam)} className="flex items-center gap-2 cursor-pointer py-0.5 px-1 hover:bg-[#009FE3]/5 rounded-sm">
-                          <div className={`w-3.5 h-3.5 border flex items-center justify-center rounded-sm flex-shrink-0 ${selectedRegions.includes(naam) ? 'bg-[#E85E26] border-[#E85E26]' : 'bg-white border-slate-200'}`}>
-                            {selectedRegions.includes(naam) && <Check className="w-2.5 h-2.5 text-white" />}
+                      {filteredSteden.map(({ naam, count: c }) => {
+                        const citySelected = selectedRegions.includes(naam);
+                        return (
+                          <div key={naam} className="flex items-center gap-2 py-0.5 px-1 hover:bg-[#009FE3]/5 rounded-sm">
+                            <label
+                              onClick={() => { const wasSelected = citySelected; onToggle(naam); if (!wasSelected) onGoToMap(naam, provincie); }}
+                              title="Selecteren toont deze plaats op de kaart"
+                              className="flex items-center gap-2 cursor-pointer flex-1 min-w-0"
+                            >
+                              <div className={`w-3.5 h-3.5 border flex items-center justify-center rounded-sm flex-shrink-0 ${citySelected ? 'bg-[#E85E26] border-[#E85E26]' : 'bg-white border-slate-200'}`}>
+                                {citySelected && <Check className="w-2.5 h-2.5 text-white" />}
+                              </div>
+                              <span className={`text-xs flex-1 truncate ${citySelected ? 'font-bold text-slate-900' : 'text-slate-600'}`}>{naam}</span>
+                            </label>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onGoToDatabase(naam); }}
+                              title={`Bekijk alle ${c} in de database`}
+                              className="text-[10px] text-slate-300 hover:text-[#009FE3] hover:underline font-medium flex-shrink-0"
+                            >
+                              {c}
+                            </button>
                           </div>
-                          <span className={`text-xs flex-1 ${selectedRegions.includes(naam) ? 'font-bold text-slate-900' : 'text-slate-600'}`}>{naam}</span>
-                          <span className="text-[10px] text-slate-300 font-medium">{c}</span>
-                        </label>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
