@@ -21,6 +21,12 @@ import { getDrivingDistancesKm } from './services/routingService';
 // halen; niets bij deze vlag verwijderen.
 const AI_FEATURES_ENABLED = false;
 
+// TIJDELIJK voor een demo aan collega's: laat het inlogscherm nog wel even zien, maar log na
+// 3 seconden automatisch in als de standaard demo-gebruiker, zodat niemand live hoeft in te
+// typen. Op false zetten (of weer verwijderen) zodra de demo voorbij is — dan is inloggen
+// weer verplicht zoals normaal.
+const DEMO_AUTO_LOGIN = true;
+
 // ── Plaatsnaam-normalisatie ──────────────────────────────────────────────────
 // Sommige bronnen leveren dezelfde plaats onder net iets andere spelling aan
 // (bv. "AMSTERDAM (NL)", "'s-Hertogenbosch" vs "Den Bosch", "ROTTERDAM" vs
@@ -1530,9 +1536,39 @@ const App: React.FC = () => {
     if (v.trim()) geocodeAddress(v.trim());
   };
 
-  // Eerste keer laden zonder gecachete coördinaten (bv. na een update van de app): geocode
-  // het (eventueel standaard) adres één keer automatisch.
+  // Live GPS-positie: op ÉLKE page load (dus ook bij een refresh) opnieuw ophalen op de
+  // achtergrond, zodat "waar ben ik nu" nooit blijft hangen op waar je was toen je voor het
+  // laatst instellingen bewerkte. Rij je 10 minuten verder en refresh je de pagina, dan wordt
+  // dit gewoon opnieuw opgevraagd. De browser regelt zelf de toestemmingsvraag (native prompt,
+  // eenmalig per site) — daar hoeft de app niets extra's voor te bouwen; bij weigering/geen
+  // support valt alles terug op prefAddressCoords/hqCoords, zoals al het geval was.
+  // searchOriginCoords is dezelfde state die ook tijdens een zoekopdracht als live-locatie
+  // wordt gebruikt (zie executeSearch) — hier alvast vullen zodat de eerste weergave, nog vóór
+  // er is gezocht, ook al met de actuele locatie rekent.
   useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setSearchOriginCoords(coords);
+        const nearest = findNearestCity(coords.lat, coords.lng);
+        setActiveSearchOriginLabel(nearest ? toDisplayCityName(nearest.name) : 'mijn locatie');
+      },
+      () => { /* geweigerd/timeout: blijft op prefAddressCoords/hqCoords hangen, zoals altijd */ },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 } // maximumAge 0: altijd een verse fix, geen browsercache van een oudere positie
+    );
+  }, []);
+
+  // Eerste keer laden zonder gecachete coördinaten (bv. na een update van de app): geocode
+  // het (eventueel standaard) adres één keer automatisch. Overgeslagen als de effect hieronder
+  // toch al bezig is een fris-toestel-detectie te doen — anders kunnen beide tegelijk lopen en
+  // elkaars foutstatus overschrijven (was de kern van de "stad i.p.v. exacte locatie"-bug:
+  // deze geocode faalde voor het STANDAARD Hengelo-adres, en zette een foutstatus die bleef
+  // hangen nadat de fris-toestel-detectie hieronder allang een eigen, andere plaats had
+  // gevonden).
+  const freshDeviceRef = useRef(!localStorage.getItem('inncempro_pref_address') || !localStorage.getItem('inncempro_pref_address_coords'));
+  useEffect(() => {
+    if (freshDeviceRef.current) return;
     if (!prefAddressCoords && prefAddress.trim()) geocodeAddress(prefAddress.trim());
   }, []);
 
@@ -1540,15 +1576,12 @@ const App: React.FC = () => {
   // stilzwijgend het gedeelde Hengelo-kantooradres laten gebruiken voor afstanden/relevantie
   // klopt dan niet. Heeft dít specifieke apparaat/deze browser nog nooit zelf een adres
   // ingesteld (fris toestel, geen 'inncempro_pref_address' in localStorage), vraag dan
-  // automatisch de locatie van het toestel op en gebruik die voortaan als uitgangspunt.
-  // Wie zelf al bewust iets instelde, wordt met rust gelaten — draait dus maar één keer
-  // per apparaat/browser, niet bij elke page load.
+  // automatisch de locatie van het toestel op en gebruik die voortaan als uitgangspunt voor
+  // Instellingen > Mijn adres. Wie zelf al bewust iets instelde, wordt met rust gelaten —
+  // draait dus maar één keer per apparaat/browser, niet bij elke page load (in tegenstelling
+  // tot de live-GPS-effect hierboven, die WEL bij elke load ververst).
   useEffect(() => {
-    const hasUserPreference = localStorage.getItem('inncempro_pref_address');
-    const hasCoords = localStorage.getItem('inncempro_pref_address_coords');
-
-    // Alleen als gebruiker ECHT niets ingesteld heeft, probeer geolocation
-    if (hasUserPreference && hasCoords) return;
+    if (!freshDeviceRef.current) return;
     if (!navigator.geolocation) return;
 
     navigator.geolocation.getCurrentPosition(
@@ -1563,15 +1596,23 @@ const App: React.FC = () => {
         const displayName = reverse?.address
           || (findNearestCity(coords.lat, coords.lng) ? toDisplayCityName(findNearestCity(coords.lat, coords.lng)!.name) : 'Mijn locatie');
 
-        // Sla BEIDE op: het (liefst exacte) adres PLUS de exacte GPS-coördinaten
+        // Sla BEIDE op: het (liefst exacte) adres PLUS de exacte GPS-coördinaten. De coördinaten
+        // komen sowieso rechtstreeks van de GPS (dus altijd precies), ongeacht of de reverse-
+        // geocode voor de LEESBARE tekst lukte — dus GEEN foutstatus tonen als alleen de
+        // human-readable naam terugvalt op de plaatsnaam; de afstandsberekening zelf klopt.
         setPrefAddressState(displayName);
         localStorage.setItem('inncempro_pref_address', displayName);
         setPrefAddressCoords(coords);
+        setPrefAddressCoordsFor(displayName);
+        setPrefAddressGeocodeError(false);
         localStorage.setItem('inncempro_pref_address_coords', JSON.stringify(coords));
       },
       (error) => {
-        // Geweigerd, timeout, of niet beschikbaar
-        // Fallback: gebruik standaard adres (Hengelo) — coordinates worden via geocoding gezet
+        // Geweigerd, timeout, of niet beschikbaar op dit toestel: val terug op het (eventueel
+        // standaard) adres via Nominatim, zodat er ALSNOG een poging tot precieze coördinaten
+        // gedaan wordt — zonder deze fallback bleef prefAddressCoords hier anders leeg, puur
+        // omdat het toestel geen GPS-toestemming gaf (los van "fris toestel" of niet).
+        if (prefAddress.trim()) geocodeAddress(prefAddress.trim());
       },
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 } // cache 5 min
     );
@@ -2068,8 +2109,7 @@ const App: React.FC = () => {
 
   // INITIAL LOAD
   useEffect(() => {
-      const user = authService.getCurrentUser();
-      if (user) {
+      const applyUser = (user: User) => {
           setCurrentUser(user);
           setFavorites(authService.getFavorites(user.id));
           setLists(authService.getLists(user.id));
@@ -2078,6 +2118,18 @@ const App: React.FC = () => {
           setEditName(user.username);
           setEditEmail(user.email);
           setEditAvatar(user.avatarUrl || '');
+      };
+      const user = authService.getCurrentUser();
+      if (user) { applyUser(user); return; }
+      // TIJDELIJK voor demo aan collega's: het inlogscherm blijft zichtbaar (ziet er nog
+      // normaal uit), maar logt na 3 seconden automatisch in als de standaard demo-gebruiker
+      // — zodat er niemand live hoeft in te typen. Verwijder deze auto-login-timer weer zodra
+      // de demo voorbij is (DEMO_AUTO_LOGIN op false zetten, of dit blok weghalen).
+      if (DEMO_AUTO_LOGIN) {
+          const timer = setTimeout(() => {
+              try { applyUser(authService.login('Inncempro', 'inncempro')); } catch { /* negeren */ }
+          }, 3000);
+          return () => clearTimeout(timer);
       }
   }, []);
 
