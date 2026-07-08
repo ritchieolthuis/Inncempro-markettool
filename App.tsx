@@ -1448,9 +1448,12 @@ const App: React.FC = () => {
   };
   const showField = (key: string) => prefCardFields[key] !== undefined ? prefCardFields[key] : cardFieldDefault[key];
 
-  // REAL-TIME SEARCH LOCATION (voor Live Zoeken sortering)
-  // Dit is ANDERS dan prefAddress (instellingen). Dit is WHERE YOU ARE NOW (via GPS/geolocation)
+  // REAL-TIME SEARCH LOCATION (voor Live Zoeken sortering + rijafstand-weergave)
+  // Dit is de daadwerkelijke oorsprong van de LAATSTE zoekopdracht: bij straal-zoeken op een
+  // ingevoerde plaats is dat die plaats (bv. Rotterdam), anders live GPS > ingesteld adres.
+  // ANDERS dan prefAddress (instellingen, altijd je vaste adres) — dit verandert per zoekopdracht.
   const [searchOriginCoords, setSearchOriginCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [activeSearchOriginLabel, setActiveSearchOriginLabel] = useState<string>('');
 
   const savePrefSort = (v: 'relevant' | 'az') => { setPrefSort(v); setSortMode(v); localStorage.setItem('inncempro_pref_sort', v); };
   const savePrefRpp = (v: number) => { setPrefResultsPerPage(v); localStorage.setItem('inncempro_pref_rpp', String(v)); };
@@ -2731,14 +2734,22 @@ const App: React.FC = () => {
         }
       }
 
-      // ÉÉN bron van waarheid voor "waar ben ik": live GPS > ingesteld adres > Hengelo-fallback.
-      // Dit wordt gebruikt voor ZOWEL de sortering ALS de getoonde "X km van ..." labels —
-      // anders klopt de volgorde niet met de getoonde afstand (bug: sorteerde op live locatie,
-      // maar toonde altijd "km van Hengelo").
-      const searchOrigin = liveLocationCoords || prefAddressCoords || hqCoords;
-      const searchOriginLabel = liveLocationCoords
+      // ÉÉN bron van waarheid voor "waar ben ik": als straal-zoeken actief is met een ingevoerde
+      // plaats (bv. "Rotterdam"), is DIE plaats de oorsprong — je zoekt expliciet vanuit daar,
+      // niet vanuit je eigen locatie. Zonder straal: live GPS > ingesteld adres > Hengelo-fallback.
+      // Dit wordt gebruikt voor DE SORTERING, HET GETOONDE LABEL, én de rijafstand-berekening
+      // verderop — anders klopt de volgorde/afstand niet met wat er staat (bug: zocht binnen
+      // 20km van Rotterdam, maar toonde toch "198 km van Hengelo").
+      const searchOrigin = (activeRadiusKm && radiusCenter)
+        ? radiusCenter
+        : (liveLocationCoords || prefAddressCoords || hqCoords);
+      const searchOriginLabel = (activeRadiusKm && radiusCenter)
+        ? ((overrideCity ?? city).trim() || 'gekozen locatie')
+        : liveLocationCoords
         ? (findNearestCity(liveLocationCoords.lat, liveLocationCoords.lng)?.name ? toDisplayCityName(findNearestCity(liveLocationCoords.lat, liveLocationCoords.lng)!.name) : 'mijn locatie')
         : hqShortLabel;
+      setSearchOriginCoords(searchOrigin);
+      setActiveSearchOriginLabel(searchOriginLabel);
 
       const activeSort = overrideSort ?? sortMode;
       if (activeRadiusKm && radiusCenter) {
