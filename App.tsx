@@ -4463,7 +4463,6 @@ const App: React.FC = () => {
                                         {selectedIds.has(b.naam || company.name) && <Check className="w-2.5 h-2.5 text-white" />}
                                       </div>
                                       <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wide leading-tight">{b.naam || company.name}</h3>
-                                      <SourceBadges b={b} />
                                       {crmData[crmKey(b)]?.status && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm border flex-shrink-0 ${CRM_COLORS[crmData[crmKey(b)]!.status!]}`}>{CRM_LABELS[crmData[crmKey(b)]!.status!]}</span>}
                                       {isNew(b) && <span className="text-[9px] bg-green-500 text-white px-1.5 py-0.5 font-bold rounded-sm flex-shrink-0">Nieuw</span>}
                                       {distKm !== undefined && showField('afstand') && <span title={distIsDriving ? 'Rijafstand over de weg' : 'Hemelsbrede schatting — rijafstand wordt geladen...'} className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`} van {(company as any)._hqLabel || hqShortLabel}{!distIsDriving && ' *'}</span>}
