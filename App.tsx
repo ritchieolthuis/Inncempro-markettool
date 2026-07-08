@@ -16,6 +16,11 @@ import { scoreInsertionCandidates } from './utils/dagbezoek';
 import { mergeEntries, isNederlandBedrijf } from './utils/mergeBedrijven';
 import { getDrivingDistancesKm } from './services/routingService';
 
+// Tijdelijk alle AI-agent-functionaliteit (floating chat-orb, chatpaneel, suggestieknoppen)
+// uit de site gehaald zonder de code te verwijderen — op false zetten om alles terug te
+// halen; niets bij deze vlag verwijderen.
+const AI_FEATURES_ENABLED = false;
+
 // ── Plaatsnaam-normalisatie ──────────────────────────────────────────────────
 // Sommige bronnen leveren dezelfde plaats onder net iets andere spelling aan
 // (bv. "AMSTERDAM (NL)", "'s-Hertogenbosch" vs "Den Bosch", "ROTTERDAM" vs
@@ -3909,6 +3914,7 @@ const App: React.FC = () => {
                 const recentPage = Math.min(recentViewedPage, totalRecentPages);
                 return (
                 <div className="py-16 max-w-4xl mx-auto px-4">
+                    {AI_FEATURES_ENABLED ? (
                     <div className="mb-12 text-center">
                       <div className="mx-auto mb-4 relative" style={{ width: 64, height: 64 }}>
                         <span className="absolute inset-0 rounded-full animate-orb-glow blur-lg opacity-50" style={{ background: 'linear-gradient(135deg, #009FE3, #16a34a, #E85E26)' }} />
@@ -3929,6 +3935,15 @@ const App: React.FC = () => {
                         ))}
                       </div>
                     </div>
+                    ) : (
+                    <div className="mb-12 text-center">
+                      <div className="mx-auto mb-4 w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center">
+                        <Search className="w-7 h-7 text-slate-400" />
+                      </div>
+                      <h3 className="text-lg font-bold text-slate-900">Begin met zoeken</h3>
+                      <p className="text-sm text-slate-400 mt-1 max-w-md mx-auto">Zoek op bedrijfsnaam, stad, straat of postcode.</p>
+                    </div>
+                    )}
 
                     {(recentViewed.length > 0 || savedFilters.length > 0) && (
                       <div className="mb-12">
@@ -5253,6 +5268,7 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {AI_FEATURES_ENABLED && (
       <AIAgentPanel
         activeData={activeData}
         onOpenInDatabase={(naam) => { setDbSearch(naam); setDbPage(1); setViewMode('database'); }}
@@ -5273,6 +5289,7 @@ const App: React.FC = () => {
         openRequest={agentPromptRequest}
         onOpenRequestHandled={() => setAgentPromptRequest(null)}
       />
+      )}
     </div>
   );
 };
