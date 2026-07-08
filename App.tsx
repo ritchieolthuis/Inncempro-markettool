@@ -2704,9 +2704,7 @@ const App: React.FC = () => {
         results.sort((a: any, b2: any) => (a.naam || '').localeCompare(b2.naam || '', 'nl', { sensitivity: 'base' }));
       } else {
         // 'Relevant': naam-match/bekendheid domineert, maar bij gelijke score sorteren we op AFSTAND
-        // VAN JE HUIDIGE LOCATIE (niet je ingestelde adres!)
-        // Dus: zoek je "Wijnen" vanuit Wierden, dan komtDeventer eerder dan Arnhem
-        // (zelfs als ze beide dezelfde naam-match score hebben)
+        // Gebruiken ALTIJD real-time geolocation als beschikbaar, anders fallback naar ingesteld adres
         const searchOrigin = liveLocationCoords || prefAddressCoords || hqCoords;
         // Priority: 1) live GPS location 2) geocoded settings address 3) fallback Hengelo
 
@@ -2725,7 +2723,7 @@ const App: React.FC = () => {
           if (scoreA !== scoreB) return scoreB - scoreA; // Naam-match/bekendheid eerst
           const distA = distTo(a);
           const distB = distTo(b2);
-          if (distA !== distB) return distA - distB; // Dan DICHTSTBIJ VAN JE LOCATIE (tiebreaker)
+          if (distA !== distB) return distA - distB; // Dan dichtstbij (minst naar meer km)
           return (a.naam || '').localeCompare(b2.naam || '', 'nl', { sensitivity: 'base' }); // Alfabetisch als laatste
         });
       }
