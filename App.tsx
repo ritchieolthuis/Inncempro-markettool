@@ -2389,12 +2389,21 @@ const App: React.FC = () => {
   };
 
   // Type detectie: architect / bouwbedrijf / aannemer op basis van source + specs
+  // Bekende bouwbedrijf-ketens (meerdere vestigingen onder één merk, bron = merknaam zelf).
+  // Deze MOETEN op source geclassificeerd worden, vóór de naam-substring-checks hieronder:
+  // anders krijgt bv. "Van Wijnen Bouw Dalfsen" (bevat "bouw" in de naam) het label
+  // 'bouwbedrijf', terwijl "Van Wijnen Deventer" (zelfde merk, andere vestiging, geen "bouw"
+  // in de naam) als 'overig' wegvalt — met een kunstmatig typePrio-verschil van 60 punten
+  // tot gevolg dat de afstand-sortering compleet overstemt, terwijl het gewoon hetzelfde
+  // bedrijf is en elke vestiging identiek geclassificeerd moet worden.
+  const BOUWBEDRIJF_SOURCES = new Set(['van wijnen', 'bouwpartner', 'plegt-vos', 'ter steege groep', 'volkerwessels']);
   const detectType = (b: any): 'architect' | 'bouwbedrijf' | 'aannemer' | 'materialen' | 'overig' => {
       const src = (b.source || '').toLowerCase();
       const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase();
       const naam = (b.naam || '').toLowerCase();
       if (src === 'architectenweb' || specs.includes('architect') || naam.includes('architect')) return 'architect';
       if (specs.includes('houthandel') || specs.includes('bouwmaterial') || src === 'stiho' || src === 'jongeneel') return 'materialen';
+      if (BOUWBEDRIJF_SOURCES.has(src)) return 'bouwbedrijf';
       if (specs.includes('bouwbedrijf') || naam.includes('bouwbedrijf') || naam.includes(' bouw ') || naam.endsWith(' bouw')) return 'bouwbedrijf';
       if (specs.includes('aannemer') || naam.includes('aannemer') || src === 'bouwgarant') return 'aannemer';
       return 'overig';
@@ -2751,6 +2760,28 @@ const App: React.FC = () => {
       setSearchOriginCoords(searchOrigin);
       setActiveSearchOriginLabel(searchOriginLabel);
 
+      // Precieze (rij-)afstand vooraf ophalen voor het HELE resultaat, zodat sortering en
+      // getoonde km altijd exact overeenkomen. Hemelsbrede afstand alleen sorteren op geeft
+      // soms een andere volgorde dan de getoonde rijafstand (rivieren/omwegen — bv. Dalfsen
+      // ligt over de IJssel), wat oogt als "verkeerd gesorteerd" terwijl het technisch nog
+      // klopte op basis van de rechte lijn. Bij een klein resultaat (merk-/naamzoekopdracht,
+      // meestal < 150 treffers) is dit prima te doen zonder de gratis OSRM-server te
+      // overbelasten; bij grote/brede zoekopdrachten (duizenden treffers) blijft hemelsbreed
+      // de sorteermaatstaf, zoals al het geval was.
+      const preciseDistanceMap = new Map<any, number>();
+      if (!(activeRadiusKm && radiusCenter) && results.length > 0 && results.length <= 150) {
+        const withCoords = results
+          .map(b => ({ b, coords: getBedrijfCoords(b) }))
+          .filter((x): x is { b: any; coords: { lat: number; lng: number } } => !!x.coords);
+        try {
+          const distances = await getDrivingDistancesKm(searchOrigin, withCoords.map(x => x.coords));
+          withCoords.forEach((x, i) => {
+            const km = distances[i];
+            if (km != null) preciseDistanceMap.set(x.b, km);
+          });
+        } catch { /* routing-server niet bereikbaar — sorteert dan verderop op hemelsbreed */ }
+      }
+
       const activeSort = overrideSort ?? sortMode;
       if (activeRadiusKm && radiusCenter) {
         // Sort by distance when radius is active
@@ -2759,9 +2790,12 @@ const App: React.FC = () => {
         results.sort((a: any, b2: any) => (a.naam || '').localeCompare(b2.naam || '', 'nl', { sensitivity: 'base' }));
       } else {
         // 'Relevant': naam-match/bekendheid domineert, maar bij gelijke score sorteren we op AFSTAND
-        // vanaf searchOrigin (dezelfde bron als het getoonde label hieronder)
+        // vanaf searchOrigin (dezelfde bron als het getoonde label hieronder) — bij voorkeur de
+        // precieze rijafstand (preciseDistanceMap), anders hemelsbreed als fallback.
         const hqDistCache = new Map<any, number>();
         const distTo = (b: any): number => {
+          const precise = preciseDistanceMap.get(b);
+          if (precise !== undefined) return precise;
           const cached = hqDistCache.get(b);
           if (cached !== undefined) return cached;
           const coords = getBedrijfCoords(b);
@@ -2786,6 +2820,10 @@ const App: React.FC = () => {
       const companies = results.map((b: any, i: number) => {
           const cityCoords = getBedrijfCoords(b);
           const hqDist = cityCoords ? haversineKm(searchOrigin.lat, searchOrigin.lng, cityCoords.lat, cityCoords.lng) : undefined;
+          // Toon dezelfde precieze rijafstand die (indien opgehaald) ook voor de sortering is
+          // gebruikt — zo kan de getoonde km nooit een andere volgorde suggereren dan wat er
+          // écht is gesorteerd.
+          const preciseDist = preciseDistanceMap.get(b);
           return {
             // STABIEL op het bedrijf zelf gebaseerd (niet op positie `i`!). Anders erft bedrijf #4
             // in déze zoekopdracht de gecachete rijafstand van wélk bedrijf dan ook dat toevallig
@@ -2796,8 +2834,8 @@ const App: React.FC = () => {
             city: b.stad || '',
             discoveredAt: new Date().toISOString(),
             _raw: b,
-            _distanceKm: distanceMap.has(b) ? distanceMap.get(b) : hqDist,
-            _hqDistanceKm: hqDist,
+            _distanceKm: distanceMap.has(b) ? distanceMap.get(b) : (preciseDist ?? hqDist),
+            _hqDistanceKm: preciseDist ?? hqDist,
             _hqLabel: searchOriginLabel,
           };
       });
