@@ -2595,23 +2595,30 @@ const App: React.FC = () => {
               // Verbeterde matching: elk zoekwoord moet voorkomen in:
               // 1. Exakte hele woord match (incl. genormaliseerd)
               // 2. Begin van woord match (incl. genormaliseerd)
-              // 3. Substring match (voor gedeeltelijke zoeken)
+              // 3. Substring match — ALLEEN bij langere termen (5+ tekens, "gedeeltelijke zoeken"
+              //    zoals "eege" voor Ter Steege). Bij korte termen (1-4 tekens, bv. "o", "om", "oma")
+              //    zou dit vrijwel élk bedrijf laten matchen zodra die letter(s) ook maar ergens
+              //    MIDDEN in een ander woord voorkomen (bv. "Powerhouse" bevat een "o") — dat is
+              //    geen relevante match. Korte termen moeten dus altijd op woord-BEGIN matchen.
               const matchNaam = searchWordList.length > 0 && searchWordList.every(searchTerm => {
                 const termNorm = normalizeText(searchTerm);
+                const allowSubstring = searchTerm.length >= 5;
                 return naam === searchTerm || // exact match (case-insensitive)
                        naamNorm === termNorm || // exact match genormaliseerd
-                       naamNorm.includes(termNorm) || // substring match genormaliseerd
+                       (allowSubstring && naamNorm.includes(termNorm)) || // substring match (alleen lange termen)
                        naamWords.some(w => w === searchTerm || w.startsWith(searchTerm)) || // hele woord/begin
                        naamWordsNorm.some(w => w === termNorm || w.startsWith(termNorm)); // genormaliseerd woord
               });
 
-              // Ook zoeken in stad, postcode, straat
+              // Ook zoeken in stad, postcode, straat — zelfde regel: korte termen alleen op woord-begin,
+              // anders matcht "o" ook nog eens elke stad met een 'o' erin (Rotterdam, Vorden, ...).
               const locationStr = [dbStad, b.straat, b.postcode].filter(Boolean).join(' ').toLowerCase();
               const locationStrNorm = normalizeText(locationStr);
               const locationWords = locationStr.split(/[\s\-\/&,.()+]+/).filter(Boolean);
               const matchLocation = searchWordList.length > 0 && searchWordList.every(searchTerm => {
                 const termNorm = normalizeText(searchTerm);
-                return locationStrNorm.includes(termNorm) ||
+                const allowSubstring = searchTerm.length >= 5;
+                return (allowSubstring && locationStrNorm.includes(termNorm)) ||
                        locationWords.some(w => w === searchTerm || w.startsWith(searchTerm));
               });
 
@@ -2624,6 +2631,18 @@ const App: React.FC = () => {
       });
 
       // Hoe goed matcht de zoekopdracht op de bedrijfsnaam?
+      // Scoort hoe goed de query matcht — hoe hoger, hoe eerder in de resultaten.
+      // BELANGRIJK: dit checkt ALLE condities los (geen else-if!) en houdt de HOOGSTE score aan.
+      // Met een else-if-keten zou een zwakkere match die eerder in de keten staat een sterkere
+      // match verderop blokkeren, ook al scoort die lager — dat gaf precies het bug-gedrag waarbij
+      // "B+O" (los woord "o" ergens in de naam) evenveel of hoger scoorde dan "OMA" (naam BEGINT
+      // met o), puur omdat de conditie voor "los woord" toevallig eerder gecontroleerd werd.
+      //
+      // Prioriteit (hoog naar laag): naam begint met de term > los woord elders is exact de term >
+      // los woord elders begint ermee > vrije substring (alleen voor lange termen, 5+ tekens, voor
+      // gedeeltelijk zoeken zoals "eege" in "Ter Steege"). Zo geeft "o" eerst OMA/OPA/OTO (beginnen
+      // met o), dan pas bedrijven waar "o" een los woord is (bv. "B+O ARCHITECTEN"), en NOOIT
+      // bedrijven waar de letters toevallig midden in een ander woord zitten (bv. "Powerhouse").
       const queryMatchScore = (b: any): number => {
         if (!q) return 0;
         const naam = (b.naam || '').toLowerCase();
@@ -2631,24 +2650,24 @@ const App: React.FC = () => {
         const terms = expandQuery(q);
         const words = naam.split(/[\s\-\/&,.()+]+/).filter(Boolean);
         const wordsNorm = naamNorm.split(/\s+/).filter(Boolean);
+        const firstWord = words[0] || '';
+        const firstWordNorm = wordsNorm[0] || '';
+        const restWords = words.slice(1);
+        const restWordsNorm = wordsNorm.slice(1);
         let best = 0;
         for (const t of terms) {
           const tNorm = normalizeText(t);
-          if (naam === t)                        best = Math.max(best, 2000); // exacte naam match
-          else if (naamNorm === tNorm)           best = Math.max(best, 1950); // exacte match genormaliseerd
-          else if (naam.startsWith(t + ' ') || naam.startsWith(t + '-'))
-                                                 best = Math.max(best, 1800); // naam begint met term
-          else if (naamNorm.startsWith(tNorm + ' '))
-                                                 best = Math.max(best, 1750); // genormaliseerd begin
-          else if (words[0] === t)               best = Math.max(best, 1600); // eerste woord is exact term
-          else if (wordsNorm[0] === tNorm)       best = Math.max(best, 1550); // eerste woord genormaliseerd
-          else if (words.some(w => w === t))     best = Math.max(best, 1200); // heel woord is exact term
-          else if (wordsNorm.some(w => w === tNorm)) best = Math.max(best, 1150); // genormaliseerd woord
-          else if (naamNorm.includes(tNorm))     best = Math.max(best, 800);  // substring match genormaliseerd
-          else if (words[0]?.startsWith(t))      best = Math.max(best, 900);  // eerste woord begint met term
-          else if (wordsNorm[0]?.startsWith(tNorm)) best = Math.max(best, 850); // genormaliseerd eerste woord
-          else if (words.some(w => w.startsWith(t))) best = Math.max(best, 500); // een woord begint met term
-          else if (wordsNorm.some(w => w.startsWith(tNorm))) best = Math.max(best, 450); // genormaliseerd woord begin
+          if (naam === t) best = Math.max(best, 2000); // hele naam exact
+          if (naamNorm === tNorm) best = Math.max(best, 1950); // hele naam exact, genormaliseerd
+          if (firstWord === t) best = Math.max(best, 1800); // naam begint met dit hele woord
+          if (firstWordNorm === tNorm) best = Math.max(best, 1750); // genormaliseerd
+          if (firstWord.startsWith(t)) best = Math.max(best, 1600); // naam BEGINT met deze letters (bv. "o" → OMA, OPA, OTO)
+          if (firstWordNorm.startsWith(tNorm)) best = Math.max(best, 1550); // genormaliseerd
+          if (restWords.some(w => w === t)) best = Math.max(best, 1200); // los woord ELDERS in de naam is exact de term (bv. "B+O")
+          if (restWordsNorm.some(w => w === tNorm)) best = Math.max(best, 1150); // genormaliseerd
+          if (restWords.some(w => w.startsWith(t))) best = Math.max(best, 900); // los woord elders begint ermee
+          if (restWordsNorm.some(w => w.startsWith(tNorm))) best = Math.max(best, 850); // genormaliseerd
+          if (t.length >= 5 && naamNorm.includes(tNorm)) best = Math.max(best, 800); // vrije substring — alleen lange termen
         }
         return best;
       };
