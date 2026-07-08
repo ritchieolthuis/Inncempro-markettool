@@ -1562,6 +1562,12 @@ const App: React.FC = () => {
   // laatste kommadeel en strip een eventuele postcode.
   const hqShortLabel = prefAddress.split(',').pop()?.replace(/\b\d{4}\s?[A-Z]{2}\b/i, '').trim() || prefAddress;
 
+  // Zelfde prioriteit als bij het sorteren in executeSearch: live GPS > ingesteld adres > Hengelo.
+  // Wordt gebruikt voor de rijafstand-berekening zodat die niet stiekem toch Hengelo gebruikt
+  // terwijl de sortering al op je live locatie draait.
+  const distanceOrigin = searchOriginCoords || hqCoords;
+  const distanceOriginKey = `${distanceOrigin.lat.toFixed(3)},${distanceOrigin.lng.toFixed(3)}`;
+
   // APP STATE
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
@@ -2770,7 +2776,11 @@ const App: React.FC = () => {
           const cityCoords = getBedrijfCoords(b);
           const hqDist = cityCoords ? haversineKm(searchOrigin.lat, searchOrigin.lng, cityCoords.lat, cityCoords.lng) : undefined;
           return {
-            id: `local-${i}`,
+            // STABIEL op het bedrijf zelf gebaseerd (niet op positie `i`!). Anders erft bedrijf #4
+            // in déze zoekopdracht de gecachete rijafstand van wélk bedrijf dan ook dat toevallig
+            // in een VORIGE zoekopdracht op positie #4 stond — precies de bug waarbij 4 bedrijven
+            // in dezelfde stad Wierden 4 compleet verschillende ("verzonnen") afstanden toonden.
+            id: `co-${(b.naam || '').toLowerCase().trim()}|${(b.straat || '').toLowerCase().trim()}|${(b.postcode || '').toLowerCase().trim()}`,
             name: b.naam,
             city: b.stad || '',
             discoveredAt: new Date().toISOString(),
@@ -2990,24 +3000,28 @@ const App: React.FC = () => {
   const currentItems = itemsToShow.slice((currentPage - 1) * prefResultsPerPage, currentPage * prefResultsPerPage);
 
   // Zodra een nieuwe pagina met bedrijven zichtbaar wordt: vraag de echte rijafstand op
-  // (t.o.v. het HQ-adres) voor precies díe bedrijven — niet voor de hele dataset, want de
-  // gratis publieke routing-server is niet bedoeld voor duizenden aanvragen tegelijk.
-  const currentItemsKey = currentItems.map((c: any) => c.id).join('|');
+  // (t.o.v. distanceOrigin — live locatie indien beschikbaar, anders ingesteld adres) voor
+  // precies díe bedrijven — niet voor de hele dataset, want de gratis publieke routing-server
+  // is niet bedoeld voor duizenden aanvragen tegelijk.
+  // De cache-key bevat distanceOriginKey: verandert je locatie (Hengelo → Wierden → Amsterdam),
+  // dan zijn dat andere keys, dus er wordt nooit een rijafstand vanaf de VERKEERDE oorsprong
+  // hergebruikt voor een bedrijf.
+  const currentItemsKey = currentItems.map((c: any) => `${distanceOriginKey}::${c.id}`).join('|');
   useEffect(() => {
     const withCoords = currentItems
-      .map((c: any) => ({ id: c.id, coords: getBedrijfCoords(c._raw || c) }))
-      .filter((c: any) => c.coords && !drivingKm.has(c.id));
+      .map((c: any) => ({ cacheId: `${distanceOriginKey}::${c.id}`, coords: getBedrijfCoords(c._raw || c) }))
+      .filter((c: any) => c.coords && !drivingKm.has(c.cacheId));
     if (withCoords.length === 0) return;
 
     let cancelled = false;
     (async () => {
-      const distances = await getDrivingDistancesKm(hqCoords, withCoords.map((c: any) => c.coords));
+      const distances = await getDrivingDistancesKm(distanceOrigin, withCoords.map((c: any) => c.coords));
       if (cancelled) return;
       setDrivingKm(prev => {
         const next = new Map(prev);
         withCoords.forEach((c: any, i: number) => {
           const km = distances[i];
-          if (km != null) next.set(c.id, km);
+          if (km != null) next.set(c.cacheId, km);
         });
         return next;
       });
@@ -3015,7 +3029,7 @@ const App: React.FC = () => {
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentItemsKey, hqCoords.lat, hqCoords.lng]);
+  }, [currentItemsKey, distanceOrigin.lat, distanceOrigin.lng]);
 
   const getPageNumbers = () => {
     const pages = [];
@@ -4318,8 +4332,11 @@ const App: React.FC = () => {
                         {currentItems.map((company: any) => {
                             const b = (company as any)._raw || company;
                             // Echte rijafstand (over de weg) zodra bekend; anders de snelle hemelsbrede schatting.
-                            const distKm: number | undefined = drivingKm.get(company.id) ?? company._hqDistanceKm ?? company._distanceKm;
-                            const distIsDriving = drivingKm.has(company.id);
+                            // Cache-key bevat distanceOriginKey zodat een rijafstand die vanaf een ANDERE
+                            // locatie is opgehaald nooit per ongeluk voor deze (nieuwe) locatie hergebruikt wordt.
+                            const drivingCacheId = `${distanceOriginKey}::${company.id}`;
+                            const distKm: number | undefined = drivingKm.get(drivingCacheId) ?? company._hqDistanceKm ?? company._distanceKm;
+                            const distIsDriving = drivingKm.has(drivingCacheId);
                             const btnBase = "flex items-center justify-center gap-1.5 px-3 py-2 text-[10px] font-bold uppercase tracking-wider border transition-all flex-1 whitespace-nowrap rounded-sm";
                             if (viewMode === 'search' && replacingId === company.id) {
                               const q = replaceQuery.toLowerCase().trim();
