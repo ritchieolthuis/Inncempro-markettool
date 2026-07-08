@@ -1458,7 +1458,13 @@ const App: React.FC = () => {
   // de getoonde afstand niet meer met het ingevulde adres, zonder dat de gebruiker dat kon zien.
   const [prefAddressCoordsFor, setPrefAddressCoordsFor] = useState<string | null>(() =>
     localStorage.getItem('inncempro_pref_address_coords') ? localStorage.getItem('inncempro_pref_address') : null);
+  // ÉCHT niet gevonden (ook de plaatsnaam-fallback faalde) vs. WEL gevonden maar alleen op
+  // plaatsnaam-niveau (bv. je typte simpelweg "Hengelo" of "Rijssen" — dat IS gewoon gevonden,
+  // alleen niet preciezer dan het centrum van die plaats, want een los ingetypte plaatsnaam
+  // heeft geen preciezer punt). Deze twee mogen nooit dezelfde (rode/oranje) styling krijgen —
+  // dat las als "hij faked dit, Hengelo bestaat gewoon" terwijl de plaats gewoon wél klopte.
   const [prefAddressGeocodeError, setPrefAddressGeocodeError] = useState(false);
+  const [prefAddressApproximate, setPrefAddressApproximate] = useState(false);
   const [prefSort, setPrefSort] = useState<'relevant' | 'az'>(() =>
     (localStorage.getItem('inncempro_pref_sort') as 'relevant' | 'az') || 'relevant');
   const [prefResultsPerPage, setPrefResultsPerPage] = useState<number>(() =>
@@ -1492,6 +1498,7 @@ const App: React.FC = () => {
   const geocodeAddress = async (address: string) => {
     setPrefAddressGeocoding(true);
     setPrefAddressGeocodeError(false);
+    setPrefAddressApproximate(false);
     try {
       const res = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address + ', Nederland')}&countrycodes=nl&limit=1`,
@@ -1517,15 +1524,20 @@ const App: React.FC = () => {
       const cityGuess = address.split(',').pop()?.replace(/\b\d{4}\s?[A-Z]{2}\b/i, '').trim() || '';
       const cityCoordsFallback = cityGuess ? getCityCoords(cityGuess) : null;
       if (cityCoordsFallback) {
+        // Plaatsnaam IS gevonden — dit is GEEN foutmelding. Typte je gewoon "Hengelo" of
+        // "Rijssen" in (zonder straat/huisnummer), dan is het centrum van die plaats het
+        // best mogelijke punt; dat als "adres niet gevonden" tonen (rood/oranje) terwijl de
+        // plaats overduidelijk bestaat, oogt alsof de app het antwoord verzint.
         setPrefAddressCoords(cityCoordsFallback);
         setPrefAddressCoordsFor(address);
+        setPrefAddressApproximate(true);
         localStorage.setItem('inncempro_pref_address_coords', JSON.stringify(cityCoordsFallback));
       } else {
         // Ook de plaatsnaam-fallback mislukte: laat de oude coördinaten ONGEMOEID (horen niet
         // bij dit adres) en toon dat expliciet, in plaats van een vals "✓ gevonden".
         setPrefAddressCoordsFor(null);
+        setPrefAddressGeocodeError(true);
       }
-      setPrefAddressGeocodeError(true);
     }
     setPrefAddressGeocoding(false);
   };
@@ -1605,6 +1617,7 @@ const App: React.FC = () => {
         setPrefAddressCoords(coords);
         setPrefAddressCoordsFor(displayName);
         setPrefAddressGeocodeError(false);
+        setPrefAddressApproximate(false);
         localStorage.setItem('inncempro_pref_address_coords', JSON.stringify(coords));
       },
       (error) => {
@@ -3342,7 +3355,9 @@ const App: React.FC = () => {
                                       {prefAddressGeocoding
                                           ? <span className="text-slate-400">Adres opzoeken…</span>
                                           : prefAddressGeocodeError
-                                          ? <span className="text-amber-600">Exact adres niet gevonden — plaatsnaam-schatting wordt gebruikt{!prefAddressCoordsFor ? ' (vorige locatie behouden)' : ''}</span>
+                                          ? <span className="text-amber-600">Adres niet gevonden{!prefAddressCoordsFor ? ' — vorige locatie behouden' : ''}</span>
+                                          : prefAddressCoords && prefAddressCoordsFor === prefAddress && prefAddressApproximate
+                                          ? <span className="text-green-600">✓ Plaats gevonden — vul straat + huisnummer toe voor een preciezere afstand</span>
                                           : prefAddressCoords && prefAddressCoordsFor === prefAddress
                                           ? <span className="text-green-600">✓ Adres gevonden</span>
                                           : <span className="text-amber-600">Adres niet gevonden — standaard Hengelo-locatie wordt gebruikt</span>}
