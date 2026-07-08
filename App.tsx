@@ -1324,6 +1324,11 @@ const SOURCE_COLORS: Record<string, { bg: string; text: string; btn: string; btn
   'Onbekend':      { bg: 'bg-slate-100',    text: 'text-slate-500',  btn: 'bg-slate-500',  btnHover: 'hover:bg-slate-600' },
 };
 const srcColor = (source: string) => SOURCE_COLORS[source] || SOURCE_COLORS['Onbekend'];
+// De uitgaande "bezoek bron"-knop is bij elk bedrijf hetzelfde blauw, ongeacht bron — alleen
+// het kleine badge/label naast de bedrijfsnaam (SourceBadges, via srcColor().bg/.text) en de
+// kaart/filter-kleuren per bron blijven ongemoeid. Bij "Onbekend" tonen we sowieso geen knop
+// (zie de `!== 'Onbekend'`-check bij elke render hieronder) — die link heeft toch geen waarde.
+const SOURCE_LINK_BTN = { btn: 'bg-[#009FE3]', btnHover: 'hover:bg-[#0086c9]' };
 // A "real" source (Bouwgarant, Architectenweb, ...) always outranks "Onbekend" —
 // if a company also has a known source, the meaningless "Onbekend" badge/button is dropped.
 const visibleSources = (b: any): string[] => {
@@ -3741,11 +3746,11 @@ const App: React.FC = () => {
                              {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
                              {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
                              {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2]`}><Linkedin className="w-3 h-3"/>LinkedIn</a>}
-                             {b.url && (visibleSources(b).length > 1
+                             {b.url && visibleSources(b)[0] !== 'Onbekend' && (visibleSources(b).length > 1
                                ? visibleSources(b).map((s: string, si: number) => (
-                                   <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${srcColor(s).btn} ${srcColor(s).btnHover}`}><ArrowRight className="w-3 h-3"/>{s}</a>
+                                   <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3 h-3"/>{s}</a>
                                  ))
-                               : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${srcColor(visibleSources(b)[0]).btn} ${srcColor(visibleSources(b)[0]).btnHover}`}><ArrowRight className="w-3 h-3"/>{visibleSources(b)[0] || 'Bronpagina'}</a>
+                               : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3 h-3"/>{visibleSources(b)[0] || 'Bronpagina'}</a>
                              )}
                            </div>
                            <div className="flex gap-2">
@@ -4432,7 +4437,7 @@ const App: React.FC = () => {
                                 key={company.id}
                                 draggable={showRouteMap}
                                 onDragStart={showRouteMap ? e => { e.dataTransfer.setData('application/company', JSON.stringify(b)); e.dataTransfer.effectAllowed = 'copy'; } : undefined}
-                                className={`relative bg-white border p-5 flex flex-col gap-3 transition-colors cursor-pointer ${showRouteMap ? 'cursor-grab active:cursor-grabbing' : ''} ${selectedIds.has(b.naam || company.name) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`}
+                                className={`relative bg-white border p-5 flex flex-col gap-3 min-h-[260px] transition-colors cursor-pointer ${showRouteMap ? 'cursor-grab active:cursor-grabbing' : ''} ${selectedIds.has(b.naam || company.name) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`}
                                 onClick={() => { setSelectedCompany(b); addToRecentViewed(b.naam || company.name); }}>
                                 {viewMode === 'search' && (
                                   <div className="absolute top-2 right-2 z-10" onClick={e => e.stopPropagation()}>
@@ -4474,10 +4479,13 @@ const App: React.FC = () => {
                                   {showField('rechtsvorm') && b.rechtsvorm && <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-1 rounded font-medium whitespace-nowrap flex-shrink-0">{b.rechtsvorm}</span>}
                                 </div>
                                 {showField('specs') && coreSpecs(b).length > 0 && (
-                                  <div className="flex flex-wrap gap-1">
-                                    {coreSpecs(b).map((s: string, si: number) => (
+                                  <div className="flex flex-wrap gap-1 max-h-[26px] overflow-hidden">
+                                    {coreSpecs(b).slice(0, 4).map((s: string, si: number) => (
                                       <span key={si} className="text-[10px] bg-[#E8F4FB] text-[#009FE3] px-2 py-0.5 font-semibold rounded-sm">{s}</span>
                                     ))}
+                                    {coreSpecs(b).length > 4 && (
+                                      <span className="text-[10px] bg-slate-100 text-slate-400 px-2 py-0.5 font-semibold rounded-sm">+{coreSpecs(b).length - 4}</span>
+                                    )}
                                   </div>
                                 )}
                                 {(b.telefoon || b.email) && (showField('telefoon') || showField('email')) && (
@@ -4491,11 +4499,11 @@ const App: React.FC = () => {
                                     {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
                                     {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
                                     {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2]`}><Linkedin className="w-3 h-3"/>LinkedIn</a>}
-                                    {b.url && (visibleSources(b).length > 1
+                                    {b.url && visibleSources(b)[0] !== 'Onbekend' && (visibleSources(b).length > 1
                                       ? visibleSources(b).map((s: string, si: number) => (
-                                          <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${srcColor(s).btn} ${srcColor(s).btnHover}`}><ArrowRight className="w-3 h-3"/>{s}</a>
+                                          <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3 h-3"/>{s}</a>
                                         ))
-                                      : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${srcColor(visibleSources(b)[0]).btn} ${srcColor(visibleSources(b)[0]).btnHover}`}><ArrowRight className="w-3 h-3"/>{visibleSources(b)[0] || 'Info'}</a>
+                                      : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`${btnBase} text-white border-transparent ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3 h-3"/>{visibleSources(b)[0] || 'Info'}</a>
                                     )}
                                   </div>
                                   <FavButton company={company} favorites={favorites} onToggle={toggleFavorite} />
@@ -5123,11 +5131,11 @@ const App: React.FC = () => {
                   {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-700 rounded-sm transition-all bg-white"><Globe className="w-3.5 h-3.5"/>Website</a>}
                   {hasAddress && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26] text-slate-700 rounded-sm transition-all bg-white"><MapPin className="w-3.5 h-3.5"/>Route</a>}
                   {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className="flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2] text-slate-700 rounded-sm transition-all bg-white"><Linkedin className="w-3.5 h-3.5"/>LinkedIn</a>}
-                  {b.url && (visibleSources(b).length > 1
+                  {b.url && visibleSources(b)[0] !== 'Onbekend' && (visibleSources(b).length > 1
                     ? visibleSources(b).map((s: string, si: number) => (
-                        <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${srcColor(s).btn} ${srcColor(s).btnHover}`}><ArrowRight className="w-3.5 h-3.5"/>{s}</a>
+                        <a key={si} href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3.5 h-3.5"/>{s}</a>
                       ))
-                    : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${srcColor(visibleSources(b)[0]).btn} ${srcColor(visibleSources(b)[0]).btnHover}`}><ArrowRight className="w-3.5 h-3.5"/>Bronpagina</a>
+                    : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3.5 h-3.5"/>Bronpagina</a>
                   )}
                 </div>
                   </>
