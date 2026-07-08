@@ -5136,6 +5136,9 @@ const App: React.FC = () => {
                       ))
                     : <a href={toUrl(b.url)} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><ArrowRight className="w-3.5 h-3.5"/>Bronpagina</a>
                   )}
+                  {visibleSources(b)[0] === 'Web' && (
+                    <a href={`https://www.google.com/search?q=${encodeURIComponent([b.naam, b.straat, b.stad].filter(Boolean).join(' '))}`} target="_blank" rel="noreferrer" className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider rounded-sm text-white transition-all ${SOURCE_LINK_BTN.btn} ${SOURCE_LINK_BTN.btnHover}`}><Search className="w-3.5 h-3.5"/>Google</a>
+                  )}
                 </div>
                   </>
                 )}
