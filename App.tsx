@@ -12,6 +12,7 @@ import RouteMapPanel from './components/RouteMapPanel';
 import AIAgentPanel, { AgentOrb, SUGGESTIONS } from './components/AIAgentPanel';
 import { authService } from './services/authService';
 import { preloadAllAddresses, onGeoclusterProgress, GeoclusterProgress, clearClusterCache } from './services/geoclusterService';
+import { queuedNominatim } from './services/nominatimQueue';
 import { SearchState, DiscoveredCompany, User, CompanyList } from './types';
 import { scoreInsertionCandidates } from './utils/dagbezoek';
 import { mergeEntries, isNederlandBedrijf } from './utils/mergeBedrijven';
@@ -2101,6 +2102,17 @@ const App: React.FC = () => {
   const [locationError, setLocationError] = useState<string | null>(null);
   const [locationNote, setLocationNote] = useState<string | null>(null);
   const [advancedSearch, setAdvancedSearch] = useState(false);
+  // Zoek-vanaf-adres: apart van "mijn locatie" (dat is je eigen, vaste adres/live GPS) — dit
+  // is een eenmalig, los adres dat je intypt om VANAF DAAR te zoeken, ongeacht waar je zelf
+  // bent. Herkent eerst een bedrijf dat al in het systeem staat (gratis, instant); anders
+  // wordt het adres live gegeocode (ook gratis, via dezelfde Nominatim-wachtrij als de kaart).
+  const [radiusAddressQuery, setRadiusAddressQuery] = useState('');
+  const [radiusAddressResolving, setRadiusAddressResolving] = useState(false);
+  const [radiusAddressResolved, setRadiusAddressResolved] = useState<{ lat: number; lng: number; label: string } | null>(null);
+  const [radiusAddressError, setRadiusAddressError] = useState<string | null>(null);
+  // Persistente straal-oorsprong zodra "Zoek vanaf adres" is gebruikt — blijft ook gelden voor
+  // de achtergrond-herzoekopdracht (zie executeSearch), tot expliciet gewist via clearRadiusAddress.
+  const [manualSearchOrigin, setManualSearchOrigin] = useState<{ lat: number; lng: number } | null>(null);
   const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [selectedWerksoort, setSelectedWerksoort] = useState<string[]>([]);
@@ -2619,7 +2631,11 @@ const App: React.FC = () => {
 
       // Radius: bereken vroeg zodat de tekstfilter er rekening mee kan houden
       const activeRadiusKm = overrideRadiusKm !== undefined ? overrideRadiusKm : radiusKm;
-      let radiusCenter: { lat: number; lng: number } | null = overrideRadiusCenter !== undefined ? overrideRadiusCenter : null;
+      // manualSearchOrigin (los ingetypt adres via "Zoek vanaf adres") heeft voorrang en blijft
+      // ook gelden bij de PASSIEVE achtergrond-herzoekopdracht (die geen overrides meekrijgt) —
+      // zonder dit werd een net gekozen adres binnen 350ms alweer overschreven door de stad-
+      // gebaseerde fallback hieronder, zodra city leeg is gezet.
+      let radiusCenter: { lat: number; lng: number } | null = overrideRadiusCenter !== undefined ? overrideRadiusCenter : manualSearchOrigin;
       if (activeRadiusKm && !radiusCenter) {
         const centerCity = (overrideCity ?? city).trim();
         // Geen plaats ingevuld? Straal zoekt dan standaard vanaf ons eigen (instelbare) adres.
@@ -3005,6 +3021,7 @@ const App: React.FC = () => {
     setLocationError(null);
     setLocationNote(null);
     setLocating(true);
+    if (manualSearchOrigin) clearRadiusAddress(); // "mijn locatie" overstemt een handmatig adres
 
     // Methode 1: Browser's native Geolocation (vraagt toestemming, haalt WiFi/IP op)
     if (navigator.geolocation) {
@@ -3042,6 +3059,53 @@ const App: React.FC = () => {
       setLocating(false);
       setLocationError('Locatiebepaling niet ondersteund door je browser.');
     }
+  };
+
+  // Zoek vanaf een los ingetypt adres (bv. "Weena-Zuid 158, Rotterdam") — onafhankelijk van
+  // waar je zelf bent. Eerst kijken of dit adres al bij een bekend bedrijf hoort (gratis,
+  // instant, geen netwerk nodig); anders het adres zelf live geocoden.
+  const searchFromAddress = async () => {
+    const query = radiusAddressQuery.trim();
+    if (!query) return;
+    setRadiusAddressResolving(true);
+    setRadiusAddressError(null);
+
+    const qNorm = normalizeText(query);
+    const match = activeData.find((b: any) => {
+      const straat = normalizeText(b.straat || '');
+      if (!straat) return false;
+      return qNorm.includes(straat) || straat.includes(qNorm);
+    });
+
+    let coords: { lat: number; lng: number } | null = null;
+    let label = query;
+    if (match) {
+      coords = getBedrijfCoords(match);
+      label = [match.naam, match.straat, match.stad].filter(Boolean).join(', ');
+    } else {
+      const hit = await queuedNominatim(`${query}, Nederland`);
+      if (hit) coords = { lat: hit[0], lng: hit[1] };
+    }
+
+    setRadiusAddressResolving(false);
+    if (!coords) {
+      setRadiusAddressError('Adres niet gevonden. Probeer straat + plaats voluit te typen.');
+      return;
+    }
+    setRadiusAddressResolved({ ...coords, label });
+    setManualSearchOrigin(coords);
+    const km = radiusKm ?? 20;
+    setRadiusKm(km);
+    setCity('');
+    setSelectedRegions([]);
+    executeSearch(undefined, undefined, '', coords, km, []);
+  };
+
+  const clearRadiusAddress = () => {
+    setRadiusAddressResolved(null);
+    setRadiusAddressQuery('');
+    setRadiusAddressError(null);
+    setManualSearchOrigin(null);
   };
 
   const removeFoundCompany = (id: string) => {
@@ -3083,7 +3147,7 @@ const App: React.FC = () => {
     // Database/Kaart stuurde je automatisch naar Live Zoeken).
     debounceRef.current = setTimeout(() => { executeSearch(undefined, undefined, undefined, undefined, undefined, undefined, false); }, 350);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [city, radiusKm, advancedSearch, manualEdits, customEntries, deletedEntries, selectedRegions, selectedTypes, selectedWerksoort, selectedContact, selectedLijsten, selectedBron, selectedRechtsvorm, prefAddressCoords]);
+  }, [city, radiusKm, advancedSearch, manualEdits, customEntries, deletedEntries, selectedRegions, selectedTypes, selectedWerksoort, selectedContact, selectedLijsten, selectedBron, selectedRechtsvorm, prefAddressCoords, manualSearchOrigin]);
 
   const handleManualSearch = (e?: React.FormEvent) => {
       if (e) e.preventDefault();
@@ -3974,7 +4038,7 @@ const App: React.FC = () => {
                         <input
                           type="text"
                           value={city}
-                          onChange={(e) => { setCity(e.target.value); setLocationNote(null); setLocationError(null); }}
+                          onChange={(e) => { setCity(e.target.value); setLocationNote(null); setLocationError(null); if (manualSearchOrigin) clearRadiusAddress(); }}
                           onFocus={() => setShowHistory(true)}
                           onBlur={() => setTimeout(() => setShowHistory(false), 150)}
                           onKeyDown={(e) => e.key === 'Enter' && handleManualSearch()}
@@ -4031,6 +4095,37 @@ const App: React.FC = () => {
                        <span className="text-xs text-slate-500">
                          Zoek bedrijven binnen <strong>{radiusKm} km</strong> van de ingevoerde locatie — hoe dichterbij, hoe hoger de match
                        </span>
+                       <div className="basis-full flex items-center gap-2 flex-wrap">
+                         {radiusAddressResolved ? (
+                           <div className="flex items-center gap-2 bg-white border border-[#009FE3]/30 rounded-lg px-3 py-1.5 text-xs">
+                             <MapPin className="w-3.5 h-3.5 text-[#009FE3] flex-shrink-0" />
+                             <span className="text-slate-600">Zoekt vanaf: <strong className="text-slate-800">{radiusAddressResolved.label}</strong></span>
+                             <button onClick={clearRadiusAddress} title="Terug naar mijn locatie" className="text-slate-400 hover:text-red-500 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+                           </div>
+                         ) : (
+                           <>
+                             <div className="relative flex-1 min-w-[200px]">
+                               <input
+                                 type="text"
+                                 value={radiusAddressQuery}
+                                 onChange={e => { setRadiusAddressQuery(e.target.value); setRadiusAddressError(null); }}
+                                 onKeyDown={e => e.key === 'Enter' && searchFromAddress()}
+                                 placeholder="Of zoek vanaf een adres (bv. Weena-Zuid 158, Rotterdam)"
+                                 className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-[#009FE3]"
+                               />
+                             </div>
+                             <button
+                               onClick={searchFromAddress}
+                               disabled={radiusAddressResolving || !radiusAddressQuery.trim()}
+                               className="flex items-center gap-1.5 px-3 py-1.5 bg-[#009FE3] hover:bg-[#008ac5] disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-bold uppercase tracking-wider rounded-lg transition-colors flex-shrink-0"
+                             >
+                               {radiusAddressResolving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                               Ga
+                             </button>
+                           </>
+                         )}
+                         {radiusAddressError && <p className="basis-full text-xs text-red-500 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />{radiusAddressError}</p>}
+                       </div>
                      </>
                    )}
                    <div className="w-px self-stretch bg-slate-200 hidden sm:block" />
