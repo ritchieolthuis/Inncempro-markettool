@@ -226,11 +226,15 @@ function saveCachedClusterData(entries: Map<string, GeoEntry>) {
 }
 
 export async function preloadAllAddresses(): Promise<Map<string, GeoEntry>> {
-  // Check if already cached — require near-complete coverage, not just "some data",
-  // so a stale/partial cache from an earlier run never gets silently reused.
+  // Check if already cached. Vergelijk EXACT met het huidige totaal, niet "dekt >=90%" —
+  // die oude drempel liet een cache die simpelweg nog niet was bijgewerkt na het toevoegen
+  // van nieuwe bedrijven (bv. een import) alsnog als "compleet genoeg" doorgaan, zodra de
+  // nieuwe bedrijven <10% van het totaal uitmaakten. Gevolg: nieuw toegevoegde bedrijven
+  // (bv. de Archined-architecten) verschenen dan nooit op de Kaart, want de cache werd
+  // nooit herbouwd om ze mee te nemen.
   const totalRecords = MERGED_BEDRIJVEN.length;
   const cached = loadCachedClusterData();
-  if (cached && cached.size >= totalRecords * 0.9) {
+  if (cached && cached.size === totalRecords) {
     emitProgress({
       status: 'ready',
       current: cached.size,
