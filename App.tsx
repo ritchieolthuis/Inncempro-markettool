@@ -2311,6 +2311,45 @@ const App: React.FC = () => {
       setFavorites(newFavs);
   };
 
+  // Bulk favoriet-toggle voor de hele selectie (SelectionBar): staat alles al in
+  // favorieten, dan verwijderen we alles; anders vullen we alleen de ontbrekende aan
+  // (geen halve toggle per item, dat voelt onvoorspelbaar aan bij een multi-select actie).
+  const toggleSelectionFavorites = (raws: any[]) => {
+      if (!currentUser || !raws.length) return;
+      const isFav = (b: any) => favorites.some(f => f.name === b.naam && f.city === (b.stad || ''));
+      const shouldAdd = !raws.every(isFav);
+      let newFavs = favorites;
+      raws.forEach((b: any) => {
+          const company: any = { id: `${b.naam}|${b.stad}`, name: b.naam, city: b.stad || '', discoveredAt: new Date().toISOString(), _raw: b };
+          const currentlyFav = newFavs.some(f => f.name === company.name && f.city === company.city);
+          if (shouldAdd !== currentlyFav) {
+              newFavs = authService.toggleFavorite(currentUser.id, company);
+          }
+      });
+      setFavorites(newFavs);
+  };
+
+  // Opent de geselecteerde bedrijven als route in Google Maps (max. 9 tussenstops,
+  // zelfde grens als handleCreateSmartRoute — Google Maps' consumer-URL trekt het niet
+  // betrouwbaar meer aan bij grotere aantallen).
+  const openSelectionInMaps = (raws: any[]) => {
+      if (!raws.length) return;
+      // Bedrijfsnaam altijd voorop laten gaan aan het adres — anders toont Google Maps
+      // alleen de straatnaam als pin-label en niet welk bedrijf het is.
+      const addresses = raws.slice(0, 9).map((b: any) => {
+          const addressPart = [b.straat, b.postcode, b.stad].filter(Boolean).join(' ');
+          return [b.naam, addressPart].filter(Boolean).join(', ');
+      });
+      if (addresses.length === 1) {
+          window.open(`https://maps.google.com/?q=${encodeURIComponent(addresses[0])}`, '_blank');
+          return;
+      }
+      const destination = encodeURIComponent(addresses[addresses.length - 1]);
+      const waypoints = addresses.slice(0, -1).map(a => encodeURIComponent(a)).join('|');
+      const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${destination}&waypoints=${waypoints}&travelmode=driving`;
+      window.open(mapsUrl, '_blank');
+  };
+
   // LIJSTEN: bedrijven opslaan in zelf aangemaakte, benoemde lijsten
   const createList = (name: string): CompanyList | null => {
       if (!currentUser || !name.trim()) return null;
@@ -2522,7 +2561,7 @@ const App: React.FC = () => {
   };
 
   // SEARCH EXECUTION — zoekt lokaal in bouwgarant_data.json
-  const executeSearch = async (overrideCity?: string, overrideSort?: 'relevant' | 'az', overrideQuery?: string, overrideRadiusCenter?: { lat: number; lng: number } | null, overrideRadiusKm?: number | null, overrideRegions?: string[]) => {
+  const executeSearch = async (overrideCity?: string, overrideSort?: 'relevant' | 'az', overrideQuery?: string, overrideRadiusCenter?: { lat: number; lng: number } | null, overrideRadiusKm?: number | null, overrideRegions?: string[], navigateToSearch: boolean = true) => {
       // Geen actieve zoekopdracht = leeg laten (Live Zoeken begint blanco)
       const effectiveQuery = (overrideQuery ?? city).trim();
       const effectiveRegions = overrideRegions !== undefined ? overrideRegions : selectedRegions;
@@ -2532,11 +2571,11 @@ const App: React.FC = () => {
           setFoundCompanies([]);
           setTotalMatches(0);
           setSearchState({ isLoading: false, data: null, error: null });
-          setViewMode('search');
+          if (navigateToSearch) setViewMode('search');
           return;
       }
 
-      setViewMode('search');
+      if (navigateToSearch) setViewMode('search');
       setSearchState({ isLoading: true, data: null, error: null });
       setFoundCompanies([]);
       setTotalMatches(0);
@@ -3036,7 +3075,12 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!didMountRef.current) { didMountRef.current = true; return; }
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => { executeSearch(); }, 350);
+    // navigateToSearch=false: dit is een passieve achtergrond-herberekening op filter-
+    // wijziging. Als je op Database/Kaart/Favorieten/Lijsten zit te filteren mag dat
+    // resultaat straks klaarstaan zodra je naar Live Zoeken gaat, maar je mag NIET
+    // ongevraagd naar dat tabblad gesleept worden (was de bug: filter zetten in
+    // Database/Kaart stuurde je automatisch naar Live Zoeken).
+    debounceRef.current = setTimeout(() => { executeSearch(undefined, undefined, undefined, undefined, undefined, undefined, false); }, 350);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [city, radiusKm, advancedSearch, manualEdits, customEntries, deletedEntries, selectedRegions, selectedTypes, selectedWerksoort, selectedContact, selectedLijsten, selectedBron, selectedRechtsvorm, prefAddressCoords]);
 
@@ -3052,6 +3096,28 @@ const App: React.FC = () => {
     setCity('');
     setSelectedRegions([]);
     setViewMode('search');
+  };
+
+  // De filter-sidebar (Regio, Discipline, Werksoort, Bron, Rechtsvorm, Contactgegevens) wordt
+  // hergebruikt op Live Zoeken/Favorieten/Database, maar hoort NIET mee te lekken tussen die
+  // tabbladen — filteren in Database mag Live Zoeken niet stiekem meenemen en vice versa.
+  // Wordt expliciet aangeroepen vanuit de tabknoppen zelf (niet via een generieke useEffect op
+  // viewMode), zodat bewuste cross-tab shortcuts als "bekijk regio X in Database" — die zelf
+  // gericht een regio zetten vóór het wisselen van tab — hier niet per ongeluk door worden gewist.
+  const clearSidebarFilters = () => {
+    setSelectedRegions([]);
+    setSelectedTypes([]);
+    setSelectedWerksoort([]);
+    setSelectedContact([]);
+    setSelectedBron([]);
+    setSelectedRechtsvorm([]);
+    setSelectedLijsten([]);
+    // "city" is de zoektekst van Live Zoeken (niet hetzelfde als dbSearch op Database), maar
+    // telt wél mee in de gedeelde activeFilterCount-badge — dus moet ook mee resetten, anders
+    // toont Database nog "Filters 1" puur omdat je op Live Zoeken nog iets had ingetypt.
+    setCity('');
+    setRadiusKm(null);
+    setAdvancedSearch(false);
   };
 
   // --- SMART ROUTE GENERATION (Efficient TSP Heuristic) ---
@@ -3146,13 +3212,6 @@ const App: React.FC = () => {
     setRouteMapFullscreen(true);
     setAutoOptimizeRoute(true);
   };
-
-  // Dataset fed into ProvinceFilter — changes with active tab so counts reflect current view
-  const sidebarDataset = React.useMemo(() => {
-    if (viewMode === 'favorites') return favorites.map(f => (f as any)._raw || { stad: f.city, provincie: '' });
-    if (viewMode === 'search') return foundCompanies.map(c => (c as any)._raw || c);
-    return activeData;
-  }, [viewMode, favorites, foundCompanies, activeData]);
 
   const filteredFavorites = sidebarRegionsActive.length === 0 ? favorites : favorites.filter(fav => {
     const raw = (fav as any)._raw;
@@ -3489,7 +3548,7 @@ const App: React.FC = () => {
                  <ProvinceFilter
                    selectedRegions={selectedRegions}
                    onToggle={(item: string) => toggleFilter(setSelectedRegions, item)}
-                   dataset={sidebarDataset}
+                   dataset={activeData}
                    onGoToMap={(stad, provincie) => { setMapFocusTarget({ naam: '', straat: '', stad, provincie }); setViewMode('map'); }}
                    onGoToDatabase={(item) => { setSelectedRegions([item]); setViewMode('database'); setDbPage(1); }}
                  />
@@ -3545,15 +3604,15 @@ const App: React.FC = () => {
           </aside>
           )}
 
-          <main className="flex-grow p-3 sm:p-6 lg:p-10 min-w-0 flex flex-col">
+          <main className="flex-grow p-3 pb-24 sm:p-6 sm:pb-6 lg:p-10 min-w-0 flex flex-col">
              <div className="relative max-w-4xl mx-auto w-full mb-4 sm:mb-6">
              <div ref={tabBarRef} className="flex gap-1 border-b border-slate-200 overflow-x-auto scroll-smooth">
-                 <button data-active={viewMode === 'search'} onClick={() => setViewMode('search')} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'search' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                 <button data-active={viewMode === 'search'} onClick={() => { if (viewMode !== 'search') clearSidebarFilters(); setViewMode('search'); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'search' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                      <LayoutGrid className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
                      <span className="hidden sm:inline">Live Zoeken</span>
                      <span className="sm:hidden">Zoeken</span>
                  </button>
-                 <button data-active={viewMode === 'favorites'} onClick={() => { setViewMode('favorites'); setCurrentPage(1); setShowRouteMap(false); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'favorites' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                 <button data-active={viewMode === 'favorites'} onClick={() => { if (viewMode !== 'favorites') clearSidebarFilters(); setViewMode('favorites'); setCurrentPage(1); setShowRouteMap(false); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'favorites' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                      <Heart className={`hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0 ${viewMode === 'favorites' ? 'fill-current' : ''}`} />
                      <span className="hidden sm:inline">Mijn Favorieten ({favorites.length})</span>
                      <span className="sm:hidden">Favorieten ({favorites.length})</span>
@@ -3563,7 +3622,7 @@ const App: React.FC = () => {
                      <span className="hidden sm:inline">Lijsten ({lists.length})</span>
                      <span className="sm:hidden">Lijsten ({lists.length})</span>
                  </button>
-                 <button data-active={viewMode === 'database'} onClick={() => { setViewMode('database'); setDbPage(1); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'database' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                 <button data-active={viewMode === 'database'} onClick={() => { if (viewMode !== 'database') clearSidebarFilters(); setViewMode('database'); setDbPage(1); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'database' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                      <Database className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
                      <span className="hidden sm:inline">Bedrijvendatabase ({activeData.length})</span>
                      <span className="sm:hidden">Database</span>
@@ -5277,6 +5336,10 @@ const App: React.FC = () => {
             const companies: DiscoveredCompany[] = (Array.from(selectedRaws.values()) as any[]).map(b => ({ id: `${b.naam}|${b.stad}`, name: b.naam, city: b.stad || '', discoveredAt: new Date().toISOString() }));
             createListAndAddSelection(name, companies);
           }}
+          allFavorite={Array.from(selectedRaws.values()).every((b: any) => favorites.some(f => f.name === b.naam && f.city === (b.stad || '')))}
+          onToggleFavorites={() => toggleSelectionFavorites(Array.from(selectedRaws.values()))}
+          onOpenInMaps={() => openSelectionInMaps(Array.from(selectedRaws.values()))}
+          sidebarWidthPx={viewMode !== 'map' && viewMode !== 'lists' ? (sidebarCollapsed ? 48 : 320) : 0}
         />
       )}
 
@@ -5398,7 +5461,11 @@ const SelectionBar: React.FC<{
   lists: CompanyList[];
   onAddToList: (listId: string) => void;
   onCreateAndAddToList: (name: string) => void;
-}> = ({ selected, onRemove, onClear, lists, onAddToList, onCreateAndAddToList }) => {
+  allFavorite: boolean;
+  onToggleFavorites: () => void;
+  onOpenInMaps: () => void;
+  sidebarWidthPx: number;
+}> = ({ selected, onRemove, onClear, lists, onAddToList, onCreateAndAddToList, allFavorite, onToggleFavorites, onOpenInMaps, sidebarWidthPx }) => {
   const [open, setOpen] = useState(false);
   const [showListPicker, setShowListPicker] = useState(false);
   const [newName, setNewName] = useState('');
@@ -5412,74 +5479,107 @@ const SelectionBar: React.FC<{
   }, [showListPicker]);
 
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] max-w-md">
-      {open && (
-        <div className="mb-2 bg-white border border-slate-200 rounded-sm shadow-2xl max-h-72 overflow-y-auto animate-fade-in">
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100 sticky top-0 bg-white">
-            <span className="text-xs font-black uppercase tracking-wider text-slate-600">Geselecteerd ({selected.length})</span>
-            <button onClick={onClear} className="text-[10px] font-bold uppercase tracking-wider text-red-500 hover:text-red-700">Wis alles</button>
-          </div>
-          <div className="divide-y divide-slate-100">
-            {selected.map((b: any) => (
-              <div key={b.naam} className="flex items-center justify-between gap-2 px-4 py-2 text-xs">
-                <div className="min-w-0">
-                  <p className="font-bold text-slate-800 truncate">{b.naam}</p>
-                  {b.stad && <p className="text-slate-400 truncate">{b.stad}</p>}
-                </div>
-                <button onClick={() => onRemove(b.naam)} title="Deselecteren" className="flex-shrink-0 p-1 text-slate-400 hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      <div className="flex items-stretch gap-1.5">
-        <button
-          onClick={() => setOpen(o => !o)}
-          className="flex-1 flex items-center justify-between gap-3 px-4 py-3 bg-[#E85E26] hover:bg-[#d14d1b] text-white rounded-sm shadow-2xl transition-colors"
-        >
-          <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
-            <Check className="w-4 h-4" /> {selected.length} geselecteerd
-          </span>
-          {open ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
-        </button>
-        <div ref={pickerRef} className="relative flex-shrink-0">
-          <button
-            onClick={() => setShowListPicker(o => !o)}
-            title="Voeg toe aan lijst"
-            className="h-full flex items-center justify-center px-4 bg-white border border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-500 rounded-sm shadow-2xl transition-colors"
-          >
-            <List className="w-4 h-4" />
-          </button>
-          {showListPicker && (
-            <div className="absolute bottom-full right-0 mb-1 w-56 bg-white border border-slate-200 rounded-sm shadow-2xl overflow-hidden">
-              <div className="px-3 py-2 border-b border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400">Voeg {selected.length} toe aan</div>
-              <div className="max-h-40 overflow-y-auto">
-                {lists.length === 0 && <p className="text-xs text-slate-400 px-3 py-3 text-center">Nog geen lijsten</p>}
-                {lists.map(l => (
-                  <button key={l.id} onClick={() => { onAddToList(l.id); setShowListPicker(false); }} className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-slate-50">
-                    <List className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                    <span className="truncate flex-1 font-semibold text-slate-700">{l.name}</span>
+    // Spacer + gecentreerde kolom i.p.v. left-1/2 op de volle viewport: anders centreert de
+    // balk over de HELE breedte inclusief de filter-sidebar, en oogt hij op desktop naar links
+    // verschoven t.o.v. de content ernaast. De spacer (verborgen op mobiel, waar geen sidebar is)
+    // krijgt exact dezelfde breedte als de <aside>, zodat de balk echt boven de main-kolom centreert.
+    <div className="fixed inset-x-0 bottom-4 z-40 flex px-4 pointer-events-none">
+      <div className="hidden md:block flex-shrink-0 transition-all duration-200" style={{ width: sidebarWidthPx }} />
+      <div className="flex-1 flex justify-center min-w-0">
+        <div className="w-full max-w-2xl pointer-events-auto">
+          {open && (
+            <div className="mb-2 bg-white border border-slate-200 rounded-sm shadow-2xl max-h-72 overflow-y-auto animate-fade-in">
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-slate-100 sticky top-0 bg-white">
+                <span className="text-xs font-black uppercase tracking-wider text-slate-600 flex-shrink-0">Geselecteerd ({selected.length})</span>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <div ref={pickerRef} className="relative">
+                    <button
+                      onClick={() => setShowListPicker(o => !o)}
+                      title="Voeg toe aan lijst"
+                      className="flex items-center justify-center w-7 h-7 text-slate-400 hover:text-[#009FE3] hover:bg-[#009FE3]/5 rounded-sm transition-colors"
+                    >
+                      <List className="w-3.5 h-3.5" />
+                    </button>
+                    {showListPicker && (
+                      <div className="absolute bottom-full right-0 mb-1 w-56 bg-white border border-slate-200 rounded-sm shadow-2xl overflow-hidden">
+                        <div className="px-3 py-2 border-b border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400">Voeg {selected.length} toe aan</div>
+                        <div className="max-h-40 overflow-y-auto">
+                          {lists.length === 0 && <p className="text-xs text-slate-400 px-3 py-3 text-center">Nog geen lijsten</p>}
+                          {lists.map(l => (
+                            <button key={l.id} onClick={() => { onAddToList(l.id); setShowListPicker(false); }} className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-slate-50">
+                              <List className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                              <span className="truncate flex-1 font-semibold text-slate-700">{l.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                        <div className="border-t border-slate-100 p-2 flex gap-1">
+                          <input
+                            value={newName}
+                            onChange={e => setNewName(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) { onCreateAndAddToList(newName.trim()); setNewName(''); setShowListPicker(false); } }}
+                            placeholder="Nieuwe lijst..."
+                            className="flex-1 min-w-0 px-2 py-1.5 border border-slate-200 rounded-sm text-xs focus:outline-none focus:border-[#009FE3]"
+                          />
+                          <button
+                            disabled={!newName.trim()}
+                            onClick={() => { onCreateAndAddToList(newName.trim()); setNewName(''); setShowListPicker(false); }}
+                            className="px-2 py-1.5 bg-[#009FE3] text-white rounded-sm disabled:opacity-40"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={onToggleFavorites}
+                    title={allFavorite ? 'Verwijder selectie uit favorieten' : 'Voeg selectie toe aan favorieten'}
+                    className={`flex items-center justify-center w-7 h-7 rounded-sm transition-colors ${allFavorite ? 'text-red-500' : 'text-slate-400 hover:text-red-400 hover:bg-red-50'}`}
+                  >
+                    <Heart className={`w-3.5 h-3.5 ${allFavorite ? 'fill-current' : ''}`} />
                   </button>
-                ))}
+                  <button
+                    onClick={onOpenInMaps}
+                    title="Open selectie in Google Maps"
+                    className="flex items-center justify-center w-7 h-7 text-slate-400 hover:text-[#009FE3] hover:bg-[#009FE3]/5 rounded-sm transition-colors"
+                  >
+                    <MapPin className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="w-px h-4 bg-slate-200 mx-0.5" />
+                  <button onClick={onClear} className="text-[10px] font-bold uppercase tracking-wider text-red-500 hover:text-red-700 whitespace-nowrap">Wis alles</button>
+                </div>
               </div>
-              <div className="border-t border-slate-100 p-2 flex gap-1">
-                <input
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) { onCreateAndAddToList(newName.trim()); setNewName(''); setShowListPicker(false); } }}
-                  placeholder="Nieuwe lijst..."
-                  className="flex-1 min-w-0 px-2 py-1.5 border border-slate-200 rounded-sm text-xs focus:outline-none focus:border-[#009FE3]"
-                />
-                <button
-                  disabled={!newName.trim()}
-                  onClick={() => { onCreateAndAddToList(newName.trim()); setNewName(''); setShowListPicker(false); }}
-                  className="px-2 py-1.5 bg-[#009FE3] text-white rounded-sm disabled:opacity-40"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
+              <div className="divide-y divide-slate-100">
+                {selected.map((b: any) => (
+                  <div key={b.naam} className="flex items-center justify-between gap-2 px-4 py-2 text-xs">
+                    <div className="min-w-0">
+                      <p className="font-bold text-slate-800 truncate">{b.naam}</p>
+                      {b.stad && <p className="text-slate-400 truncate">{b.stad}</p>}
+                    </div>
+                    <button onClick={() => onRemove(b.naam)} title="Deselecteren" className="flex-shrink-0 p-1 text-slate-400 hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                ))}
               </div>
             </div>
           )}
+          <div className="flex items-stretch gap-1">
+            <button
+              onClick={() => setOpen(o => !o)}
+              className="flex-1 flex items-center justify-between gap-3 px-4 py-2.5 bg-[#E85E26] hover:bg-[#d14d1b] text-white rounded-sm shadow-2xl transition-colors"
+            >
+              <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
+                <Check className="w-4 h-4" /> {selected.length} geselecteerd
+              </span>
+              {open ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={onClear}
+              title="Selectie wissen"
+              className="flex-shrink-0 flex items-center justify-center w-9 bg-[#E85E26] hover:bg-red-700 text-white/80 hover:text-white rounded-sm shadow-2xl transition-colors border-l border-white/20"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
     </div>

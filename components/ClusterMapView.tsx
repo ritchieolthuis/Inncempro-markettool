@@ -215,10 +215,16 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
     if (!markersLayerRef.current) return;
     const bounds: L.LatLngExpression[] = [];
 
+    // Geen regio's EN geen bronnen geselecteerd = niets tonen (zie de "Selecteer een
+    // regio..." prompt hieronder). Zonder deze guard betekent selectedRegions.size===0
+    // hieronder per ongeluk "alle regio's matchen" — dus deselecteren van de laatste regio
+    // liet alsnog alle ~4000 bedrijven zien in plaats van weer niets.
+    const noSelection = selectedRegions.size === 0 && selectedSources.size === 0;
+
     markersLayerRef.current.eachLayer((layer: any) => {
       const matchRegion = selectedRegions.size === 0 || selectedRegions.has(layer._provKey) || selectedRegions.has(layer._cityKey);
       const matchSource = selectedSources.size === 0 || selectedSources.has(layer._entry?.source || 'Onbekend');
-      const visible = matchRegion && matchSource;
+      const visible = !noSelection && matchRegion && matchSource;
       layer.setStyle({ opacity: visible ? 1 : 0, fillOpacity: visible ? 0.9 : 0 });
       layer.options.interactive = visible;
       if (visible) bounds.push(layer.getLatLng());
