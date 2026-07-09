@@ -3260,6 +3260,36 @@ const App: React.FC = () => {
     [deletedEntries, customEntries, addressCorrections, manualEdits],
   );
 
+  // Autocomplete voor de zoekbalk: suggesties op zowel bedrijfsnaam als straatadres door
+  // elkaar, zoals typen "Wena" -> "Weena-Zuid 158, Rotterdam" tonen (en evengoed "Weena-Zuid
+  // 16" als dat ook bestaat) — niet alleen bedrijven laten matchen, ook losse adressen, want
+  // je zoekt soms op locatie, niet op naam.
+  const citySuggestions = React.useMemo(() => {
+    const q = city.trim().toLowerCase();
+    if (q.length < 2) return [];
+    const qNorm = normalizeText(q);
+    const seen = new Set<string>();
+    const results: { key: string; naam: string; straat: string; stad: string; value: string }[] = [];
+    for (const b of activeData) {
+      if (results.length >= 8) break;
+      const naam = (b.naam || '').trim();
+      const straat = (b.straat || '').trim();
+      const stad = (b.stad || '').trim();
+      if (!naam && !straat) continue;
+      const naamMatch = naam.toLowerCase().includes(q) || normalizeText(naam).includes(qNorm);
+      const straatMatch = straat.toLowerCase().includes(q) || normalizeText(straat).includes(qNorm);
+      if (!naamMatch && !straatMatch) continue;
+      // Bij een adres-match is het adres zelf de zinvolle waarde om in te vullen (dat is
+      // waar je op zoekt); bij een naam-match is de bedrijfsnaam dat.
+      const value = straatMatch ? [straat, stad].filter(Boolean).join(', ') : naam;
+      const key = `${naam}|${straat}|${stad}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      results.push({ key, naam, straat, stad, value });
+    }
+    return results;
+  }, [city, activeData]);
+
   // Zet een opgeslagen route (RouteMapPanel's `doSave` schrijft `stops: "naam|stad"[]`) om
   // naar een selectie en opent 'm meteen fullscreen — hergebruikt dezelfde route-machinerie
   // als de AI-knop, dus geen aparte "bekijk opgeslagen route"-weergave nodig.
@@ -4147,8 +4177,28 @@ const App: React.FC = () => {
                      </span>
                    )}
                  </div>
-                 {/* Zoekgeschiedenis */}
-                 {showHistory && searchHistory.length > 0 && (
+                 {/* Autocomplete: bedrijfsnamen én straatadressen door elkaar, zodra je 2+
+                     tekens hebt getypt. Vervangt de recente-zoekopdrachten-dropdown zolang
+                     je aan het typen bent — die twee tegelijk tonen is verwarrend. */}
+                 {showHistory && citySuggestions.length > 0 && (
+                   <div className="bg-white border border-t-0 border-slate-200 shadow-lg w-full">
+                     {citySuggestions.map((s) => (
+                       <button
+                         key={s.key}
+                         onMouseDown={() => { setCity(s.value); setShowHistory(false); setTimeout(() => executeSearch(undefined, undefined, s.value), 0); }}
+                         className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-[#009FE3]/5 flex items-center gap-3 border-b border-slate-100 last:border-0"
+                       >
+                         <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                         <span className="min-w-0 truncate">
+                           <strong className="font-semibold text-slate-900">{s.value}</strong>
+                           {s.naam && s.value !== s.naam && <span className="text-slate-400"> — {s.naam}</span>}
+                         </span>
+                       </button>
+                     ))}
+                   </div>
+                 )}
+                 {/* Zoekgeschiedenis — alleen zolang er nog niets (bruikbaars) is getypt */}
+                 {showHistory && citySuggestions.length === 0 && searchHistory.length > 0 && (
                    <div className="bg-white border border-t-0 border-slate-200 shadow-lg w-full">
                      <div className="px-4 py-2 flex items-center justify-between border-b border-slate-100">
                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Recente zoekopdrachten</span>

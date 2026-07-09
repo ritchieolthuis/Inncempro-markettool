@@ -237,7 +237,13 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
         mapRef.current.setView([52.1326, 5.2913], 7);
       }
     }
-  }, [selectedRegions, selectedSources]);
+    // allEntries hoort hier expliciet bij: de achtergrond-geocoding (poll elke ~3s) herbouwt
+    // periodiek ALLE markers zodra er preciezere coördinaten binnenkomen (zie de vorige
+    // useEffect), en die nieuwe markers starten standaard onzichtbaar. Zonder allEntries hier
+    // als dependency werd de zichtbaarheid dan niet opnieuw toegepast — de bolletjes vervielen
+    // na een herbouw, en pas een filter aan/uit klikken (wat selectedRegions wijzigt) herstelde
+    // het toevallig weer.
+  }, [selectedRegions, selectedSources, allEntries]);
 
   // Vanuit een bedrijfsprofiel elders in de app ("Bekijk op de KAART-tab"): selecteer
   // automatisch de bijbehorende stad (zelfde gedrag als handmatig aanvinken) en zoom
@@ -387,7 +393,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
         })()}
       </div>
 
-      <div className="relative mb-3">
+      <div className="relative mb-2">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
         <input
           type="text"
@@ -397,6 +403,12 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
           className="w-full pl-8 pr-3 py-2 bg-white border border-slate-200 text-xs focus:border-[#009FE3] focus:outline-none rounded-sm"
         />
       </div>
+      <button
+        onClick={() => setSelectedRegions(prev => new Set([...prev, ...locationGroups.map(g => provKey(g.provincie))]))}
+        className="text-[10px] font-bold text-[#009FE3] hover:underline uppercase tracking-wider mb-3"
+      >
+        Selecteer alle provincies
+      </button>
 
       <div className="space-y-0.5 max-h-[calc(100vh-380px)] overflow-y-auto pr-1">
         {locationGroups.map(({ provincie, count, steden }) => {
@@ -451,7 +463,15 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
       {/* Bron sectie — extra verfijning bovenop de regio-selectie, geen vervanging.
           Leeg (niets aangevinkt) = alle bronnen zichtbaar, net als bij Regio & Locatie. */}
       <div className="mt-4 pt-3 border-t border-slate-200">
-        <label className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block mb-2">Bron</label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-[10px] font-bold text-slate-700 uppercase tracking-wider">Bron</label>
+          <button
+            onClick={() => setSelectedSources(new Set(sourceGroups.map(g => g.source)))}
+            className="text-[10px] font-bold text-[#009FE3] hover:underline uppercase tracking-wider"
+          >
+            Selecteer alles
+          </button>
+        </div>
         <div className="space-y-0.5 max-h-48 overflow-y-auto pr-1">
           {sourceGroups.map(({ source, count }) => {
             const isSelected = selectedSources.has(source);
