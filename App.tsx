@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, Loader2, ArrowRight, X, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send, Clock, Eye, List, Linkedin } from 'lucide-react';
 import Papa from 'papaparse';
 import bouwgarantData from './bouwgarant_data.json';
@@ -5469,14 +5470,33 @@ const SelectionBar: React.FC<{
   const [open, setOpen] = useState(false);
   const [showListPicker, setShowListPicker] = useState(false);
   const [newName, setNewName] = useState('');
-  const pickerRef = useRef<HTMLDivElement>(null);
+  // Het "Voeg toe aan lijst"-knopje zit in het uitklappaneel, dat zelf overflow-y-auto +
+  // max-h-72 heeft. Een gewoon absolute-positioned popup daarbinnen wordt door die overflow
+  // afgesneden (onzichtbaar) — vandaar een portal naar document.body, met de positie berekend
+  // vanaf de knop zelf, zodat het los van de scroll-container gewoon zichtbaar blijft.
+  const listBtnRef = useRef<HTMLButtonElement>(null);
+  const listPopupRef = useRef<HTMLDivElement>(null);
+  const [listPickerPos, setListPickerPos] = useState<{ top: number; left: number } | null>(null);
 
   useEffect(() => {
     if (!showListPicker) return;
-    const handler = (e: MouseEvent) => { if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) setShowListPicker(false); };
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (listBtnRef.current?.contains(target)) return;
+      if (listPopupRef.current?.contains(target)) return;
+      setShowListPicker(false);
+    };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showListPicker]);
+
+  const toggleListPicker = () => {
+    if (!showListPicker && listBtnRef.current) {
+      const rect = listBtnRef.current.getBoundingClientRect();
+      setListPickerPos({ top: rect.bottom + 4, left: Math.max(8, rect.right - 224) });
+    }
+    setShowListPicker(o => !o);
+  };
 
   return (
     // Spacer + gecentreerde kolom i.p.v. left-1/2 op de volle viewport: anders centreert de
@@ -5492,45 +5512,49 @@ const SelectionBar: React.FC<{
               <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-slate-100 sticky top-0 bg-white">
                 <span className="text-xs font-black uppercase tracking-wider text-slate-600 flex-shrink-0">Geselecteerd ({selected.length})</span>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <div ref={pickerRef} className="relative">
-                    <button
-                      onClick={() => setShowListPicker(o => !o)}
-                      title="Voeg toe aan lijst"
-                      className="flex items-center justify-center w-7 h-7 text-slate-400 hover:text-[#009FE3] hover:bg-[#009FE3]/5 rounded-sm transition-colors"
+                  <button
+                    ref={listBtnRef}
+                    onClick={toggleListPicker}
+                    title="Voeg toe aan lijst"
+                    className="flex items-center justify-center w-7 h-7 text-slate-400 hover:text-[#009FE3] hover:bg-[#009FE3]/5 rounded-sm transition-colors"
+                  >
+                    <List className="w-3.5 h-3.5" />
+                  </button>
+                  {showListPicker && listPickerPos && createPortal(
+                    <div
+                      ref={listPopupRef}
+                      style={{ position: 'fixed', top: listPickerPos.top, left: listPickerPos.left }}
+                      className="w-56 z-50 bg-white border border-slate-200 rounded-sm shadow-2xl overflow-hidden animate-fade-in"
                     >
-                      <List className="w-3.5 h-3.5" />
-                    </button>
-                    {showListPicker && (
-                      <div className="absolute bottom-full right-0 mb-1 w-56 bg-white border border-slate-200 rounded-sm shadow-2xl overflow-hidden">
-                        <div className="px-3 py-2 border-b border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400">Voeg {selected.length} toe aan</div>
-                        <div className="max-h-40 overflow-y-auto">
-                          {lists.length === 0 && <p className="text-xs text-slate-400 px-3 py-3 text-center">Nog geen lijsten</p>}
-                          {lists.map(l => (
-                            <button key={l.id} onClick={() => { onAddToList(l.id); setShowListPicker(false); }} className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-slate-50">
-                              <List className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                              <span className="truncate flex-1 font-semibold text-slate-700">{l.name}</span>
-                            </button>
-                          ))}
-                        </div>
-                        <div className="border-t border-slate-100 p-2 flex gap-1">
-                          <input
-                            value={newName}
-                            onChange={e => setNewName(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) { onCreateAndAddToList(newName.trim()); setNewName(''); setShowListPicker(false); } }}
-                            placeholder="Nieuwe lijst..."
-                            className="flex-1 min-w-0 px-2 py-1.5 border border-slate-200 rounded-sm text-xs focus:outline-none focus:border-[#009FE3]"
-                          />
-                          <button
-                            disabled={!newName.trim()}
-                            onClick={() => { onCreateAndAddToList(newName.trim()); setNewName(''); setShowListPicker(false); }}
-                            className="px-2 py-1.5 bg-[#009FE3] text-white rounded-sm disabled:opacity-40"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
+                      <div className="px-3 py-2 border-b border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400">Voeg {selected.length} toe aan</div>
+                      <div className="max-h-40 overflow-y-auto">
+                        {lists.length === 0 && <p className="text-xs text-slate-400 px-3 py-3 text-center">Nog geen lijsten</p>}
+                        {lists.map(l => (
+                          <button key={l.id} onClick={() => { onAddToList(l.id); setShowListPicker(false); }} className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-slate-50">
+                            <List className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                            <span className="truncate flex-1 font-semibold text-slate-700">{l.name}</span>
                           </button>
-                        </div>
+                        ))}
                       </div>
-                    )}
-                  </div>
+                      <div className="border-t border-slate-100 p-2 flex gap-1">
+                        <input
+                          value={newName}
+                          onChange={e => setNewName(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) { onCreateAndAddToList(newName.trim()); setNewName(''); setShowListPicker(false); } }}
+                          placeholder="Nieuwe lijst..."
+                          className="flex-1 min-w-0 px-2 py-1.5 border border-slate-200 rounded-sm text-xs focus:outline-none focus:border-[#009FE3]"
+                        />
+                        <button
+                          disabled={!newName.trim()}
+                          onClick={() => { onCreateAndAddToList(newName.trim()); setNewName(''); setShowListPicker(false); }}
+                          className="px-2 py-1.5 bg-[#009FE3] text-white rounded-sm disabled:opacity-40"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>,
+                    document.body
+                  )}
                   <button
                     onClick={onToggleFavorites}
                     title={allFavorite ? 'Verwijder selectie uit favorieten' : 'Voeg selectie toe aan favorieten'}
