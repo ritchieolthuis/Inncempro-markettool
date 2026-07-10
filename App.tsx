@@ -1442,7 +1442,7 @@ const App: React.FC = () => {
 
   // SETTINGS MODAL
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'profiel' | 'voorkeuren' | 'audit'>('profiel');
+  const [settingsTab, setSettingsTab] = useState<'profiel' | 'voorkeuren' | 'audit' | 'prullenbak'>('profiel');
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editAvatar, setEditAvatar] = useState('');
@@ -1960,6 +1960,18 @@ const App: React.FC = () => {
     setDeletedEntries(next);
     localStorage.setItem(DELETED_KEY, JSON.stringify(Array.from(next)));
     addAuditLog('Bedrijf verwijderd', naam);
+  };
+
+  // Herstel vanuit de Prullenbak — "verwijderen" is een soft-delete (staat gewoon in de
+  // brondata, alleen weggefilterd), dus terugzetten is simpelweg de key weer verwijderen
+  // uit deletedEntries.
+  const handleRestoreEntry = (key: string) => {
+    const next = new Set(deletedEntries);
+    next.delete(key);
+    setDeletedEntries(next);
+    localStorage.setItem(DELETED_KEY, JSON.stringify(Array.from(next)));
+    const naam = key.split('||')[0];
+    addAuditLog('Bedrijf hersteld', naam);
   };
 
   const handleAddressCorrection = (naam: string, correction: { straat: string; postcode: string; stad: string }) => {
@@ -3465,10 +3477,10 @@ const App: React.FC = () => {
                   </div>
                   {/* Tabs */}
                   <div className="flex border-b border-slate-100">
-                      {(['profiel', 'voorkeuren', 'audit'] as const).map(tab => (
+                      {(['profiel', 'voorkeuren', 'audit', 'prullenbak'] as const).map(tab => (
                           <button key={tab} onClick={() => setSettingsTab(tab)}
                               className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${settingsTab === tab ? 'border-b-2 border-[#E85E26] text-[#E85E26]' : 'text-slate-400 hover:text-slate-700'}`}>
-                              {tab === 'profiel' ? 'Profiel' : tab === 'voorkeuren' ? 'Voorkeuren' : 'Audit Log'}
+                              {tab === 'profiel' ? 'Profiel' : tab === 'voorkeuren' ? 'Voorkeuren' : tab === 'audit' ? 'Audit Log' : `Prullenbak${deletedEntries.size > 0 ? ` (${deletedEntries.size})` : ''}`}
                           </button>
                       ))}
                   </div>
@@ -3626,6 +3638,34 @@ const App: React.FC = () => {
                                   </table>
                               </div>
                               <p className="text-[10px] text-slate-400">Totaal: {auditLog.length} entries (max 1000 behouden)</p>
+                          </div>
+                      )}
+
+                      {settingsTab === 'prullenbak' && (
+                          <div className="space-y-3">
+                              {deletedEntries.size === 0 ? (
+                                  <p className="text-sm text-slate-400 text-center py-8">Prullenbak is leeg.</p>
+                              ) : (
+                                  <div className="border border-slate-200 rounded-sm overflow-hidden divide-y divide-slate-100 max-h-96 overflow-y-auto">
+                                      {Array.from(deletedEntries).map(key => {
+                                          const [naam, straat] = key.split('||');
+                                          const match = (bouwgarantData as any[]).find(b => b.naam === naam && straat && (b.straat || '') === straat)
+                                              || (bouwgarantData as any[]).find(b => b.naam === naam);
+                                          return (
+                                              <div key={key} className="flex items-center justify-between gap-3 px-4 py-3">
+                                                  <div className="min-w-0">
+                                                      <p className="text-sm font-semibold text-slate-800 truncate">{naam}</p>
+                                                      {match && <p className="text-xs text-slate-400 truncate">{[match.straat, match.stad].filter(Boolean).join(', ')}</p>}
+                                                  </div>
+                                                  <button onClick={() => handleRestoreEntry(key)} className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 text-[10px] font-bold uppercase tracking-wider rounded-sm transition-colors">
+                                                      <Repeat className="w-3 h-3" /> Herstel
+                                                  </button>
+                                              </div>
+                                          );
+                                      })}
+                                  </div>
+                              )}
+                              <p className="text-[10px] text-slate-400">Verwijderde bedrijven belanden hier — ze worden nooit automatisch definitief gewist, alleen jij kunt ze herstellen.</p>
                           </div>
                       )}
 
@@ -4777,7 +4817,7 @@ const App: React.FC = () => {
                                     </button>
                                     {cardMenuOpen === company.id && (
                                       <div className="absolute right-0 mt-1 w-36 bg-white border border-slate-200 rounded-sm shadow-lg overflow-hidden">
-                                        <button onClick={() => { removeFoundCompany(company.id); setCardMenuOpen(null); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-red-500 hover:bg-red-50 flex items-center gap-1.5"><Trash2 className="w-3 h-3" />Verwijderen</button>
+                                        <button onClick={() => { const raw = (company as any)._raw; handleDeleteEntry(raw?.naam || company.name, raw?.straat); removeFoundCompany(company.id); setCardMenuOpen(null); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-red-500 hover:bg-red-50 flex items-center gap-1.5"><Trash2 className="w-3 h-3" />Verwijderen</button>
                                         <button onClick={() => { setReplacingId(company.id); setReplaceQuery(''); setCardMenuOpen(null); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 flex items-center gap-1.5 border-t border-slate-100"><Repeat className="w-3 h-3" />Vervangen</button>
                                       </div>
                                     )}
@@ -5387,6 +5427,16 @@ const App: React.FC = () => {
                       {b.email && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Algemeen</span><a href={`mailto:${b.email}`} className="text-[#009FE3] hover:underline flex items-center gap-1.5 break-all"><Mail className="w-3 h-3 flex-shrink-0" />{b.email}</a></div>}
                       {b.email_sales && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Sales</span><a href={`mailto:${b.email_sales}`} className="text-[#009FE3] hover:underline flex items-center gap-1.5 break-all"><Mail className="w-3 h-3 flex-shrink-0" />{b.email_sales}</a></div>}
                       {b.email_overig && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Overig</span><a href={`mailto:${b.email_overig}`} className="text-[#009FE3] hover:underline flex items-center gap-1.5 break-all"><Mail className="w-3 h-3 flex-shrink-0" />{b.email_overig}</a></div>}
+                      {b.contactpersoon && (
+                        <div className="pt-2 mt-2 border-t border-slate-100 space-y-1.5">
+                          <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm">
+                            <span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Contactpersoon</span>
+                            <span className="text-slate-800 font-semibold">{b.contactpersoon}</span>
+                          </div>
+                          {b.contactpersoon_telefoon && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0" /><a href={`tel:${b.contactpersoon_telefoon}`} className="text-slate-800 flex items-center gap-1.5 hover:text-[#009FE3]"><Phone className="w-3 h-3 text-slate-400 flex-shrink-0" />{b.contactpersoon_telefoon}</a></div>}
+                          {b.contactpersoon_email && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0" /><a href={`mailto:${b.contactpersoon_email}`} className="text-[#009FE3] hover:underline flex items-center gap-1.5 break-all"><Mail className="w-3 h-3 flex-shrink-0" />{b.contactpersoon_email}</a></div>}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

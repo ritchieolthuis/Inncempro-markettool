@@ -54120,10 +54120,10 @@
     "stad": "Venlo",
     "provincie": "Limburg",
     "rechtsvorm": "",
-    "telefoon": "+31 6 37344804",
+    "telefoon": "077-3829141",
     "telefoon_sales": "",
     "telefoon_admin": "",
-    "email": "m.m.j.walda@student.tue.nl",
+    "email": "info@2.0architecten.nl",
     "email_sales": "",
     "email_overig": "",
     "website": "http://www.2.0architecten.nl",
@@ -54137,7 +54137,10 @@
     "instagram_handle": "",
     "lat": 51.4066843,
     "lng": 6.12269167,
-    "contactpersoon": "Mitchell Walda"
+    "contactpersoon": "Mitchell Walda",
+    "contactpersoon_telefoon": "+31 6 37344804",
+    "contactpersoon_email": "m.m.j.walda@student.tue.nl",
+    "beschrijving": "2.0 Architecten valt sinds enige tijd onder Sweco Architects, onderdeel van Sweco (www.sweco.nl)."
   },
   {
     "source": "Architectenweb",
