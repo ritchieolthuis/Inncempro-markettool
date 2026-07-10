@@ -15,14 +15,20 @@ export function isNederlandBedrijf(b: any): boolean {
 }
 
 export function mergeEntries(entries: any[]): any[] {
+  // Leestekens vervangen door een SPATIE, niet weglaten — anders hangt het resultaat af
+  // van of de bron toevallig spaties om het leesteken had staan. "Bekhuis & KleinJan®" en
+  // "Bekhuis&KleinJan" zijn overduidelijk hetzelfde bedrijf, maar werden vroeger tot
+  // "bekhuis kleinjan" resp. "bekhuiskleinjan" genormaliseerd — twee verschillende keys,
+  // dus nooit samengevoegd. Met een spatie i.p.v. niets normaliseren beide naar "bekhuis
+  // kleinjan" en matchen ze wél.
   const normNaam = (s: string) => (s || '').toLowerCase()
     .replace(/\b(b\.?v\.?|nv|vof|cv|stichting|bna)\b/g, '')
-    .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+    .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
   // Same company is often scraped a second time with a marketing tagline bolted on
   // ("&WA architecten" vs "&WA architecten - ontwerpen is luisteren") — strip anything
   // after a dash/pipe separator before comparing base names.
   const normNaamBase = (s: string) => normNaam((s || '').split(/\s[-–|]\s/)[0]);
-  const normStreet = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+  const normStreet = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
   const normPc = (s: string) => (s || '').replace(/\s/g, '').toUpperCase().slice(0, 6);
   // A generic descriptor bolted onto the actual (distinctive) trade name — one source may
   // list "cepezed", another "architectenbureau cepezed" for the exact same company.
