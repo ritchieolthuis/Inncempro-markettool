@@ -13,6 +13,7 @@ const SRC_COLOR: Record<string, string> = {
   Jongeneel: '#16A34A',
   BouwPartner: '#CA8A04',
   PontMeyer: '#DC2626',
+  Bouwcenter: '#7C3AED',
   'Van Wijnen': '#0D9488',
   'Plegt-Vos': '#475569',
   'Ter Steege Groep': '#71717A',
