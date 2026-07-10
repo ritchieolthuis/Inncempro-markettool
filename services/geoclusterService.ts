@@ -234,7 +234,11 @@ export async function preloadAllAddresses(): Promise<Map<string, GeoEntry>> {
   // nooit herbouwd om ze mee te nemen.
   const totalRecords = MERGED_BEDRIJVEN.length;
   const cached = loadCachedClusterData();
-  if (cached && cached.size === totalRecords) {
+  // Matchend AANTAL is niet genoeg: een bestaand bedrijf hernoemen/verhuizen (zelfde totaal,
+  // andere id — id bevat naam+straat+postcode) liet de oude cache-entry stilzwijgend staan.
+  // Check daarom dat élk huidig bedrijf ook echt (onder zijn HUIDIGE id) in de cache zit.
+  const cacheIsCurrent = !!cached && cached.size === totalRecords && MERGED_BEDRIJVEN.every(b => cached.has(makeId(b)));
+  if (cached && cacheIsCurrent) {
     emitProgress({
       status: 'ready',
       current: cached.size,

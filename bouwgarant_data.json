@@ -54114,16 +54114,16 @@
   },
   {
     "source": "Architectenweb",
-    "naam": "2.0 Architecten",
-    "straat": "Kazernestraat 17",
-    "postcode": "5928 NL",
+    "naam": "2.0 Architecten (Sweco Architects)",
+    "straat": "Villafloraweg 1",
+    "postcode": "5928 SZ",
     "stad": "Venlo",
     "provincie": "Limburg",
     "rechtsvorm": "",
-    "telefoon": "077-3829141",
+    "telefoon": "+31 6 37344804",
     "telefoon_sales": "",
     "telefoon_admin": "",
-    "email": "info@2.0architecten.nl",
+    "email": "m.m.j.walda@student.tue.nl",
     "email_sales": "",
     "email_overig": "",
     "website": "http://www.2.0architecten.nl",
@@ -54135,8 +54135,9 @@
     "linkedin_url": "",
     "twitter_handle": "",
     "instagram_handle": "",
-    "lat": 51.3740457,
-    "lng": 6.1555997
+    "lat": 51.4066843,
+    "lng": 6.12269167,
+    "contactpersoon": "Mitchell Walda"
   },
   {
     "source": "Architectenweb",
