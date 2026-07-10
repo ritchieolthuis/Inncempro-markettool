@@ -1369,7 +1369,11 @@ const vestigingCoreNaam = (naam: string, stad: string, source?: string): string 
   let n = (naam || '').toLowerCase()
     .replace(/\b(b\.?v\.?|nv|vof|cv|stichting|bna)\b/g, '')
     .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
-  const s = (stad || '').toLowerCase().trim();
+  // Plaatsnaam door DEZELFDE normalisatie halen als de naam hierboven — anders faalt de
+  // vergelijking zodra de stad een koppelteken/apostrof bevat (bv. "Hardinxveld-Giessendam"
+  // wordt in n "hardinxveldgiessendam", maar bleef als los stuk "s" ongewijzigd staan met
+  // koppelteken, dus matchte nooit en kreeg die vestiging een eigen, ongewenste groep).
+  const s = (stad || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
   if (s) {
     if (n === s) n = '';
     else if (n.endsWith(' ' + s)) n = n.slice(0, -(s.length + 1)).trim();
