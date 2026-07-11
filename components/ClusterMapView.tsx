@@ -196,7 +196,11 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
         fillColor: color,
         fillOpacity: 0,
         opacity: 0,
-        interactive: false,
+        // Interactive moet hier al `true` staan: Leaflet bindt click/hover-handlers alleen
+        // bij het aanmaken van de laag (in onAdd), niet wanneer `options.interactive` later
+        // wordt gewijzigd. Hierdoor opende geen enkele marker ooit een popup — zichtbare
+        // markers waren dus wel te zien maar nooit klikbaar, dus je zag nergens een titel.
+        interactive: true,
       }).bindPopup(popupHtml(entry));
       const prov = entry.provincie || 'Onbekend';
       const stad = entry.stad || 'Onbekend';
@@ -228,7 +232,6 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
       const matchSource = selectedSources.size === 0 || selectedSources.has(layer._entry?.source || 'Onbekend');
       const visible = !noSelection && matchRegion && matchSource;
       layer.setStyle({ opacity: visible ? 1 : 0, fillOpacity: visible ? 0.9 : 0 });
-      layer.options.interactive = visible;
       if (visible) bounds.push(layer.getLatLng());
     });
 

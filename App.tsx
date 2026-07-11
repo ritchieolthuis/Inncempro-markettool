@@ -1402,6 +1402,33 @@ const getAndereVestigingen = (b: any, allData: any[]): any[] => {
   }
   return out.sort((a, b2) => (a.stad || '').localeCompare(b2.stad || '', 'nl'));
 };
+// Naam van de moedergroep/holding uit spec2, bv. "TBI – Bouw & Ontwikkeling" -> "TBI",
+// "Dura Vermeer – Divisie Bouw en Vastgoed" -> "Dura Vermeer". Alleen spec2-waardes met
+// een " – " scheidingsteken worden als groepsaanduiding beschouwd.
+const holdingGroepNaam = (spec2: string): string => {
+  const m = (spec2 || '').split(' – ');
+  return m.length > 1 ? m[0].trim() : '';
+};
+// Andere bedrijven die tot dezelfde holding/groep behoren (bv. alle TBI-ondernemingen),
+// ook als het andere merknamen/vestigingen zijn — apart van getAndereVestigingen, die alleen
+// dezelfde bedrijfsnaam op een ander adres groepeert.
+const getGroepBedrijven = (b: any, allData: any[]): any[] => {
+  const groep = holdingGroepNaam(b.spec2);
+  if (!groep) return [];
+  const ownCore = vestigingCoreNaam(b.naam, b.stad, b.source);
+  const seen = new Set<string>([vestigingAddrKey(b)]);
+  const out: any[] = [];
+  for (const other of allData) {
+    if (other === b) continue;
+    if (holdingGroepNaam(other.spec2) !== groep) continue;
+    if (vestigingCoreNaam(other.naam, other.stad, other.source) === ownCore) continue; // al bij "Andere vestigingen"
+    const k = vestigingAddrKey(other);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(other);
+  }
+  return out.sort((a, b2) => (a.naam || '').localeCompare(b2.naam || '', 'nl'));
+};
 
 const SourceBadges = ({ b, size = 'sm' }: { b: any; size?: 'sm' | 'md' }) => {
   const sources: string[] = visibleSources(b);
@@ -1728,6 +1755,24 @@ const App: React.FC = () => {
   // meteen de vraag versturen (ts erbij zodat twee keer dezelfde suggestie ook opnieuw triggert)
   const [agentPromptRequest, setAgentPromptRequest] = useState<{ text: string; ts: number } | null>(null);
   const [selectedCompany, setSelectedCompany] = useState<any | null>(null);
+  // Kruimelpad binnen het bedrijfsprofiel-paneel: als je vanuit ERA Contour op een
+  // zusterbedrijf/vestiging klikt, zie je meteen die volledige gegevens (niet alleen een
+  // vinkje) — met een "Terug naar ERA Contour"-knop zodat je niet de hele zoekopdracht
+  // kwijtraakt. Wordt geleegd zodra het paneel via X of een nieuwe zoekopdracht sluit.
+  const [profileHistory, setProfileHistory] = useState<any[]>([]);
+  const openRelatedCompany = (v: any) => {
+    setSelectedCompany(prev => { if (prev) setProfileHistory(h => [...h, prev]); return v; });
+    addToRecentViewed(v.naam);
+    setEditMode(false);
+  };
+  const goBackInProfile = () => {
+    setProfileHistory(h => {
+      if (h.length === 0) return h;
+      const next = h.slice(0, -1);
+      setSelectedCompany(h[h.length - 1]);
+      return next;
+    });
+  };
   const [mapMarkerCount, setMapMarkerCount] = useState(0);
   const [mapFocusTarget, setMapFocusTarget] = useState<{ naam: string; straat: string; stad: string; provincie: string } | null>(null);
   const [editMode, setEditMode] = useState(false);
@@ -4016,7 +4061,7 @@ const App: React.FC = () => {
                    </div>
                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                      {paged.map((b: any, i: number) => (
-                       <div key={i} className={`bg-white border p-5 flex flex-col gap-3 transition-colors cursor-pointer ${selectedIds.has(b.naam) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`} onClick={() => { setSelectedCompany(b); addToRecentViewed(b.naam); }}>
+                       <div key={i} className={`bg-white border p-5 flex flex-col gap-3 transition-colors cursor-pointer ${selectedIds.has(b.naam) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`} onClick={() => { setSelectedCompany(b); setProfileHistory([]); addToRecentViewed(b.naam); }}>
                          <div className="flex items-start justify-between gap-2">
                            <div className="flex-1 min-w-0">
                              <div className="flex items-center gap-2 flex-wrap">
@@ -4810,7 +4855,7 @@ const App: React.FC = () => {
                                 draggable={showRouteMap}
                                 onDragStart={showRouteMap ? e => { e.dataTransfer.setData('application/company', JSON.stringify(b)); e.dataTransfer.effectAllowed = 'copy'; } : undefined}
                                 className={`relative bg-white border p-5 flex flex-col gap-3 min-h-[260px] transition-colors cursor-pointer ${showRouteMap ? 'cursor-grab active:cursor-grabbing' : ''} ${selectedIds.has(b.naam || company.name) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`}
-                                onClick={() => { setSelectedCompany(b); addToRecentViewed(b.naam || company.name); }}>
+                                onClick={() => { setSelectedCompany(b); setProfileHistory([]); addToRecentViewed(b.naam || company.name); }}>
                                 {viewMode === 'search' && (
                                   <div className="absolute top-2 right-2 z-10" onClick={e => e.stopPropagation()}>
                                     <button
@@ -5215,7 +5260,7 @@ const App: React.FC = () => {
         const hasSpec = b.spec1 || b.spec2 || b.spec3;
         const hasBedrijf = b.rechtsvorm || b.kvk;
         return (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/80 backdrop-blur-sm" onClick={() => { setSelectedCompany(null); setEditMode(false); }}>
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/80 backdrop-blur-sm" onClick={() => { setSelectedCompany(null); setProfileHistory([]); setEditMode(false); }}>
             <div className="bg-[#F8FAFC] w-full max-w-3xl max-h-[92vh] sm:max-h-[90vh] shadow-2xl flex flex-col rounded-t-xl sm:rounded-none" onClick={e => e.stopPropagation()}>
               {/* Drag indicator on mobile */}
               <div className="sm:hidden w-10 h-1 bg-slate-300 rounded-full mx-auto mt-3 mb-1 flex-shrink-0" />
@@ -5225,6 +5270,14 @@ const App: React.FC = () => {
                   <div className="flex items-center gap-2 text-[#E85E26] text-[10px] font-bold uppercase tracking-[0.2em] mb-1">
                     <Building className="w-3 h-3" /> Bedrijfsprofiel
                   </div>
+                  {profileHistory.length > 0 && (
+                    <button
+                      onClick={goBackInProfile}
+                      className="flex items-center gap-1 text-xs font-semibold text-[#009FE3] hover:underline mb-1"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" /> Terug naar {profileHistory[profileHistory.length - 1].naam}
+                    </button>
+                  )}
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
                     <SourceBadges b={b} size="md" />
                     {b.rechtsvorm && <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-medium">{b.rechtsvorm}</span>}
@@ -5233,8 +5286,8 @@ const App: React.FC = () => {
                 </div>
                 <div className="flex items-center gap-1 ml-2 flex-shrink-0">
                   <button onClick={() => { setEditDraft({ naam: b.naam||'', straat: b.straat||'', postcode: b.postcode||'', stad: b.stad||'', provincie: b.provincie||'', telefoon: b.telefoon||'', telefoon_sales: b.telefoon_sales||'', telefoon_admin: b.telefoon_admin||'', email: b.email||'', email_sales: b.email_sales||'', email_overig: b.email_overig||'', website: b.website||'', spec1: b.spec1||'', spec2: b.spec2||'', spec3: b.spec3||'', rechtsvorm: b.rechtsvorm||'', kvk: b.kvk||'', source: b.source||'Web' }); setEditMode(true); }} title="Bewerken" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-[#009FE3]"><Pencil className="w-4 h-4" /></button>
-                  <button onClick={() => { if (window.confirm(`"${b.naam}"${b.straat ? ` (${b.straat})` : ''} verwijderen?`)) { handleDeleteEntry(b.naam, b.straat); setSelectedCompany(null); setEditMode(false); } }} title="Verwijderen" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
-                  <button onClick={() => { setSelectedCompany(null); setEditMode(false); }} className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-900"><X className="w-5 h-5" /></button>
+                  <button onClick={() => { if (window.confirm(`"${b.naam}"${b.straat ? ` (${b.straat})` : ''} verwijderen?`)) { handleDeleteEntry(b.naam, b.straat); setSelectedCompany(null); setProfileHistory([]); setEditMode(false); } }} title="Verwijderen" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
+                  <button onClick={() => { setSelectedCompany(null); setProfileHistory([]); setEditMode(false); }} className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-900"><X className="w-5 h-5" /></button>
                 </div>
               </div>
 
@@ -5402,19 +5455,72 @@ const App: React.FC = () => {
                     <div>
                       <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5"><MapPin className="w-3 h-3"/> Andere vestigingen ({vestigingen.length})</p>
                       <div className="bg-white border border-slate-200 rounded-sm divide-y divide-slate-100">
-                        {vestigingen.map((v: any, vi: number) => (
-                          <button
+                        {vestigingen.map((v: any, vi: number) => {
+                          const isSel = selectedIds.has(v.naam);
+                          return (
+                          <div
                             key={vi}
-                            onClick={() => { setSelectedCompany(v); addToRecentViewed(v.naam); setEditMode(false); }}
-                            className="w-full text-left p-3 flex items-start gap-2 hover:bg-slate-50 transition-colors"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => openRelatedCompany(v)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') openRelatedCompany(v); }}
+                            className="w-full text-left p-3 flex items-start gap-2 hover:bg-slate-50 transition-colors cursor-pointer"
                           >
-                            <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
+                            <button
+                              type="button"
+                              title="Toevoegen aan vergelijk-selectie"
+                              onClick={(e) => toggleSelect(v.naam, v, e)}
+                              className={`flex-shrink-0 w-4 h-4 mt-0.5 border-2 rounded-sm flex items-center justify-center transition-colors ${isSel ? 'bg-[#E85E26] border-[#E85E26]' : 'border-slate-300 hover:border-[#E85E26]'}`}
+                            >
+                              {isSel && <Check className="w-2.5 h-2.5 text-white" />}
+                            </button>
                             <div className="min-w-0">
                               <p className="text-slate-800 font-medium text-sm truncate">{v.naam}</p>
                               <p className="text-slate-500 text-xs">{[v.straat, [v.postcode, v.stad].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</p>
                             </div>
-                          </button>
-                        ))}
+                          </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Zusterbedrijven binnen dezelfde holding (bv. TBI, Dura Vermeer) */}
+                {(() => {
+                  const groep = holdingGroepNaam(b.spec2);
+                  const zusters = getGroepBedrijven(b, activeData);
+                  if (!groep || zusters.length === 0) return null;
+                  return (
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5"><Building className="w-3 h-3"/> Onderdeel van {groep} ({zusters.length})</p>
+                      <div className="bg-white border border-slate-200 rounded-sm divide-y divide-slate-100">
+                        {zusters.map((v: any, vi: number) => {
+                          const isSel = selectedIds.has(v.naam);
+                          return (
+                          <div
+                            key={vi}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => openRelatedCompany(v)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') openRelatedCompany(v); }}
+                            className="w-full text-left p-3 flex items-start gap-2 hover:bg-slate-50 transition-colors cursor-pointer"
+                          >
+                            <button
+                              type="button"
+                              title="Toevoegen aan vergelijk-selectie"
+                              onClick={(e) => toggleSelect(v.naam, v, e)}
+                              className={`flex-shrink-0 w-4 h-4 mt-0.5 border-2 rounded-sm flex items-center justify-center transition-colors ${isSel ? 'bg-[#E85E26] border-[#E85E26]' : 'border-slate-300 hover:border-[#E85E26]'}`}
+                            >
+                              {isSel && <Check className="w-2.5 h-2.5 text-white" />}
+                            </button>
+                            <div className="min-w-0">
+                              <p className="text-slate-800 font-medium text-sm truncate">{v.naam}</p>
+                              <p className="text-slate-500 text-xs">{[v.straat, [v.postcode, v.stad].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</p>
+                            </div>
+                          </div>
+                          );
+                        })}
                       </div>
                     </div>
                   );
