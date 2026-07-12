@@ -5701,6 +5701,52 @@ const App: React.FC = () => {
                   );
                 })()}
 
+                {/* Bezoekhistorie: koppelt het logboek aan deze specifieke kaart, zodat je hier
+                    meteen ziet wanneer je hier laatst was, met wie je sprak en wat de notitie was
+                    — in plaats van dat je apart naar het tabblad "Mijn bezoeken" moet gaan. */}
+                {(() => {
+                  const companyVisits = visits
+                    .filter(v => v.bedrijf_id === (b.id || b.naam))
+                    .sort((a, c) => c.datum.localeCompare(a.datum));
+                  return (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5"><Clock className="w-3 h-3"/> Bezoekhistorie</p>
+                        <button
+                          onClick={() => addVisit(b)}
+                          className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] hover:text-[#008ac5] flex items-center gap-1"
+                        >
+                          <Plus className="w-3 h-3" /> Bezoek toevoegen
+                        </button>
+                      </div>
+                      <div className="bg-white border border-slate-200 rounded-sm divide-y divide-slate-100">
+                        {companyVisits.length === 0 ? (
+                          <p className="text-sm text-slate-400 p-4">Nog geen bezoeken bij dit bedrijf geregistreerd.</p>
+                        ) : companyVisits.map(v => (
+                          <div key={v.id} className="p-4 space-y-1">
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <span className="text-sm font-semibold text-slate-800">{v.datum}</span>
+                              <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${
+                                v.status === 'bezocht' ? 'bg-green-100 text-green-700' :
+                                v.status === 'interessant' ? 'bg-blue-100 text-blue-700' :
+                                v.status === 'geen-interesse' ? 'bg-red-100 text-red-700' :
+                                'bg-amber-100 text-amber-700'
+                              }`}>
+                                {v.status === 'bezocht' && 'Bezocht'}
+                                {v.status === 'interessant' && 'Interessant'}
+                                {v.status === 'geen-interesse' && 'Geen interesse'}
+                                {v.status === 'follow-up' && 'Follow-up'}
+                              </span>
+                            </div>
+                            {v.contactpersoon && <p className="text-xs text-slate-600">Contactpersoon: {v.contactpersoon}</p>}
+                            {v.notitie && <p className="text-xs text-slate-500">{v.notitie}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Adres */}
                 {hasAddress && (
                   <div>
