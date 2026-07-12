@@ -1801,14 +1801,20 @@ const App: React.FC = () => {
   // vóórdat de bezoeken echt worden opgeslagen.
   interface BulkVisitRow {
     input: string;
-    matches: any[];
-    selectedIndex: number | null; // null = "niet in database"
+    matches: any[];             // automatische kandidaten (top 5) voor de huidige zoekterm
+    selectedIndex: number | null; // null = nog geen gekoppelde kaart
+    confirmed: boolean;         // true = jij hebt bevestigd dat de match klopt
+    searchMode: boolean;        // true = handmatig-zoeken-balk staat open (bv. na "Niet correct")
+    searchQuery: string;        // tekst in de handmatig-zoeken-balk
+    creatingNew: boolean;       // jij hebt gekozen om hier een nieuwe kaart voor aan te maken
     naam: string;
     straat: string;
     postcode: string;
     stad: string;
+    provincie: string;
     telefoon: string;
     email: string;
+    website: string;
     contactpersoon: string;
     notitie: string;
     expanded: boolean; // editvelden in-/uitklappen, anders is 100+ rijen onwerkbaar lang
@@ -1818,20 +1824,27 @@ const App: React.FC = () => {
   const [bulkVisitText, setBulkVisitText] = useState('');
   const [bulkVisitRows, setBulkVisitRows] = useState<BulkVisitRow[]>([]);
 
-  // Vult de editvelden van een rij op basis van de gekozen match (of leegt ze als
-  // "niet in database" gekozen wordt, met de getypte naam als startpunt).
+  // Vult de editvelden van een rij op basis van de gekozen match (of leegt ze als er nog
+  // geen match is, met de getypte naam als startpunt). confirmed staat standaard aan zodra er
+  // een kandidaat is — jij ziet 'm meteen als "gekoppeld" en kunt hem met één klik afkeuren.
   const bulkVisitRowFromMatch = (input: string, matches: any[], selectedIndex: number | null): BulkVisitRow => {
     const m = selectedIndex !== null ? matches[selectedIndex] : null;
     return {
       input,
       matches,
       selectedIndex,
+      confirmed: selectedIndex !== null,
+      searchMode: false,
+      searchQuery: '',
+      creatingNew: false,
       naam: m?.naam || input,
       straat: m?.straat || '',
       postcode: m?.postcode || '',
       stad: m?.stad || '',
+      provincie: m?.provincie || '',
       telefoon: m?.telefoon || '',
       email: m?.email || '',
+      website: m?.website || '',
       contactpersoon: '',
       notitie: '',
       expanded: false,
@@ -1908,20 +1921,31 @@ const App: React.FC = () => {
   };
 
   // Slaat de complete bulk-upload lijst (100+ rijen) in één keer op. Gebruikt bij het
-  // toevoegen van bezoeken via het "+" icoon in Bezoekhistorie:
-  // - Rijen die aan een bestaande kaart gekoppeld zijn (selectedIndex !== null) worden als
-  //   normaal bezoek gelogd. Zijn naam/adres/telefoon/email in de review-stap gewijzigd t.o.v.
-  //   wat er al in de database stond, dan wordt dat verschil ook naar de bedrijfskaart zelf
-  //   teruggeschreven via autoSaveEdit — zodat de database bijgewerkt blijft, niet alleen het
-  //   bezoeklogboek.
-  // - Rijen zonder match worden als los bezoek gelogd met precies de gegevens die zijn
-  //   ingevuld. Er wordt NOOIT een nieuwe bedrijfskaart aangemaakt, ook niet voor een bedrijf
-  //   dat nog niet bestaat — dat voorkomt dubbele/onvolledige kaarten in de database.
+  // toevoegen van bezoeken via het "+" icoon in Bezoekhistorie. Per rij drie uitkomsten:
+  // - Bevestigde match (confirmed && selectedIndex !== null): bezoek koppelt aan die kaart.
+  //   Verschilt naam/adres/telefoon/email met wat er al stond, dan wordt dat teruggeschreven
+  //   naar de bedrijfskaart via autoSaveEdit — de database blijft dus ook up-to-date.
+  // - Nieuwe kaart (creatingNew): jij hebt zelf aangegeven dat dit een echt nieuw bedrijf is
+  //   (geen match gevonden, of expliciet afgekeurd) — dan wordt er, alleen op jouw verzoek,
+  //   een nieuwe kaart aangemaakt via addCustomEntries, en het bezoek daaraan gekoppeld.
+  // - Nog niets van dat alles: los bezoek zonder gekoppelde kaart, met wat er is ingevuld.
   const saveBulkVisitRows = (rows: BulkVisitRow[]) => {
     const today = new Date().toISOString().split('T')[0];
     const nowIso = new Date().toISOString();
+
+    const newCards = rows
+      .filter(row => row.creatingNew && row.naam.trim())
+      .map(row => ({
+        naam: row.naam.trim(), straat: row.straat.trim(), postcode: row.postcode.trim(),
+        stad: row.stad.trim(), provincie: row.provincie.trim(), telefoon: row.telefoon.trim(),
+        email: row.email.trim(), website: row.website.trim(),
+        spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', source: 'Web',
+      }));
+    if (newCards.length > 0) addCustomEntries(newCards, 'Bedrijf toegevoegd (via bezoek)');
+
     const newVisits: Visit[] = rows.map(row => {
-      const matched = row.selectedIndex !== null ? row.matches[row.selectedIndex] : null;
+      const matched = row.confirmed && row.selectedIndex !== null ? row.matches[row.selectedIndex] : null;
+
       if (matched) {
         const edits: Record<string, string> = {};
         if (row.naam.trim() && row.naam.trim() !== (matched.naam || ''))         edits.naam = row.naam.trim();
@@ -1949,10 +1973,12 @@ const App: React.FC = () => {
           matched: true,
         };
       }
+
+      const naam = row.naam.trim() || row.input.trim();
       return {
         id: Math.random().toString(36).substring(2, 11),
-        bedrijf_id: (row.naam.trim() || row.input.trim()),
-        naam: row.naam.trim() || row.input.trim(),
+        bedrijf_id: naam,
+        naam,
         stad: row.stad.trim(),
         straat: row.straat.trim(),
         postcode: row.postcode.trim(),
@@ -1963,7 +1989,7 @@ const App: React.FC = () => {
         status: 'bezocht',
         datum: today,
         created_at: nowIso,
-        matched: false,
+        matched: row.creatingNew, // nieuwe kaart net aangemaakt = wél gekoppeld
       };
     });
     setVisits(v => [...newVisits, ...v]);
@@ -5502,7 +5528,7 @@ const App: React.FC = () => {
               <p className="text-xs text-slate-400 mt-1">
                 {bulkVisitStep === 'input'
                   ? 'Eén bedrijfsnaam per regel — hoeveel je maar wilt. Bedrijven die al in de database staan worden automatisch herkend, ook bij afwijkende schrijfwijze of afkortingen (OMA, BAM, ...).'
-                  : `${bulkVisitRows.length} bedrijven gevonden. Controleer de matches, pas eventueel naam/adres/contactgegevens aan, en sla op.`}
+                  : `${bulkVisitRows.length} rijen. Klopt een match niet? Klik op het kruisje en zoek handmatig, of maak een nieuwe kaart aan als het bedrijf echt nog niet bestaat. Klap een rij open om alles te controleren of bij te werken.`}
               </p>
             </div>
 
@@ -5518,47 +5544,100 @@ const App: React.FC = () => {
                 />
               ) : (
                 <div className="space-y-2">
-                  {bulkVisitRows.map((row, idx) => (
+                  {/* Kolomkoppen: links wat jij typte, rechts waar het systeem het mee matcht */}
+                  <div className="grid grid-cols-2 gap-3 px-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    <span>Jouw naam</span>
+                    <span>Match in het systeem</span>
+                  </div>
+                  {bulkVisitRows.map((row, idx) => {
+                    const isMatched = row.confirmed && row.selectedIndex !== null;
+                    const matchedCompany = row.selectedIndex !== null ? row.matches[row.selectedIndex] : null;
+                    return (
                     <div key={idx} className="border border-slate-200 rounded-sm">
-                      <div className="flex items-center gap-3 p-3">
-                        <button
-                          onClick={() => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, expanded: !r.expanded } : r))}
-                          className="text-slate-400 hover:text-slate-700 flex-shrink-0"
-                        >
-                          {row.expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                        </button>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-slate-800 truncate">{row.naam || row.input}</p>
-                          <p className="text-[10px] text-slate-400 truncate">Getypt als: {row.input}</p>
+                      <div className="grid grid-cols-2 gap-3 p-3 items-center">
+                        <div className="min-w-0 flex items-start gap-2">
+                          <button
+                            onClick={() => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, expanded: !r.expanded } : r))}
+                            className="text-slate-400 hover:text-slate-700 flex-shrink-0 mt-0.5"
+                          >
+                            {row.expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </button>
+                          <p className="text-sm font-semibold text-slate-800 truncate">{row.input}</p>
                         </div>
-                        {row.selectedIndex !== null ? (
-                          <span className="text-[9px] font-bold uppercase tracking-wider text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5 flex-shrink-0">Gekoppeld</span>
-                        ) : (
-                          <span className="text-[9px] font-bold uppercase tracking-wider text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 flex-shrink-0">Niet in database</span>
-                        )}
+
+                        <div className="min-w-0 flex items-center justify-between gap-2">
+                          {row.creatingNew ? (
+                            <span className="text-xs font-semibold text-[#009FE3] truncate">{row.naam || '(nieuwe kaart)'}</span>
+                          ) : isMatched ? (
+                            <span className="text-xs font-semibold text-slate-800 truncate">{matchedCompany.naam}{matchedCompany.stad ? ` — ${matchedCompany.stad}` : ''}</span>
+                          ) : (
+                            <span className="text-xs text-slate-400 italic truncate">Geen match</span>
+                          )}
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            {row.creatingNew ? (
+                              <span className="text-[9px] font-bold uppercase tracking-wider text-[#009FE3] bg-[#009FE3]/10 border border-[#009FE3]/30 rounded-full px-2 py-0.5">Nieuwe kaart</span>
+                            ) : isMatched ? (
+                              <>
+                                <span className="text-[9px] font-bold uppercase tracking-wider text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">Klopt</span>
+                                <button
+                                  title="Niet correct — opnieuw zoeken"
+                                  onClick={() => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, confirmed: false, searchMode: true, searchQuery: r.input, expanded: true } : r))}
+                                  className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-[9px] font-bold uppercase tracking-wider text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Niet gekoppeld</span>
+                            )}
+                          </div>
+                        </div>
                       </div>
 
                       {row.expanded && (
                         <div className="px-3 pb-3 space-y-2 border-t border-slate-100 pt-3">
-                          {row.matches.length > 0 && (
-                            <select
-                              value={row.selectedIndex ?? -1}
-                              onChange={e => {
-                                const val = Number(e.target.value);
-                                setBulkVisitRows(rows => rows.map((r, i) => i === idx ? bulkVisitRowFromMatch(r.input, r.matches, val === -1 ? null : val) : r));
-                              }}
-                              className="w-full border border-slate-200 rounded-sm px-2 py-1.5 text-xs focus:outline-none focus:border-[#009FE3] bg-white"
-                            >
-                              {row.matches.map((m, mi) => (
-                                <option key={mi} value={mi}>{m.naam}{m.stad ? ` — ${m.stad}` : ''}</option>
-                              ))}
-                              <option value={-1}>Niet in database (los bezoek toevoegen)</option>
-                            </select>
+                          {/* Handmatig zoeken: nodig als het bedrijf wél bestaat maar niet in de
+                              automatische top-5 stond, of als de match is afgekeurd. */}
+                          {(row.searchMode || (!isMatched && !row.creatingNew)) && (
+                            <div className="space-y-1.5">
+                              <input
+                                type="text"
+                                value={row.searchQuery || row.input}
+                                onChange={e => {
+                                  const q = e.target.value;
+                                  const matches = q.trim() ? findCompanyMatches(q, activeData) : [];
+                                  setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, searchQuery: q, matches, searchMode: true } : r));
+                                }}
+                                placeholder="Zoek handmatig op bedrijfsnaam..."
+                                className="w-full border border-[#009FE3]/40 rounded-sm px-2 py-1.5 text-xs focus:outline-none focus:border-[#009FE3]"
+                              />
+                              {row.matches.length > 0 && (
+                                <div className="border border-slate-200 rounded-sm divide-y divide-slate-100 max-h-40 overflow-y-auto">
+                                  {row.matches.map((m, mi) => (
+                                    <button
+                                      key={mi}
+                                      onClick={() => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? bulkVisitRowFromMatch(r.input, r.matches, mi) : r))}
+                                      className="w-full text-left px-2 py-1.5 text-xs text-slate-700 hover:bg-[#009FE3]/5"
+                                    >
+                                      {m.naam}{m.stad ? ` — ${m.stad}` : ''}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                              <button
+                                onClick={() => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, creatingNew: true, searchMode: false, selectedIndex: null, confirmed: false, naam: r.naam || r.input } : r))}
+                                className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#009FE3] hover:underline"
+                              >
+                                <Plus className="w-3 h-3" /> Geen van deze — nieuwe kaart aanmaken
+                              </button>
+                            </div>
                           )}
+
                           <div className="grid grid-cols-2 gap-2">
                             {([
                               ['naam', 'Naam'], ['stad', 'Stad'], ['straat', 'Straat'], ['postcode', 'Postcode'],
-                              ['telefoon', 'Telefoon'], ['email', 'Email'], ['contactpersoon', 'Contactpersoon'],
+                              ['provincie', 'Provincie'], ['telefoon', 'Telefoon'], ['email', 'Email'], ['website', 'Website'],
+                              ['contactpersoon', 'Contactpersoon'],
                             ] as const).map(([field, label]) => (
                               <input
                                 key={field}
@@ -5577,12 +5656,12 @@ const App: React.FC = () => {
                             rows={2}
                             className="w-full border border-slate-200 rounded-sm px-2 py-1.5 text-xs focus:outline-none focus:border-[#009FE3] resize-none"
                           />
-                          {row.selectedIndex === null && (
+                          {!isMatched && !row.creatingNew && (
                             <a
                               href={`https://www.google.com/search?q=${encodeURIComponent(row.naam || row.input)}`}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#009FE3] hover:underline"
+                              className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 hover:underline"
                             >
                               <Search className="w-3 h-3" /> Zoek "{row.naam || row.input}" op Google
                             </a>
@@ -5590,7 +5669,8 @@ const App: React.FC = () => {
                         </div>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
