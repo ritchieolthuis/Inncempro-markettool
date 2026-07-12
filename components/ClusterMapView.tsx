@@ -162,6 +162,16 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
       .sort((a, b) => b.count - a.count || a.source.localeCompare(b.source, 'nl'));
   }, [allEntries]);
 
+  // Hoe verder ingezoomd, hoe groter de bolletjes (makkelijker te raken op mobiel) — maar
+  // begrensd tussen 3.5 en 8px radius zodat bedrijven die dicht bij elkaar zitten (bv.
+  // binnenstad Amsterdam) nooit onder elkaar gaan overlappen. Zoom 13 blijft de baseline
+  // radius 5, dezelfde grootte die hiervoor altijd vast stond.
+  const CIRCLE_BASE_ZOOM = 13;
+  const circleRadiusForZoom = (zoom: number): number => {
+    const scale = 1 + (zoom - CIRCLE_BASE_ZOOM) * 0.09;
+    return Math.max(3.5, Math.min(8, 5 * Math.max(0.65, Math.min(1.45, scale))));
+  };
+
   // Initialize map once
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -177,7 +187,13 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
       tileSize: 256,
     }).addTo(mapRef.current);
     markersLayerRef.current = L.layerGroup().addTo(mapRef.current);
-    return () => { mapRef.current?.remove(); mapRef.current = null; };
+    const rescaleCircles = () => {
+      if (!mapRef.current || !markersLayerRef.current) return;
+      const r = circleRadiusForZoom(mapRef.current.getZoom());
+      markersLayerRef.current.eachLayer((layer: any) => { layer.setRadius?.(r); });
+    };
+    mapRef.current.on('zoomend', rescaleCircles);
+    return () => { mapRef.current?.off('zoomend', rescaleCircles); mapRef.current?.remove(); mapRef.current = null; };
   }, []);
 
   // Rebuild markers whenever entries change (including when background geocoding updates coords).
@@ -186,11 +202,12 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
     if (!markersLayerRef.current || allEntries.length === 0) return;
 
     markersLayerRef.current.clearLayers();
+    const startRadius = circleRadiusForZoom(mapRef.current?.getZoom() ?? CIRCLE_BASE_ZOOM);
 
     allEntries.forEach((entry) => {
       const color = SRC_COLOR[entry.source] || '#64748B';
       const marker = L.circleMarker(entry.coords as [number, number], {
-        radius: 5,
+        radius: startRadius,
         color: '#fff',
         weight: 1,
         fillColor: color,

@@ -171,14 +171,26 @@ async function geocodeEntry(b: any, cache: GeoCache): Promise<{ coords: Coords |
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
-function makePin(color: string, label?: string | number) {
+// Hoe verder ingezoomd, hoe groter de pin — makkelijker te raken met een vinger op
+// mobiel — maar begrensd tussen 0.65x en 1.45x zodat bedrijven die dicht bij elkaar
+// zitten (bv. binnenstad Amsterdam) nooit onder elkaar verdwijnen. Zoom 13 (het
+// standaard stadsniveau) is de baseline 1x, dezelfde afmeting als voorheen vast stond.
+const PIN_BASE_ZOOM = 13;
+function pinScale(zoom?: number): number {
+  if (zoom == null) return 1;
+  const scale = 1 + (zoom - PIN_BASE_ZOOM) * 0.09;
+  return Math.max(0.65, Math.min(1.45, scale));
+}
+function makePin(color: string, label?: string | number, zoom?: number) {
   const lbl = label != null ? String(label) : '';
   const inner = lbl
     ? `<text x="12" y="16" text-anchor="middle" fill="white" font-size="9" font-weight="700" font-family="system-ui">${lbl}</text>`
     : `<circle cx="12" cy="12" r="5" fill="white"/>`;
+  const scale = pinScale(zoom);
+  const w = Math.round(24 * scale), h = Math.round(36 * scale);
   return L.divIcon({
-    html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36"><path d="M12 0C5.4 0 0 5.4 0 12c0 7.5 12 24 12 24s12-16.5 12-24C24 5.4 18.6 0 12 0z" fill="${color}" stroke="white" stroke-width="1.5"/>${inner}</svg>`,
-    className: '', iconSize: [24, 36], iconAnchor: [12, 36], popupAnchor: [0, -38],
+    html: `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 24 36"><path d="M12 0C5.4 0 0 5.4 0 12c0 7.5 12 24 12 24s12-16.5 12-24C24 5.4 18.6 0 12 0z" fill="${color}" stroke="white" stroke-width="1.5"/>${inner}</svg>`,
+    className: '', iconSize: [w, h], iconAnchor: [w / 2, h], popupAnchor: [0, -h - 2],
   });
 }
 
@@ -500,9 +512,10 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
       next.forEach((ge, i) => {
         if (ge.coords && ge.marker && mapRef.current) {
           ge.marker.remove();
-          ge.marker = L.marker(ge.coords, { icon: makePin(ge.color, i + 1) })
+          ge.marker = L.marker(ge.coords, { icon: makePin(ge.color, i + 1, mapRef.current?.getZoom()) })
             .bindPopup(makePopup(ge.entry, ge.color, ge.isFav, i + 1), { maxWidth: 290 })
             .addTo(mapRef.current!);
+          (ge.marker as any)._pinColor = ge.color; (ge.marker as any)._pinLabel = i + 1;
         }
       });
       return next;
@@ -521,9 +534,10 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
       next.forEach((ge, idx) => {
         if (ge.coords && ge.marker && mapRef.current) {
           ge.marker.remove();
-          ge.marker = L.marker(ge.coords, { icon: makePin(ge.color, idx + 1) })
+          ge.marker = L.marker(ge.coords, { icon: makePin(ge.color, idx + 1, mapRef.current?.getZoom()) })
             .bindPopup(makePopup(ge.entry, ge.color, ge.isFav, idx + 1), { maxWidth: 290 })
             .addTo(mapRef.current!);
+          (ge.marker as any)._pinColor = ge.color; (ge.marker as any)._pinLabel = idx + 1;
         }
       });
       return next;
@@ -539,9 +553,10 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
       const next = [...prev];
       const ge: GeoEntry = { entry: raw, coords, color, isFav: false };
       if (coords && mapRef.current) {
-        ge.marker = L.marker(coords, { icon: makePin(color, i + 1) })
+        ge.marker = L.marker(coords, { icon: makePin(color, i + 1, mapRef.current?.getZoom()) })
           .bindPopup(makePopup(raw, color, false, i + 1), { maxWidth: 290 })
           .addTo(mapRef.current);
+        (ge.marker as any)._pinColor = color; (ge.marker as any)._pinLabel = i + 1;
       }
       next[i] = ge;
       return next;
@@ -564,9 +579,10 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
       next.forEach((s, idx) => {
         if (s.coords && mapRef.current) {
           s.marker?.remove();
-          s.marker = L.marker(s.coords, { icon: makePin(s.color, idx + 1) })
+          s.marker = L.marker(s.coords, { icon: makePin(s.color, idx + 1, mapRef.current?.getZoom()) })
             .bindPopup(makePopup(s.entry, s.color, s.isFav, idx + 1), { maxWidth: 290 })
             .addTo(mapRef.current);
+          (s.marker as any)._pinColor = s.color; (s.marker as any)._pinLabel = idx + 1;
         }
       });
       return next;
@@ -684,7 +700,23 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
     }).addTo(mapRef.current);
     const ro = new ResizeObserver(() => mapRef.current?.invalidateSize());
     ro.observe(mapDiv.current);
-    return () => { abortRef.current = true; ro.disconnect(); mapRef.current?.remove(); mapRef.current = null; delete (window as any)._inncemNav; };
+    // Pins groeien iets mee met de zoom (makkelijker te raken op mobiel), begrensd via
+    // pinScale() zodat ze in dichtbevolkte gebieden (bv. binnenstad Amsterdam) nooit
+    // gaan overlappen. Elke marker draagt zijn eigen kleur/label via _pinColor/_pinLabel
+    // (gezet bij aanmaak, zie makePin call-sites) zodat we hier zonder aparte registry
+    // gewoon alle live pins op de kaart kunnen herschalen.
+    const rescalePins = () => {
+      const map = mapRef.current;
+      if (!map) return;
+      const zoom = map.getZoom();
+      map.eachLayer((layer: any) => {
+        if (layer instanceof L.Marker && layer._pinColor) {
+          layer.setIcon(makePin(layer._pinColor, layer._pinLabel, zoom));
+        }
+      });
+    };
+    mapRef.current.on('zoomend', rescalePins);
+    return () => { abortRef.current = true; ro.disconnect(); mapRef.current?.off('zoomend', rescalePins); mapRef.current?.remove(); mapRef.current = null; delete (window as any)._inncemNav; };
   }, []);
 
   // Keep global nav handler in sync with prop
@@ -880,9 +912,10 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
       const color = SRC_COLOR[bedrijf.source] || SRC_COLOR['Onbekend'];
       const ge: GeoEntry = { entry: bedrijf, coords, color, isFav: false };
       if (mapRef.current) {
-        ge.marker = L.marker(coords, { icon: makePin(color, added + 1) })
+        ge.marker = L.marker(coords, { icon: makePin(color, added + 1, mapRef.current?.getZoom()) })
           .bindPopup(makePopup(bedrijf, color, false, undefined, getVestigingen(bedrijf, coreIndex)), { maxWidth: 290 })
           .addTo(mapRef.current);
+        (ge.marker as any)._pinColor = color; (ge.marker as any)._pinLabel = added + 1;
         vestigingRegistry.set(vestigingKey(bedrijf), ge.marker);
       }
       pool.push(ge);
@@ -944,9 +977,10 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
         const color = SRC_COLOR[bedrijf.source] || SRC_COLOR['Onbekend'];
         const ge: GeoEntry = { entry: bedrijf, coords, color, isFav: false };
         if (coords && mapRef.current) {
-          ge.marker = L.marker(coords, { icon: makePin(color) })
+          ge.marker = L.marker(coords, { icon: makePin(color, undefined, mapRef.current?.getZoom()) })
             .bindPopup(makePopup(bedrijf, color, false, undefined, getVestigingen(bedrijf, coreIndex)), { maxWidth: 290 })
             .addTo(mapRef.current);
+          (ge.marker as any)._pinColor = color;
           vestigingRegistry.set(vestigingKey(bedrijf), ge.marker);
         }
         pool.push(ge);
@@ -1109,9 +1143,10 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
 
       const ge: GeoEntry = { entry, coords, color, isFav };
       if (coords && mapRef.current) {
-        ge.marker = L.marker(coords, { icon: makePin(color) })
+        ge.marker = L.marker(coords, { icon: makePin(color, undefined, mapRef.current?.getZoom()) })
           .bindPopup(makePopup(entry, color, isFav, undefined, getVestigingen(entry, coreIndex)), { maxWidth: 290 })
           .addTo(mapRef.current);
+        (ge.marker as any)._pinColor = color;
         vestigingRegistry.set(vestigingKey(entry), ge.marker);
         placed++;
       }
@@ -1155,9 +1190,10 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
     entries.forEach(e => e.marker?.remove());
     ordered.forEach((ge, idx) => {
       if (!mapRef.current || !ge.coords) return;
-      ge.marker = L.marker(ge.coords, { icon: makePin(ge.color, idx + 1) })
+      ge.marker = L.marker(ge.coords, { icon: makePin(ge.color, idx + 1, mapRef.current?.getZoom()) })
         .bindPopup(makePopup(ge.entry, ge.color, ge.isFav, idx + 1), { maxWidth: 290 })
         .addTo(mapRef.current!);
+      (ge.marker as any)._pinColor = ge.color; (ge.marker as any)._pinLabel = idx + 1;
     });
   };
 
@@ -1168,9 +1204,10 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
     entries.forEach(e => {
       e.marker?.remove();
       if (e.coords && mapRef.current) {
-        e.marker = L.marker(e.coords, { icon: makePin(e.color) })
+        e.marker = L.marker(e.coords, { icon: makePin(e.color, undefined, mapRef.current?.getZoom()) })
           .bindPopup(makePopup(e.entry, e.color, e.isFav, undefined, getVestigingen(e.entry, coreIndex)), { maxWidth: 290 })
           .addTo(mapRef.current!);
+        (e.marker as any)._pinColor = e.color;
         vestigingRegistry.set(vestigingKey(e.entry), e.marker);
       }
     });
@@ -1203,9 +1240,10 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
     entries.forEach(e => e.marker?.remove());
     ordered.forEach((ge, idx) => {
       if (!mapRef.current || !ge.coords) return;
-      ge.marker = L.marker(ge.coords, { icon: makePin(ge.color, idx + 1) })
+      ge.marker = L.marker(ge.coords, { icon: makePin(ge.color, idx + 1, mapRef.current?.getZoom()) })
         .bindPopup(makePopup(ge.entry, ge.color, ge.isFav, idx + 1), { maxWidth: 290 })
         .addTo(mapRef.current!);
+      (ge.marker as any)._pinColor = ge.color; (ge.marker as any)._pinLabel = idx + 1;
     });
   };
 
