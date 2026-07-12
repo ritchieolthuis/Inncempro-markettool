@@ -1587,25 +1587,49 @@ const App: React.FC = () => {
 
   // Live GPS-positie: op ÉLKE page load (dus ook bij een refresh) opnieuw ophalen op de
   // achtergrond, zodat "waar ben ik nu" nooit blijft hangen op waar je was toen je voor het
-  // laatst instellingen bewerkte. Rij je 10 minuten verder en refresh je de pagina, dan wordt
-  // dit gewoon opnieuw opgevraagd. De browser regelt zelf de toestemmingsvraag (native prompt,
-  // eenmalig per site) — daar hoeft de app niets extra's voor te bouwen; bij weigering/geen
-  // support valt alles terug op prefAddressCoords/hqCoords, zoals al het geval was.
-  // searchOriginCoords is dezelfde state die ook tijdens een zoekopdracht als live-locatie
-  // wordt gebruikt (zie executeSearch) — hier alvast vullen zodat de eerste weergave, nog vóór
-  // er is gezocht, ook al met de actuele locatie rekent.
+  // Real-time geolocatie: watchPosition volgt je locatie continu (niet eenmalig zoals
+  // getCurrentPosition deed). Bij elke update wordt reverse geocoding via Nominatim gedaan
+  // om van lat/lng naar volledig adres (straat + huisnummer) te gaan. Dit adres wordt als
+  // prefAddress gesteld, zodat je zoekopdrachten altijd van je huidige locatie starten, en
+  // dit automatisch bijgewerkt wordt als je beweegt.
   useEffect(() => {
     if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setSearchOriginCoords(coords);
-        const nearest = findNearestCity(coords.lat, coords.lng);
-        setActiveSearchOriginLabel(nearest ? toDisplayCityName(nearest.name) : 'mijn locatie');
-      },
-      () => { /* geweigerd/timeout: blijft op prefAddressCoords/hqCoords hangen, zoals altijd */ },
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 } // maximumAge 0: altijd een verse fix, geen browsercache van een oudere positie
+    let watchId: number | null = null;
+    const reverseGeocode = async (lat: number, lng: number) => {
+      try {
+        const r = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=18&addressdetails=1`,
+          { headers: { 'User-Agent': 'inncempro-markettool/1.0' } }
+        );
+        if (!r.ok) return;
+        const data = await r.json();
+        if (data.address) {
+          // Bouw het adres op: huisnummer + straatnaam + plaats (minimaal).
+          const houseNum = (data.address.house_number || '') as string;
+          const street = (data.address.road || data.address.street || data.address.name || '') as string;
+          const city = (data.address.city || data.address.town || data.address.village || '') as string;
+          const postcode = (data.address.postcode || '') as string;
+          const addrParts = [houseNum, street, postcode, city].filter(x => x?.trim());
+          const fullAddr = addrParts.join(', ');
+          if (fullAddr.trim()) {
+            setPrefAddressState(fullAddr);
+            localStorage.setItem('inncempro_pref_address', fullAddr);
+            setSearchOriginCoords({ lat, lng });
+            setActiveSearchOriginLabel('mijn locatie');
+          }
+        }
+      } catch (e) {
+        // Reverse geocoding mislukt: blijf gewoon op hudig adres hangen.
+      }
+    };
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => reverseGeocode(pos.coords.latitude, pos.coords.longitude),
+      () => { /* geweigerd/fout: geen actie */ },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
+    return () => {
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    };
   }, []);
 
   // Eerste keer laden zonder gecachete coördinaten (bv. na een update van de app): geocode
