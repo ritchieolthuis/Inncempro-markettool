@@ -23,11 +23,11 @@ import { getDrivingDistancesKm } from './services/routingService';
 // halen; niets bij deze vlag verwijderen.
 const AI_FEATURES_ENABLED = false;
 
-// TIJDELIJK voor een demo aan collega's: laat het inlogscherm nog wel even zien, maar log na
-// 3 seconden automatisch in als de standaard demo-gebruiker, zodat niemand live hoeft in te
-// typen. Op false zetten (of weer verwijderen) zodra de demo voorbij is — dan is inloggen
-// weer verplicht zoals normaal.
-const DEMO_AUTO_LOGIN = true;
+// TIJDELIJK voor een demo aan collega's geweest: logde na 3 seconden automatisch in als de
+// standaard demo-gebruiker, zodat niemand live hoeft in te typen. Uitgezet, want dat botste
+// met "blijf ingelogd tenzij je zelf uitlogt" — na uitloggen sprong het anders na 3 seconden
+// weer terug naar het demo-account. Weer op true zetten voor een collega-demo indien nodig.
+const DEMO_AUTO_LOGIN = false;
 
 // ── Plaatsnaam-normalisatie ──────────────────────────────────────────────────
 // Sommige bronnen leveren dezelfde plaats onder net iets andere spelling aan
@@ -1858,9 +1858,15 @@ const App: React.FC = () => {
     // bestaande kaart (addVisit(b)) toegevoegd.
     matched?: boolean;
   }
-  const [visits, setVisits] = useState<Visit[]>(() => {
-    try { return JSON.parse(localStorage.getItem('inncempro_visits') || '[]'); } catch { return []; }
-  });
+  // Bezoekhistorie is persoonlijk per account (net als favorieten en lijsten) — anders zou
+  // een ander account op hetzelfde apparaat dezelfde bezoeken zien. De sleutel verandert
+  // mee met currentUser, en het laad-effect hieronder herlaadt dan automatisch de juiste set.
+  const visitsStorageKey = currentUser ? `inncempro_visits_${currentUser.id}` : null;
+  const [visits, setVisits] = useState<Visit[]>([]);
+  useEffect(() => {
+    if (!visitsStorageKey) { setVisits([]); return; }
+    try { setVisits(JSON.parse(localStorage.getItem(visitsStorageKey) || '[]')); } catch { setVisits([]); }
+  }, [visitsStorageKey]);
   const [onlyUnvisited, setOnlyUnvisited] = useState(false);
   const [visitsPeriodFilter, setVisitsPeriodFilter] = useState<'alles' | '1m' | '3m' | '6m' | '12m'>('alles');
   // Bulk bezoeken toevoegen vanuit Bezoekhistorie: eerst namen intypen/plakken (één per regel),
@@ -1962,10 +1968,11 @@ const App: React.FC = () => {
     localStorage.setItem('inncempro_recent_viewed', JSON.stringify(limited));
   };
 
-  // Bezoekhistorie opslaan
+  // Bezoekhistorie opslaan (per account, zie visitsStorageKey hierboven)
   useEffect(() => {
-    localStorage.setItem('inncempro_visits', JSON.stringify(visits));
-  }, [visits]);
+    if (!visitsStorageKey) return;
+    localStorage.setItem(visitsStorageKey, JSON.stringify(visits));
+  }, [visits, visitsStorageKey]);
 
   const addVisit = (bedrijf: any) => {
     const newVisit: Visit = {
@@ -5001,13 +5008,10 @@ const App: React.FC = () => {
                                 ) : (
                                   <button
                                     onClick={() => {
-                                      const match = activeData.find((b: any) => b.naam === visit.naam && (visit.stad ? b.stad === visit.stad : true))
-                                        || activeData.find((b: any) => b.naam === visit.naam);
-                                      if (match) {
-                                        setSelectedCompany(match);
-                                        setProfileHistory([]);
-                                        addToRecentViewed(match.naam);
-                                      }
+                                      setSelectedRegions([]); setSelectedTypes([]); setSelectedWerksoort([]); setSelectedContact([]); setRadiusKm(null);
+                                      setCity(visit.naam);
+                                      setViewMode('search');
+                                      executeSearch(undefined, undefined, visit.naam, null, null);
                                     }}
                                     className="text-slate-900 hover:text-[#009FE3] hover:underline text-left"
                                   >
