@@ -1897,22 +1897,38 @@ const App: React.FC = () => {
 
   // Fuzzy-match een getypte bedrijfsnaam tegen de bestaande database, zodat je bij het
   // toevoegen van bezoeken niet per ongeluk dubbele/nieuwe kaarten aanmaakt voor bedrijven
-  // die al bestaan. Geeft de beste kandidaten terug (exacte match eerst, dan "begint met",
-  // dan "bevat"), zodat de gebruiker in de bulk-upload UI kan kiezen/bevestigen.
+  // die al bestaan. Woord-gebaseerd i.p.v. letterlijk substring-matchen, want "Stiho
+  // Blauwhoff Aalsmeer" en "Stiho Aalsmeer" moeten hetzelfde bedrijf herkennen ook al staat
+  // er een extra woord tussen — een simpele "bevat de hele string" check mist dat.
   const findCompanyMatches = (query: string, data: any[]): any[] => {
     const qNorm = normalizeText(query);
     if (!qNorm) return [];
-    const exact: any[] = [];
-    const startsWith: any[] = [];
-    const contains: any[] = [];
+    const qWords = new Set(qNorm.split(' ').filter(Boolean));
+    if (qWords.size === 0) return [];
+
+    const scored: Array<{ b: any; score: number }> = [];
     for (const b of data) {
       const naamNorm = normalizeText(b.naam || '');
       if (!naamNorm) continue;
-      if (naamNorm === qNorm) exact.push(b);
-      else if (naamNorm.startsWith(qNorm) || qNorm.startsWith(naamNorm)) startsWith.push(b);
-      else if (naamNorm.includes(qNorm)) contains.push(b);
+      if (naamNorm === qNorm) { scored.push({ b, score: 1 }); continue; }
+
+      const bWords = new Set(naamNorm.split(' ').filter(Boolean));
+      let overlap = 0;
+      qWords.forEach(w => { if (bWords.has(w)) overlap++; });
+      if (overlap === 0) continue;
+
+      // Containment: hoeveel van de kleinste naam zit in de grootste (vangt "Stiho Aalsmeer"
+      // volledig op binnen "Stiho Blauwhoff Aalsmeer"). Jaccard erbij zodat een bedrijf met
+      // veel extra afwijkende woorden toch lager scoort dan een vrijwel identieke naam.
+      const minSize = Math.min(qWords.size, bWords.size);
+      const unionSize = qWords.size + bWords.size - overlap;
+      const containment = overlap / minSize;
+      const jaccard = overlap / unionSize;
+      const score = containment * 0.65 + jaccard * 0.35;
+      if (score >= 0.45) scored.push({ b, score });
     }
-    return [...exact, ...startsWith, ...contains].slice(0, 5);
+    scored.sort((a, c) => c.score - a.score);
+    return scored.slice(0, 5).map(s => s.b);
   };
 
   const updateVisit = (id: string, updates: Partial<Visit>) => {
