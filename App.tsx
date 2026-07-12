@@ -981,6 +981,73 @@ const DUTCH_LOCATIONS = [
     "’S-Hertogenbosch"
 ];
 
+// Normaliseert een plaatsnaam voor matching, los van de component (zodat de constante
+// hieronder buiten de component gebouwd kan worden zonder volgorde-afhankelijkheden).
+function normalizePlaceNameToken(s: string): string {
+  return s
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/^['’]+/, '')
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+// Gebruikt bij het matchen van bedrijven in de bulk-bezoeken-upload: als iemand "Studio
+// Linssen Amsterdam" typt, moet "Amsterdam" herkend worden als plaatsnaam-aanwijzing in
+// plaats van als onderdeel van de bedrijfsnaam zelf.
+const KNOWN_PLACE_NAMES = new Set<string>(
+  DUTCH_LOCATIONS.filter(loc => loc !== 'Heel Nederland').map(normalizePlaceNameToken)
+);
+
+// Kleine, standaard Levenshtein-afstand voor het herkennen van bedrijfsnamen die één letter
+// verschillen door een tikfout (bv. "Kamphorst" vs "Kamphors"), zonder dat elk kort woord
+// per ongeluk als "bijna gelijk" aan elk ander kort woord wordt gezien.
+function levenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  const al = a.length, bl = b.length;
+  if (al === 0) return bl;
+  if (bl === 0) return al;
+  let prev = new Array(bl + 1);
+  let curr = new Array(bl + 1);
+  for (let j = 0; j <= bl; j++) prev[j] = j;
+  for (let i = 1; i <= al; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= bl; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[bl];
+}
+// Twee woorden tellen als volledige match bij exact dezelfde spelling, en als gedeeltelijke
+// match (0.7) bij precies één letter verschil, maar alleen voor woorden van 4+ tekens zodat
+// korte woorden (bv. "de", "bv") niet lukraak op elkaar gaan lijken.
+function wordSimilarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (a.length >= 4 && b.length >= 4 && levenshteinDistance(a, b) <= 1) return 0.7;
+  return 0;
+}
+// Koppelt elk woord uit de zoekterm aan het best passende, nog niet gebruikte woord uit de
+// bedrijfsnaam en telt de gevonden overeenkomst op, zodat zowel exacte als bijna-gelijke
+// woorden meetellen zonder hetzelfde naamwoord dubbel te gebruiken.
+function overlapScore(qWords: string[], bWords: string[]): number {
+  const usedB = new Set<number>();
+  let total = 0;
+  for (const qw of qWords) {
+    let best = 0, bestIdx = -1;
+    for (let i = 0; i < bWords.length; i++) {
+      if (usedB.has(i)) continue;
+      const s = wordSimilarity(qw, bWords[i]);
+      if (s > best) { best = s; bestIdx = i; }
+    }
+    if (bestIdx >= 0 && best > 0) { usedB.add(bestIdx); total += best; }
+  }
+  return total;
+}
+
 const DEFAULT_ORIGIN = "Lansinkesweg 4, 7553 AE Hengelo";
 
 // Coördinaten van veelgebruikte Nederlandse steden
@@ -2019,35 +2086,61 @@ const App: React.FC = () => {
 
   // Fuzzy-match een getypte bedrijfsnaam tegen de bestaande database, zodat je bij het
   // toevoegen van bezoeken niet per ongeluk dubbele/nieuwe kaarten aanmaakt voor bedrijven
-  // die al bestaan. Woord-gebaseerd i.p.v. letterlijk substring-matchen, want "Stiho
+  // die al bestaan. Woord-gebaseerd in plaats van letterlijk substring-matchen, want "Stiho
   // Blauwhoff Aalsmeer" en "Stiho Aalsmeer" moeten hetzelfde bedrijf herkennen ook al staat
-  // er een extra woord tussen — een simpele "bevat de hele string" check mist dat. Ook bekende
-  // afkortingen (OMA, MVRDV, BAM, ...) worden meegenomen via expandAliasWords.
+  // er een extra woord tussen. Bekende afkortingen (OMA, MVRDV, BAM, ...) worden meegenomen
+  // via expandAliasWords, kleine tikfouten via wordSimilarity/levenshteinDistance.
+  //
+  // Staat er een plaatsnaam achteraan (bv. "Studio Linssen Amsterdam"), dan wordt die er
+  // eerst uitgehaald en apart gebruikt als extra bewijs, niet als onderdeel van de naam-match.
+  // Zo kan "Linssen" in Rotterdam niet per ongeluk verward worden met "Studio Linssen" in
+  // Amsterdam: klopt de plaats met wat jij typte, dan telt dat mee als bonus; wijkt de plaats
+  // juist af terwijl je er wel één noemde, dan telt de match minder zwaar, want dat is precies
+  // het signaal dat het toch om een ander bedrijf kan gaan.
   const findCompanyMatches = (query: string, data: any[]): any[] => {
-    const qNorm = normalizeText(query);
+    const rawTokens = query.trim().split(/\s+/).filter(Boolean);
+    if (rawTokens.length === 0) return [];
+
+    let cityHint = '';
+    let nameQuery = query;
+    if (rawTokens.length >= 2) {
+      const last2 = normalizePlaceNameToken(rawTokens.slice(-2).join(' '));
+      const last1 = normalizePlaceNameToken(rawTokens[rawTokens.length - 1]);
+      if (KNOWN_PLACE_NAMES.has(last2)) { cityHint = last2; nameQuery = rawTokens.slice(0, -2).join(' '); }
+      else if (KNOWN_PLACE_NAMES.has(last1)) { cityHint = last1; nameQuery = rawTokens.slice(0, -1).join(' '); }
+    }
+    if (!nameQuery.trim()) nameQuery = query; // hele zoekterm bleek een plaatsnaam, val terug
+
+    const qNorm = normalizeText(nameQuery);
     if (!qNorm) return [];
-    const qWords = meaningfulWords(expandAliasWords(new Set(qNorm.split(' ').filter(Boolean))));
-    if (qWords.size === 0) return [];
+    const qWords = Array.from(meaningfulWords(expandAliasWords(new Set(qNorm.split(' ').filter(Boolean)))));
+    if (qWords.length === 0) return [];
 
     const scored: Array<{ b: any; score: number }> = [];
     for (const b of data) {
       const naamNorm = normalizeText(b.naam || '');
       if (!naamNorm) continue;
-      if (naamNorm === qNorm) { scored.push({ b, score: 1 }); continue; }
 
-      const bWords = meaningfulWords(expandAliasWords(new Set(naamNorm.split(' ').filter(Boolean))));
-      let overlap = 0;
-      qWords.forEach(w => { if (bWords.has(w)) overlap++; });
-      if (overlap === 0) continue;
+      const bWords = Array.from(meaningfulWords(expandAliasWords(new Set(naamNorm.split(' ').filter(Boolean)))));
+      const isExact = naamNorm === qNorm;
+      const overlap = overlapScore(qWords, bWords);
+      if (overlap === 0 && !isExact) continue;
 
       // Containment: hoeveel van de kleinste naam zit in de grootste (vangt "Stiho Aalsmeer"
       // volledig op binnen "Stiho Blauwhoff Aalsmeer"). Jaccard erbij zodat een bedrijf met
       // veel extra afwijkende woorden toch lager scoort dan een vrijwel identieke naam.
-      const minSize = Math.min(qWords.size, bWords.size);
-      const unionSize = qWords.size + bWords.size - overlap;
+      const minSize = Math.min(qWords.length, bWords.length) || 1;
+      const unionSize = qWords.length + bWords.length - overlap;
       const containment = overlap / minSize;
-      const jaccard = overlap / unionSize;
-      const score = containment * 0.65 + jaccard * 0.35;
+      const jaccard = unionSize > 0 ? overlap / unionSize : 0;
+      let score = isExact ? 1 : containment * 0.65 + jaccard * 0.35;
+
+      if (cityHint && b.stad) {
+        const bStad = normalizePlaceNameToken(b.stad);
+        if (bStad === cityHint) score = Math.min(1, score + 0.2);
+        else score *= 0.5;
+      }
+
       if (score >= 0.5) scored.push({ b, score });
     }
     scored.sort((a, c) => c.score - a.score);
@@ -5527,7 +5620,7 @@ const App: React.FC = () => {
               </h3>
               <p className="text-xs text-slate-400 mt-1">
                 {bulkVisitStep === 'input'
-                  ? 'Eén bedrijfsnaam per regel — hoeveel je maar wilt. Bedrijven die al in de database staan worden automatisch herkend, ook bij afwijkende schrijfwijze of afkortingen (OMA, BAM, ...).'
+                  ? 'Eén bedrijfsnaam per regel, hoeveel je maar wilt. Zet er de stad achter als je die weet (bv. "Linssen Rotterdam"), dat helpt onderscheid maken tussen bedrijven met een gelijke naam in andere steden.'
                   : `${bulkVisitRows.length} rijen. Klopt een match niet? Klik op het kruisje en zoek handmatig, of maak een nieuwe kaart aan als het bedrijf echt nog niet bestaat. Klap een rij open om alles te controleren of bij te werken.`}
               </p>
             </div>
@@ -5569,7 +5662,7 @@ const App: React.FC = () => {
                           {row.creatingNew ? (
                             <span className="text-xs font-semibold text-[#009FE3] truncate">{row.naam || '(nieuwe kaart)'}</span>
                           ) : isMatched ? (
-                            <span className="text-xs font-semibold text-slate-800 truncate">{matchedCompany.naam}{matchedCompany.stad ? ` — ${matchedCompany.stad}` : ''}</span>
+                            <span className="text-xs font-semibold text-slate-800 truncate">{matchedCompany.naam}{matchedCompany.stad ? `, ${matchedCompany.stad}` : ''}</span>
                           ) : (
                             <span className="text-xs text-slate-400 italic truncate">Geen match</span>
                           )}
@@ -5578,9 +5671,9 @@ const App: React.FC = () => {
                               <span className="text-[9px] font-bold uppercase tracking-wider text-[#009FE3] bg-[#009FE3]/10 border border-[#009FE3]/30 rounded-full px-2 py-0.5">Nieuwe kaart</span>
                             ) : isMatched ? (
                               <>
-                                <span className="text-[9px] font-bold uppercase tracking-wider text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">Klopt</span>
+                                <span className="text-[9px] font-bold uppercase tracking-wider text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">Bestaat</span>
                                 <button
-                                  title="Niet correct — opnieuw zoeken"
+                                  title="Andere match kiezen"
                                   onClick={() => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, confirmed: false, searchMode: true, searchQuery: r.input, expanded: true } : r))}
                                   className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
                                 >
@@ -5596,7 +5689,7 @@ const App: React.FC = () => {
 
                       {row.expanded && (
                         <div className="px-3 pb-3 space-y-2 border-t border-slate-100 pt-3">
-                          {/* Handmatig zoeken: nodig als het bedrijf wél bestaat maar niet in de
+                          {/* Handmatig zoeken: nodig als het bedrijf wel bestaat maar niet in de
                               automatische top-5 stond, of als de match is afgekeurd. */}
                           {(row.searchMode || (!isMatched && !row.creatingNew)) && (
                             <div className="space-y-1.5">
@@ -5619,7 +5712,7 @@ const App: React.FC = () => {
                                       onClick={() => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? bulkVisitRowFromMatch(r.input, r.matches, mi) : r))}
                                       className="w-full text-left px-2 py-1.5 text-xs text-slate-700 hover:bg-[#009FE3]/5"
                                     >
-                                      {m.naam}{m.stad ? ` — ${m.stad}` : ''}
+                                      {m.naam}{m.stad ? `, ${m.stad}` : ''}
                                     </button>
                                   ))}
                                 </div>
@@ -5628,7 +5721,7 @@ const App: React.FC = () => {
                                 onClick={() => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, creatingNew: true, searchMode: false, selectedIndex: null, confirmed: false, naam: r.naam || r.input } : r))}
                                 className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#009FE3] hover:underline"
                               >
-                                <Plus className="w-3 h-3" /> Geen van deze — nieuwe kaart aanmaken
+                                <Plus className="w-3 h-3" /> Geen van deze, nieuwe kaart aanmaken
                               </button>
                             </div>
                           )}
