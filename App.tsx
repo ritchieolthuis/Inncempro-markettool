@@ -4613,7 +4613,22 @@ const App: React.FC = () => {
                         <tbody>
                           {visits.map((visit, idx) => (
                             <tr key={visit.id} className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
-                              <td className="px-6 py-4 font-medium text-slate-900">{visit.naam}</td>
+                              <td className="px-6 py-4 font-medium">
+                                <button
+                                  onClick={() => {
+                                    const match = activeData.find((b: any) => b.naam === visit.naam && (visit.stad ? b.stad === visit.stad : true))
+                                      || activeData.find((b: any) => b.naam === visit.naam);
+                                    if (match) {
+                                      setSelectedCompany(match);
+                                      setProfileHistory([]);
+                                      addToRecentViewed(match.naam);
+                                    }
+                                  }}
+                                  className="text-slate-900 hover:text-[#009FE3] hover:underline text-left"
+                                >
+                                  {visit.naam}
+                                </button>
+                              </td>
                               <td className="px-6 py-4 text-slate-600">{visit.stad}</td>
                               <td className="px-6 py-4 text-slate-600">{visit.contactpersoon || '-'}</td>
                               <td className="px-6 py-4 text-slate-600">{visit.datum}</td>
