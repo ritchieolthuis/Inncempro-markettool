@@ -1736,7 +1736,7 @@ const App: React.FC = () => {
   // APP STATE
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'lists'>('search');
+  const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'lists' | 'visits'>('search');
 
   // BATCH IMPORT
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -1769,6 +1769,27 @@ const App: React.FC = () => {
   const [favorites, setFavorites] = useState<DiscoveredCompany[]>([]);
   const [lists, setLists] = useState<CompanyList[]>([]);
   const [activeListId, setActiveListId] = useState<string | null>(null);
+
+  // Bezoekhistorie
+  interface Visit {
+    id: string;
+    bedrijf_id: string;
+    naam: string;
+    stad: string;
+    straat?: string;
+    postcode?: string;
+    contactpersoon: string;
+    telefoon?: string;
+    email?: string;
+    notitie: string;
+    status: 'bezocht' | 'interessant' | 'geen-interesse' | 'follow-up';
+    datum: string;
+    created_at: string;
+  }
+  const [visits, setVisits] = useState<Visit[]>(() => {
+    try { return JSON.parse(localStorage.getItem('inncempro_visits') || '[]'); } catch { return []; }
+  });
+  const [onlyUnvisited, setOnlyUnvisited] = useState(false);
   const [showNewListModal, setShowNewListModal] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [renameListId, setRenameListId] = useState<string | null>(null);
@@ -1812,6 +1833,42 @@ const App: React.FC = () => {
     const limited = updated.slice(0, 20); // max 20 recent
     setRecentViewed(limited);
     localStorage.setItem('inncempro_recent_viewed', JSON.stringify(limited));
+  };
+
+  // Bezoekhistorie opslaan
+  useEffect(() => {
+    localStorage.setItem('inncempro_visits', JSON.stringify(visits));
+  }, [visits]);
+
+  const addVisit = (bedrijf: any) => {
+    const newVisit: Visit = {
+      id: Math.random().toString(36).substring(2, 11),
+      bedrijf_id: bedrijf.id || bedrijf.naam,
+      naam: bedrijf.naam,
+      stad: bedrijf.stad || '',
+      straat: bedrijf.straat || '',
+      postcode: bedrijf.postcode || '',
+      contactpersoon: '',
+      telefoon: bedrijf.telefoon || '',
+      email: bedrijf.email || '',
+      notitie: '',
+      status: 'bezocht',
+      datum: new Date().toISOString().split('T')[0],
+      created_at: new Date().toISOString(),
+    };
+    setVisits(v => [newVisit, ...v]);
+  };
+
+  const updateVisit = (id: string, updates: Partial<Visit>) => {
+    setVisits(v => v.map(visit => visit.id === id ? { ...visit, ...updates } : visit));
+  };
+
+  const deleteVisit = (id: string) => {
+    setVisits(v => v.filter(visit => visit.id !== id));
+  };
+
+  const isVisitedCompany = (bedrijf: any): boolean => {
+    return visits.some(v => v.bedrijf_id === (bedrijf.id || bedrijf.naam));
   };
 
   // Tabblad + paginering voor het "Recent Searches / Saved Searches" blok op de lege zoekpagina
@@ -3104,8 +3161,12 @@ const App: React.FC = () => {
           };
       });
 
-      setFoundCompanies(companies as any);
-      setTotalMatches(companies.length);
+      let filtered = companies;
+      if (onlyUnvisited) {
+        filtered = companies.filter(c => !isVisitedCompany(c._raw));
+      }
+      setFoundCompanies(filtered as any);
+      setTotalMatches(filtered.length);
       setSearchState({ isLoading: false, data: { text: 'Done' }, error: null });
       if (q) addToHistory(q);
   };
@@ -3243,7 +3304,7 @@ const App: React.FC = () => {
     // Database/Kaart stuurde je automatisch naar Live Zoeken).
     debounceRef.current = setTimeout(() => { executeSearch(undefined, undefined, undefined, undefined, undefined, undefined, false); }, 350);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [city, radiusKm, advancedSearch, manualEdits, customEntries, deletedEntries, selectedRegions, selectedTypes, selectedWerksoort, selectedContact, selectedLijsten, selectedBron, selectedRechtsvorm, prefAddressCoords, manualSearchOrigin]);
+  }, [city, radiusKm, advancedSearch, onlyUnvisited, manualEdits, customEntries, deletedEntries, selectedRegions, selectedTypes, selectedWerksoort, selectedContact, selectedLijsten, selectedBron, selectedRechtsvorm, prefAddressCoords, manualSearchOrigin]);
 
   const handleManualSearch = (e?: React.FormEvent) => {
       if (e) e.preventDefault();
@@ -3815,7 +3876,7 @@ const App: React.FC = () => {
 
         return (
       <div className={`flex flex-col md:flex-row max-w-[1400px] mx-auto w-full flex-grow ${selectedIds.size > 0 ? 'pb-20' : ''}`}>
-          {viewMode !== 'map' && viewMode !== 'lists' && (
+          {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && (
           <aside className={`bg-white border-r border-slate-200 flex-shrink-0 hidden md:flex flex-col h-[calc(100vh-112px)] sticky top-28 transition-all duration-200 ${sidebarCollapsed ? 'w-12' : 'w-80'}`}>
               <div className="p-4 border-b border-slate-100 flex items-center justify-between">
                   {!sidebarCollapsed && <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest font-condensed flex items-center gap-2"><Filter className="w-4 h-4 text-[#009FE3]" /> Filters</h2>}
@@ -3856,13 +3917,18 @@ const App: React.FC = () => {
                        <span className="ml-0.5 px-1.5 py-0.5 bg-[#E85E26] text-white rounded-full text-[9px] font-bold leading-none">{mapMarkerCount}</span>
                      )}
                  </button>
+                 <button data-active={viewMode === 'visits'} onClick={() => { setViewMode('visits'); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'visits' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                     <Clock className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                     <span className="hidden sm:inline">Mijn bezoeken ({visits.length})</span>
+                     <span className="sm:hidden">Bezoeken ({visits.length})</span>
+                 </button>
              </div>
              {/* Mobiel: fade-hint dat de tabbalk verder scrollt (6 tabs passen niet op smalle schermen) */}
              <div className="sm:hidden pointer-events-none absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent" />
              </div>
 
              {/* Mobiel: filters-knop + slide-up drawer (de aside hierboven is hidden md:flex, dus onzichtbaar op mobiel) */}
-             {viewMode !== 'map' && viewMode !== 'lists' && (
+             {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && (
                <button
                  onClick={() => setShowMobileFilters(true)}
                  className="md:hidden flex items-center justify-center gap-2 w-full mb-4 py-3 bg-white border border-slate-200 rounded-xl shadow-sm text-xs font-bold uppercase tracking-wider text-slate-600 hover:border-[#009FE3] hover:text-[#009FE3] transition-colors"
@@ -3872,7 +3938,7 @@ const App: React.FC = () => {
                </button>
              )}
 
-             {viewMode !== 'map' && viewMode !== 'lists' && showMobileFilters && (
+             {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && showMobileFilters && (
                <div className="md:hidden fixed inset-0 z-50 flex items-end bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowMobileFilters(false)}>
                  <div className="bg-white w-full max-h-[85vh] rounded-t-xl flex flex-col" onClick={e => e.stopPropagation()}>
                    <div className="w-10 h-1 bg-slate-300 rounded-full mx-auto mt-3 flex-shrink-0" />
@@ -4299,6 +4365,19 @@ const App: React.FC = () => {
                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${advancedSearch ? 'translate-x-4' : 'translate-x-1'}`} />
                      </button>
                    </div>
+                   <div className="w-px self-stretch bg-slate-200 hidden sm:block" />
+                   <div className="flex items-center gap-2 flex-shrink-0">
+                     <span className="text-xs font-semibold text-slate-600">Alleen onbezocht</span>
+                     <button
+                       type="button"
+                       role="switch"
+                       aria-checked={onlyUnvisited}
+                       onClick={() => setOnlyUnvisited(!onlyUnvisited)}
+                       className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${onlyUnvisited ? 'bg-[#E85E26]' : 'bg-slate-300'}`}
+                     >
+                       <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${onlyUnvisited ? 'translate-x-4' : 'translate-x-1'}`} />
+                     </button>
+                   </div>
                    {advancedSearch && (
                      <span className="text-xs text-slate-500 basis-full">
                        Bijv: <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600">architect OR bouwbedrijf</code>, <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600">rotterdam NOT bv</code>, <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600">"van der"</code>. AND vereist beide termen, OR één van beide, NOT sluit uit.
@@ -4502,6 +4581,74 @@ const App: React.FC = () => {
                 </div>
                 );
             })()}
+
+            {viewMode === 'visits' && (
+              <div className="w-full max-w-6xl mx-auto">
+                <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="p-6 border-b border-slate-200 flex items-center justify-between">
+                    <h2 className="text-lg font-bold text-slate-900">Bezoekhistorie</h2>
+                    <span className="text-sm text-slate-500">{visits.length} bezoeken totaal</span>
+                  </div>
+
+                  {visits.length === 0 ? (
+                    <div className="p-12 text-center">
+                      <Clock className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                      <p className="text-slate-500 text-sm">Nog geen bezoeken geregistreerd.</p>
+                      <p className="text-slate-400 text-xs mt-2">Bezoeken worden hier weergegeven als je bedrijven toevoegt.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50">
+                            <th className="px-6 py-3 text-left font-bold text-slate-700">Bedrijf</th>
+                            <th className="px-6 py-3 text-left font-bold text-slate-700">Plaats</th>
+                            <th className="px-6 py-3 text-left font-bold text-slate-700">Contactpersoon</th>
+                            <th className="px-6 py-3 text-left font-bold text-slate-700">Datum</th>
+                            <th className="px-6 py-3 text-left font-bold text-slate-700">Status</th>
+                            <th className="px-6 py-3 text-left font-bold text-slate-700">Notitie</th>
+                            <th className="px-6 py-3 text-center font-bold text-slate-700">Acties</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {visits.map((visit, idx) => (
+                            <tr key={visit.id} className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
+                              <td className="px-6 py-4 font-medium text-slate-900">{visit.naam}</td>
+                              <td className="px-6 py-4 text-slate-600">{visit.stad}</td>
+                              <td className="px-6 py-4 text-slate-600">{visit.contactpersoon || '-'}</td>
+                              <td className="px-6 py-4 text-slate-600">{visit.datum}</td>
+                              <td className="px-6 py-4">
+                                <span className={`px-2 py-1 text-xs font-bold rounded-full ${
+                                  visit.status === 'bezocht' ? 'bg-green-100 text-green-700' :
+                                  visit.status === 'interessant' ? 'bg-blue-100 text-blue-700' :
+                                  visit.status === 'geen-interesse' ? 'bg-red-100 text-red-700' :
+                                  'bg-amber-100 text-amber-700'
+                                }`}>
+                                  {visit.status === 'bezocht' && 'Bezocht'}
+                                  {visit.status === 'interessant' && 'Interessant'}
+                                  {visit.status === 'geen-interesse' && 'Geen interesse'}
+                                  {visit.status === 'follow-up' && 'Follow-up'}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-slate-600 max-w-xs truncate" title={visit.notitie}>{visit.notitie || '-'}</td>
+                              <td className="px-6 py-4 text-center">
+                                <button
+                                  onClick={() => deleteVisit(visit.id)}
+                                  className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                                  title="Verwijderen"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {viewMode === 'map' && (
               <>
