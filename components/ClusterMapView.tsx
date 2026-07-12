@@ -224,13 +224,24 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
       (marker as any)._provKey = provKey(prov);
       (marker as any)._cityKey = cityKey(prov, stad);
       (marker as any)._entry = entry;
+      // Hover toont de info meteen (geen klik meer nodig) en maakt het bolletje eventjes
+      // groter zodat duidelijk is welke je aanwijst — bij drukke gebieden (bv. Amsterdam
+      // binnenstad) is dat prettiger dan blind moeten klikken. Muis weg = terug naar normaal.
+      marker.on('mouseover', function (this: L.CircleMarker) {
+        this.setRadius(this.getRadius() + 3);
+        this.openPopup();
+      });
+      marker.on('mouseout', function (this: L.CircleMarker) {
+        this.setRadius(Math.max(3.5, this.getRadius() - 3));
+        this.closePopup();
+      });
       marker.addTo(markersLayerRef.current!);
     });
   }, [allEntries]);
 
   // Toggle visibility + zoom-to-fit whenever the region or bron selection changes.
   // Both filters work independently: select REGION alone, BRON alone, or both.
-  // - No selection: nothing visible (prompt to select)
+  // - No selection: nothing visible (prompt to select — expliciete keuze, geen verrassingen)
   // - Region only: show those regions from all sources
   // - Bron only: show those sources from all regions
   // - Both: show intersection
@@ -241,7 +252,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
     // Geen regio's EN geen bronnen geselecteerd = niets tonen (zie de "Selecteer een
     // regio..." prompt hieronder). Zonder deze guard betekent selectedRegions.size===0
     // hieronder per ongeluk "alle regio's matchen" — dus deselecteren van de laatste regio
-    // liet alsnog alle ~4000 bedrijven zien in plaats van weer niets.
+    // liet alsnog alle ~4750 bedrijven zien in plaats van weer niets.
     const noSelection = selectedRegions.size === 0 && selectedSources.size === 0;
 
     markersLayerRef.current.eachLayer((layer: any) => {
@@ -249,6 +260,12 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
       const matchSource = selectedSources.size === 0 || selectedSources.has(layer._entry?.source || 'Onbekend');
       const visible = !noSelection && matchRegion && matchSource;
       layer.setStyle({ opacity: visible ? 1 : 0, fillOpacity: visible ? 0.9 : 0 });
+      // setStyle maakt 'm alleen onzichtbaar — de canvas-renderer test nog gewoon op de
+      // (onzichtbare) cirkel-geometrie, dus zonder dit bleef je bij het overheen bewegen
+      // met je muis alsnog de popup/naam van een verborgen bedrijf zien terwijl er niets
+      // te zien was om te hoveren. interactive: false schakelt ook de hit-test zelf uit.
+      layer.options.interactive = visible;
+      if (!visible && layer.isPopupOpen?.()) layer.closePopup();
       if (visible) bounds.push(layer.getLatLng());
     });
 
@@ -339,7 +356,6 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
   };
 
   const visibleCount = useMemo(() => {
-    if (selectedRegions.size === 0 && selectedSources.size === 0) return 0;
     return allEntries.filter(e => {
       const prov = e.provincie || 'Onbekend';
       const stad = e.stad || 'Onbekend';
@@ -353,7 +369,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
     <>
       <p className="text-[11px] text-slate-400 mb-3">
         {allEntries.length.toLocaleString('nl-NL')} bedrijven geladen
-        {selectedRegions.size > 0 && ` · ${visibleCount.toLocaleString('nl-NL')} zichtbaar`}
+        {(selectedRegions.size > 0 || selectedSources.size > 0) && ` · ${visibleCount.toLocaleString('nl-NL')} zichtbaar`}
       </p>
 
       {/* Mijn Locatie sectie - zoeken en toevoegen aan selectedRegions */}
