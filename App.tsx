@@ -1790,6 +1790,7 @@ const App: React.FC = () => {
     try { return JSON.parse(localStorage.getItem('inncempro_visits') || '[]'); } catch { return []; }
   });
   const [onlyUnvisited, setOnlyUnvisited] = useState(false);
+  const [visitsPeriodFilter, setVisitsPeriodFilter] = useState<'alles' | '1m' | '3m' | '6m' | '12m'>('alles');
   const [showNewListModal, setShowNewListModal] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [renameListId, setRenameListId] = useState<string | null>(null);
@@ -1867,9 +1868,35 @@ const App: React.FC = () => {
     setVisits(v => v.filter(visit => visit.id !== id));
   };
 
-  const isVisitedCompany = (bedrijf: any): boolean => {
-    return visits.some(v => v.bedrijf_id === (bedrijf.id || bedrijf.naam));
+  // Na REVISIT_CYCLE_MONTHS maanden mag een bedrijf weer als "nog te bezoeken" gelden,
+  // ook al staat het in het logboek — zo kom je vanzelf weer bij bedrijven terecht die
+  // aan een nieuw bezoek toe zijn, in plaats van dat ze voorgoed uit Live Zoeken verdwijnen.
+  const [revisitCycleMonths, setRevisitCycleMonths] = useState<number>(() => {
+    const stored = localStorage.getItem('inncempro_revisit_cycle');
+    return stored ? Number(stored) : 6;
+  });
+  useEffect(() => {
+    localStorage.setItem('inncempro_revisit_cycle', String(revisitCycleMonths));
+  }, [revisitCycleMonths]);
+
+  const lastVisitDate = (bedrijf: any): string | null => {
+    const id = bedrijf.id || bedrijf.naam;
+    const matches = visits.filter(v => v.bedrijf_id === id);
+    if (matches.length === 0) return null;
+    return matches.reduce((latest, v) => (v.datum > latest ? v.datum : latest), matches[0].datum);
   };
+
+  // "Nog niet toe aan herbezoek" — bezocht binnen de ingestelde cyclus (standaard 6 maanden).
+  // Ouder dan dat, of nooit bezocht, telt weer mee als "nog te bezoeken".
+  const isDueForRevisit = (bedrijf: any): boolean => {
+    const last = lastVisitDate(bedrijf);
+    if (!last) return false;
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - revisitCycleMonths);
+    return new Date(last) >= cutoff;
+  };
+
+  const isVisitedCompany = (bedrijf: any): boolean => isDueForRevisit(bedrijf);
 
   // Tabblad + paginering voor het "Recent Searches / Saved Searches" blok op de lege zoekpagina
   const [searchLandingTab, setSearchLandingTab] = useState<'recent' | 'saved'>('recent');
@@ -3304,7 +3331,7 @@ const App: React.FC = () => {
     // Database/Kaart stuurde je automatisch naar Live Zoeken).
     debounceRef.current = setTimeout(() => { executeSearch(undefined, undefined, undefined, undefined, undefined, undefined, false); }, 350);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [city, radiusKm, advancedSearch, onlyUnvisited, manualEdits, customEntries, deletedEntries, selectedRegions, selectedTypes, selectedWerksoort, selectedContact, selectedLijsten, selectedBron, selectedRechtsvorm, prefAddressCoords, manualSearchOrigin]);
+  }, [city, radiusKm, advancedSearch, onlyUnvisited, revisitCycleMonths, manualEdits, customEntries, deletedEntries, selectedRegions, selectedTypes, selectedWerksoort, selectedContact, selectedLijsten, selectedBron, selectedRechtsvorm, prefAddressCoords, manualSearchOrigin]);
 
   const handleManualSearch = (e?: React.FormEvent) => {
       if (e) e.preventDefault();
@@ -4367,7 +4394,7 @@ const App: React.FC = () => {
                    </div>
                    <div className="w-px self-stretch bg-slate-200 hidden sm:block" />
                    <div className="flex items-center gap-2 flex-shrink-0">
-                     <span className="text-xs font-semibold text-slate-600">Alleen onbezocht</span>
+                     <span className="text-xs font-semibold text-slate-600">Alleen nog te bezoeken</span>
                      <button
                        type="button"
                        role="switch"
@@ -4378,6 +4405,22 @@ const App: React.FC = () => {
                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${onlyUnvisited ? 'translate-x-4' : 'translate-x-1'}`} />
                      </button>
                    </div>
+                   {onlyUnvisited && (
+                     <div className="flex items-center gap-2 flex-shrink-0">
+                       <span className="text-xs text-slate-500">Opnieuw na</span>
+                       <select
+                         value={revisitCycleMonths}
+                         onChange={(e) => setRevisitCycleMonths(Number(e.target.value))}
+                         className="text-xs border border-slate-200 rounded px-1.5 py-1 text-slate-700 focus:outline-none focus:border-[#009FE3]"
+                       >
+                         <option value={1}>1 maand</option>
+                         <option value={3}>3 maanden</option>
+                         <option value={6}>6 maanden</option>
+                         <option value={9}>9 maanden</option>
+                         <option value={12}>12 maanden</option>
+                       </select>
+                     </div>
+                   )}
                    {advancedSearch && (
                      <span className="text-xs text-slate-500 basis-full">
                        Bijv: <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600">architect OR bouwbedrijf</code>, <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600">rotterdam NOT bv</code>, <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600">"van der"</code>. AND vereist beide termen, OR één van beide, NOT sluit uit.
@@ -4582,12 +4625,47 @@ const App: React.FC = () => {
                 );
             })()}
 
-            {viewMode === 'visits' && (
+            {viewMode === 'visits' && (() => {
+              const now = new Date();
+              const periodCutoff = (() => {
+                if (visitsPeriodFilter === 'alles') return null;
+                const months = { '1m': 1, '3m': 3, '6m': 6, '12m': 12 }[visitsPeriodFilter];
+                const d = new Date();
+                d.setMonth(d.getMonth() - months);
+                return d;
+              })();
+              const visibleVisits = periodCutoff
+                ? visits.filter(v => new Date(v.datum) >= periodCutoff)
+                : visits;
+              return (
               <div className="w-full max-w-6xl mx-auto">
                 <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-                  <div className="p-6 border-b border-slate-200 flex items-center justify-between">
+                  <div className="p-6 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
                     <h2 className="text-lg font-bold text-slate-900">Bezoekhistorie</h2>
-                    <span className="text-sm text-slate-500">{visits.length} bezoeken totaal</span>
+                    <span className="text-sm text-slate-500">{visibleVisits.length} van {visits.length} bezoeken</span>
+                  </div>
+
+                  <div className="px-6 py-3 border-b border-slate-200 bg-slate-50 flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-1">Periode</span>
+                    {([
+                      { key: 'alles', label: 'Alles' },
+                      { key: '1m', label: 'Afgelopen maand' },
+                      { key: '3m', label: 'Afgelopen 3 maanden' },
+                      { key: '6m', label: 'Afgelopen 6 maanden' },
+                      { key: '12m', label: 'Afgelopen 12 maanden' },
+                    ] as const).map(opt => (
+                      <button
+                        key={opt.key}
+                        onClick={() => setVisitsPeriodFilter(opt.key)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${
+                          visitsPeriodFilter === opt.key
+                            ? 'bg-[#E85E26] text-white'
+                            : 'bg-white text-slate-600 border border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
                   </div>
 
                   {visits.length === 0 ? (
@@ -4595,6 +4673,11 @@ const App: React.FC = () => {
                       <Clock className="w-12 h-12 text-slate-300 mx-auto mb-4" />
                       <p className="text-slate-500 text-sm">Nog geen bezoeken geregistreerd.</p>
                       <p className="text-slate-400 text-xs mt-2">Bezoeken worden hier weergegeven als je bedrijven toevoegt.</p>
+                    </div>
+                  ) : visibleVisits.length === 0 ? (
+                    <div className="p-12 text-center">
+                      <Clock className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                      <p className="text-slate-500 text-sm">Geen bezoeken in deze periode.</p>
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
@@ -4611,7 +4694,7 @@ const App: React.FC = () => {
                           </tr>
                         </thead>
                         <tbody>
-                          {visits.map((visit, idx) => (
+                          {visibleVisits.map((visit, idx) => (
                             <tr key={visit.id} className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
                               <td className="px-6 py-4 font-medium">
                                 <button
@@ -4663,7 +4746,8 @@ const App: React.FC = () => {
                   )}
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {viewMode === 'map' && (
               <>
