@@ -34,7 +34,7 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, user, onLogout, onOpenSett
         {/* Brand Logo */}
         <button onClick={onHomeClick} className="flex items-center gap-3 sm:gap-6 group focus:outline-none h-full">
              <img
-                src="https://www.inncempro.nl/wp-content/uploads/2018/06/Logo-Inncempro-facebook.png"
+                src={`${import.meta.env.BASE_URL}logo-header.png`}
                 alt="Inncempro Logo"
                 className="w-10 h-10 sm:w-16 sm:h-16 object-contain"
             />
