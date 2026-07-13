@@ -1869,15 +1869,14 @@ const App: React.FC = () => {
     // bestaande kaart (addVisit(b)) toegevoegd.
     matched?: boolean;
   }
-  // Bezoekhistorie is persoonlijk per account (net als favorieten en lijsten) — anders zou
-  // een ander account op hetzelfde apparaat dezelfde bezoeken zien. De sleutel verandert
-  // mee met currentUser, en het laad-effect hieronder herlaadt dan automatisch de juiste set.
-  const visitsStorageKey = currentUser ? `inncempro_visits_${currentUser.id}` : null;
+  // Bezoekhistorie is persoonlijk per account (net als favorieten en lijsten) — opgeslagen in
+  // Supabase zodat hetzelfde account op een ander apparaat dezelfde bezoeken ziet. Herlaadt
+  // automatisch zodra een ander account inlogt.
   const [visits, setVisits] = useState<Visit[]>([]);
   useEffect(() => {
-    if (!visitsStorageKey) { setVisits([]); return; }
-    try { setVisits(JSON.parse(localStorage.getItem(visitsStorageKey) || '[]')); } catch { setVisits([]); }
-  }, [visitsStorageKey]);
+    if (!currentUser) { setVisits([]); return; }
+    authService.getVisits(currentUser.id).then(setVisits);
+  }, [currentUser?.id]);
   const [onlyUnvisited, setOnlyUnvisited] = useState(false);
   const [visitsPeriodFilter, setVisitsPeriodFilter] = useState<'alles' | '1m' | '3m' | '6m' | '12m'>('alles');
   // Bulk bezoeken toevoegen vanuit Bezoekhistorie: eerst namen intypen/plakken (één per regel),
@@ -1979,15 +1978,9 @@ const App: React.FC = () => {
     localStorage.setItem('inncempro_recent_viewed', JSON.stringify(limited));
   };
 
-  // Bezoekhistorie opslaan (per account, zie visitsStorageKey hierboven)
-  useEffect(() => {
-    if (!visitsStorageKey) return;
-    localStorage.setItem(visitsStorageKey, JSON.stringify(visits));
-  }, [visits, visitsStorageKey]);
-
-  const addVisit = (bedrijf: any) => {
-    const newVisit: Visit = {
-      id: Math.random().toString(36).substring(2, 11),
+  const addVisit = async (bedrijf: any) => {
+    if (!currentUser) return;
+    const newVisit = {
       bedrijf_id: bedrijf.id || bedrijf.naam,
       naam: bedrijf.naam,
       stad: bedrijf.stad || '',
@@ -1999,10 +1992,10 @@ const App: React.FC = () => {
       notitie: '',
       status: 'bezocht',
       datum: new Date().toISOString().split('T')[0],
-      created_at: new Date().toISOString(),
       matched: true,
     };
-    setVisits(v => [newVisit, ...v]);
+    await authService.addVisit(currentUser.id, newVisit);
+    setVisits(await authService.getVisits(currentUser.id));
   };
 
   // Slaat de complete bulk-upload lijst (100+ rijen) in één keer op. Gebruikt bij het
@@ -2014,9 +2007,9 @@ const App: React.FC = () => {
   //   (geen match gevonden, of expliciet afgekeurd) — dan wordt er, alleen op jouw verzoek,
   //   een nieuwe kaart aangemaakt via addCustomEntries, en het bezoek daaraan gekoppeld.
   // - Nog niets van dat alles: los bezoek zonder gekoppelde kaart, met wat er is ingevuld.
-  const saveBulkVisitRows = (rows: BulkVisitRow[]) => {
+  const saveBulkVisitRows = async (rows: BulkVisitRow[]) => {
+    if (!currentUser) return;
     const today = new Date().toISOString().split('T')[0];
-    const nowIso = new Date().toISOString();
 
     const newCards = rows
       .filter(row => row.creatingNew && row.naam.trim())
@@ -2028,7 +2021,7 @@ const App: React.FC = () => {
       }));
     if (newCards.length > 0) addCustomEntries(newCards, 'Bedrijf toegevoegd (via bezoek)');
 
-    const newVisits: Visit[] = rows.map(row => {
+    const newVisits = rows.map(row => {
       const matched = row.confirmed && row.selectedIndex !== null ? row.matches[row.selectedIndex] : null;
 
       if (matched) {
@@ -2042,7 +2035,6 @@ const App: React.FC = () => {
         if (Object.keys(edits).length > 0) autoSaveEdit(matched.naam, edits);
 
         return {
-          id: Math.random().toString(36).substring(2, 11),
           bedrijf_id: matched.id || matched.naam,
           naam: row.naam.trim() || matched.naam,
           stad: row.stad.trim() || matched.stad || '',
@@ -2054,14 +2046,12 @@ const App: React.FC = () => {
           notitie: row.notitie.trim(),
           status: 'bezocht',
           datum: today,
-          created_at: nowIso,
           matched: true,
         };
       }
 
       const naam = row.naam.trim() || row.input.trim();
       return {
-        id: Math.random().toString(36).substring(2, 11),
         bedrijf_id: naam,
         naam,
         stad: row.stad.trim(),
@@ -2073,11 +2063,11 @@ const App: React.FC = () => {
         notitie: row.notitie.trim(),
         status: 'bezocht',
         datum: today,
-        created_at: nowIso,
         matched: row.creatingNew, // nieuwe kaart net aangemaakt = wél gekoppeld
       };
     });
-    setVisits(v => [...newVisits, ...v]);
+    await authService.addVisits(currentUser.id, newVisits);
+    setVisits(await authService.getVisits(currentUser.id));
   };
 
   // Breidt een woorden-set uit met bekende afkortingen/aliassen (NAAM_ALIASSEN, verderop
@@ -2169,8 +2159,10 @@ const App: React.FC = () => {
     setVisits(v => v.map(visit => visit.id === id ? { ...visit, ...updates } : visit));
   };
 
-  const deleteVisit = (id: string) => {
+  const deleteVisit = async (id: string) => {
+    if (!currentUser) return;
     setVisits(v => v.filter(visit => visit.id !== id));
+    await authService.deleteVisit(currentUser.id, id);
   };
 
   // Na REVISIT_CYCLE_MONTHS maanden mag een bedrijf weer als "nog te bezoeken" gelden,
@@ -2231,21 +2223,17 @@ const App: React.FC = () => {
     niet_geinteresseerd: 'bg-red-50 text-red-700 border-red-200',
   };
   const [crmData, setCrmData] = useState<Record<string, CrmEntry>>({});
-  const crmStorageKey = currentUser ? `inncempro_crm_${currentUser.id}` : null;
 
   useEffect(() => {
-    if (!crmStorageKey) { setCrmData({}); return; }
-    try { setCrmData(JSON.parse(localStorage.getItem(crmStorageKey) || '{}')); } catch { setCrmData({}); }
-  }, [crmStorageKey]);
+    if (!currentUser) { setCrmData({}); return; }
+    authService.getCrmData(currentUser.id).then(setCrmData);
+  }, [currentUser?.id]);
 
   const updateCrm = (b: any, patch: Partial<CrmEntry>) => {
-    if (!crmStorageKey) return;
+    if (!currentUser) return;
     const key = crmKey(b);
-    setCrmData(prev => {
-      const next = { ...prev, [key]: { ...prev[key], ...patch, updatedAt: Date.now() } };
-      localStorage.setItem(crmStorageKey, JSON.stringify(next));
-      return next;
-    });
+    setCrmData(prev => ({ ...prev, [key]: { ...prev[key], ...patch, updatedAt: Date.now() } }));
+    authService.upsertCrmData(currentUser.id, key, patch as any);
   };
 
   // Saved Routes
@@ -2631,76 +2619,78 @@ const App: React.FC = () => {
 
   // INITIAL LOAD
   useEffect(() => {
-      const applyUser = (user: User) => {
+      let cancelled = false;
+      const applyUser = async (user: User) => {
+          if (cancelled) return;
           setCurrentUser(user);
-          setFavorites(authService.getFavorites(user.id));
-          setLists(authService.getLists(user.id));
+          setFavorites(await authService.getFavorites(user.id));
+          setLists(await authService.getLists(user.id));
           const histKey = `inncempro_search_history_${user.id}`;
           setSearchHistory(JSON.parse(localStorage.getItem(histKey) || '[]'));
           setEditName(user.username);
           setEditEmail(user.email);
           setEditAvatar(user.avatarUrl || '');
       };
-      const user = authService.getCurrentUser();
-      if (user) { applyUser(user); return; }
-      // TIJDELIJK voor demo aan collega's: het inlogscherm blijft zichtbaar (ziet er nog
-      // normaal uit), maar logt na 3 seconden automatisch in als de standaard demo-gebruiker
-      // — zodat er niemand live hoeft in te typen. Verwijder deze auto-login-timer weer zodra
-      // de demo voorbij is (DEMO_AUTO_LOGIN op false zetten, of dit blok weghalen).
-      if (DEMO_AUTO_LOGIN) {
-          const timer = setTimeout(() => {
-              try { applyUser(authService.login('Inncempro', 'inncempro')); } catch { /* negeren */ }
-          }, 3000);
-          return () => clearTimeout(timer);
-      }
+      (async () => {
+          const user = await authService.getCurrentUser();
+          if (user) { await applyUser(user); return; }
+          // TIJDELIJK voor demo aan collega's geweest, nu uitgezet (zie DEMO_AUTO_LOGIN-
+          // definitie bovenaan) zodat uitloggen ook echt uitgelogd blijft.
+          if (DEMO_AUTO_LOGIN) {
+              setTimeout(async () => {
+                  try { await applyUser(await authService.login('Inncempro', 'inncempro')); } catch { /* negeren */ }
+              }, 3000);
+          }
+      })();
+      return () => { cancelled = true; };
   }, []);
 
   // AUTH HANDLERS
-  const handleAuthSubmit = (e: React.FormEvent) => {
+  const handleAuthSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       setAuthError(null);
 
       if (authMode === 'login') {
           try {
-              const user = authService.login(loginIdent, loginPass);
-              finishLogin(user);
+              const user = await authService.login(loginIdent, loginPass);
+              await finishLogin(user);
           } catch (err: any) {
               setAuthError(err.message);
           }
       } else {
           try {
-              const user = authService.register(regName, regEmail, regPass);
-              finishLogin(user);
+              const user = await authService.register(regName, regEmail, regPass);
+              await finishLogin(user);
           } catch (err: any) {
               setAuthError(err.message);
           }
       }
   };
 
-  const finishLogin = (user: User) => {
+  const finishLogin = async (user: User) => {
       setCurrentUser(user);
-      setFavorites(authService.getFavorites(user.id));
-      setLists(authService.getLists(user.id));
+      setFavorites(await authService.getFavorites(user.id));
+      setLists(await authService.getLists(user.id));
       setEditName(user.username);
       setEditEmail(user.email);
       setEditAvatar(user.avatarUrl || '');
-      
+
       setLoginIdent(''); setLoginPass('');
       setRegName(''); setRegEmail(''); setRegPass('');
   };
 
-  const handleLogout = () => {
-      authService.logout();
+  const handleLogout = async () => {
+      await authService.logout();
       setCurrentUser(null);
       setFoundCompanies([]);
       setAuthMode('login');
   };
 
-  const handleUpdateProfile = (e: React.FormEvent) => {
+  const handleUpdateProfile = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!currentUser) return;
       try {
-          const updated = authService.updateProfile(currentUser.id, {
+          const updated = await authService.updateProfile(currentUser.id, {
               username: editName,
               email: editEmail,
               avatarUrl: editAvatar
@@ -2814,27 +2804,27 @@ const App: React.FC = () => {
   };
 
   // APP LOGIC
-  const toggleFavorite = (company: DiscoveredCompany) => {
+  const toggleFavorite = async (company: DiscoveredCompany) => {
       if (!currentUser) return;
-      const newFavs = authService.toggleFavorite(currentUser.id, company);
+      const newFavs = await authService.toggleFavorite(currentUser.id, company);
       setFavorites(newFavs);
   };
 
   // Bulk favoriet-toggle voor de hele selectie (SelectionBar): staat alles al in
   // favorieten, dan verwijderen we alles; anders vullen we alleen de ontbrekende aan
   // (geen halve toggle per item, dat voelt onvoorspelbaar aan bij een multi-select actie).
-  const toggleSelectionFavorites = (raws: any[]) => {
+  const toggleSelectionFavorites = async (raws: any[]) => {
       if (!currentUser || !raws.length) return;
       const isFav = (b: any) => favorites.some(f => f.name === b.naam && f.city === (b.stad || ''));
       const shouldAdd = !raws.every(isFav);
       let newFavs = favorites;
-      raws.forEach((b: any) => {
+      for (const b of raws as any[]) {
           const company: any = { id: `${b.naam}|${b.stad}`, name: b.naam, city: b.stad || '', discoveredAt: new Date().toISOString(), _raw: b };
           const currentlyFav = newFavs.some(f => f.name === company.name && f.city === company.city);
           if (shouldAdd !== currentlyFav) {
-              newFavs = authService.toggleFavorite(currentUser.id, company);
+              newFavs = await authService.toggleFavorite(currentUser.id, company);
           }
-      });
+      }
       setFavorites(newFavs);
   };
 
@@ -2860,54 +2850,54 @@ const App: React.FC = () => {
   };
 
   // LIJSTEN: bedrijven opslaan in zelf aangemaakte, benoemde lijsten
-  const createList = (name: string): CompanyList | null => {
+  const createList = async (name: string): Promise<CompanyList | null> => {
       if (!currentUser || !name.trim()) return null;
-      const next = authService.createList(currentUser.id, name.trim());
+      const next = await authService.createList(currentUser.id, name.trim());
       setLists(next);
       return next[next.length - 1];
   };
 
-  const renameList = (listId: string, name: string) => {
+  const renameList = async (listId: string, name: string) => {
       if (!currentUser || !name.trim()) return;
-      setLists(authService.renameList(currentUser.id, listId, name.trim()));
+      setLists(await authService.renameList(currentUser.id, listId, name.trim()));
   };
 
-  const deleteList = (listId: string) => {
+  const deleteList = async (listId: string) => {
       if (!currentUser) return;
-      const next = authService.deleteList(currentUser.id, listId);
+      const next = await authService.deleteList(currentUser.id, listId);
       setLists(next);
       setActiveListId(prev => (prev === listId ? (next[0]?.id ?? null) : prev));
   };
 
-  const toggleCompanyInList = (listId: string, company: DiscoveredCompany) => {
+  const toggleCompanyInList = async (listId: string, company: DiscoveredCompany) => {
       if (!currentUser) return;
       const list = lists.find(l => l.id === listId);
       if (!list) return;
       const already = list.companies.some(c => c.name === company.name && c.city === company.city);
       const next = already
-        ? authService.removeFromList(currentUser.id, listId, company)
-        : authService.addToList(currentUser.id, listId, company);
+        ? await authService.removeFromList(currentUser.id, listId, company)
+        : await authService.addToList(currentUser.id, listId, company);
       setLists(next);
   };
 
-  const createListAndAddCompany = (name: string, company: DiscoveredCompany) => {
+  const createListAndAddCompany = async (name: string, company: DiscoveredCompany) => {
       if (!currentUser || !name.trim()) return;
       const existing = lists.find(l => l.name.toLowerCase() === name.trim().toLowerCase());
-      const listsAfterCreate = existing ? lists : authService.createList(currentUser.id, name.trim());
+      const listsAfterCreate = existing ? lists : await authService.createList(currentUser.id, name.trim());
       const listId = existing ? existing.id : listsAfterCreate[listsAfterCreate.length - 1].id;
-      const next = authService.addToList(currentUser.id, listId, company);
+      const next = await authService.addToList(currentUser.id, listId, company);
       setLists(next);
   };
 
-  const removeCompanyFromList = (listId: string, companyIndex: number) => {
+  const removeCompanyFromList = async (listId: string, companyIndex: number) => {
       if (!currentUser) return;
       const list = lists.find(l => l.id === listId);
       if (!list || !list.companies[companyIndex]) return;
       const company = list.companies[companyIndex];
-      toggleCompanyInList(listId, company);
+      await toggleCompanyInList(listId, company);
   };
 
-  const moveCompaniesToList = (fromListId: string, toListId: string, indices: number[]) => {
+  const moveCompaniesToList = async (fromListId: string, toListId: string, indices: number[]) => {
       if (!currentUser) return;
       const fromList = lists.find(l => l.id === fromListId);
       const toList = lists.find(l => l.id === toListId);
@@ -2915,27 +2905,27 @@ const App: React.FC = () => {
       const companies = indices.map(i => fromList.companies[i]).filter(Boolean);
       let updated = lists;
       for (const company of companies) {
-        updated = authService.addToList(currentUser.id, toListId, company);
-        updated = authService.removeFromList(currentUser.id, fromListId, company);
+        updated = await authService.addToList(currentUser.id, toListId, company);
+        updated = await authService.removeFromList(currentUser.id, fromListId, company);
       }
       setLists(updated);
       setSelectedListCompanyIndices(new Set());
   };
 
-  const addSelectionToList = (listId: string, companies: DiscoveredCompany[]) => {
+  const addSelectionToList = async (listId: string, companies: DiscoveredCompany[]) => {
       if (!currentUser) return;
-      let next = authService.getLists(currentUser.id);
-      companies.forEach(c => { next = authService.addToList(currentUser.id, listId, c); });
+      let next = await authService.getLists(currentUser.id);
+      for (const c of companies) { next = await authService.addToList(currentUser.id, listId, c); }
       setLists(next);
       clearSelection(); // Ledig selectie na het toevoegen — gebruiker weet dat actie klaar is
   };
 
-  const createListAndAddSelection = (name: string, companies: DiscoveredCompany[]) => {
+  const createListAndAddSelection = async (name: string, companies: DiscoveredCompany[]) => {
       if (!currentUser || !name.trim()) return;
       const existing = lists.find(l => l.name.toLowerCase() === name.trim().toLowerCase());
-      let next = existing ? lists : authService.createList(currentUser.id, name.trim());
+      let next = existing ? lists : await authService.createList(currentUser.id, name.trim());
       const listId = existing ? existing.id : next[next.length - 1].id;
-      companies.forEach(c => { next = authService.addToList(currentUser.id, listId, c); });
+      for (const c of companies) { next = await authService.addToList(currentUser.id, listId, c); }
       setLists(next);
       clearSelection(); // Ledig selectie na het aanmaken/toevoegen
   };
@@ -5918,13 +5908,13 @@ const App: React.FC = () => {
               placeholder="Naam van de lijst (bijv. 'Architecten Rotterdam')"
               className="w-full border border-slate-200 rounded-sm px-3 py-2.5 text-sm focus:outline-none focus:border-[#009FE3]"
               autoFocus
-              onKeyDown={e => { if (e.key === 'Enter' && newListName.trim()) { const created = createList(newListName.trim()); if (created) setActiveListId(created.id); setShowNewListModal(false); }}}
+              onKeyDown={async e => { if (e.key === 'Enter' && newListName.trim()) { const created = await createList(newListName.trim()); if (created) setActiveListId(created.id); setShowNewListModal(false); }}}
             />
             <div className="flex gap-2">
               <button onClick={() => setShowNewListModal(false)} className="flex-1 py-2.5 border border-slate-200 text-slate-500 text-xs font-bold uppercase tracking-wider rounded-sm hover:bg-slate-50">Annuleren</button>
               <button
                 disabled={!newListName.trim()}
-                onClick={() => { const created = createList(newListName.trim()); if (created) setActiveListId(created.id); setShowNewListModal(false); }}
+                onClick={async () => { const created = await createList(newListName.trim()); if (created) setActiveListId(created.id); setShowNewListModal(false); }}
                 className="flex-1 py-2.5 bg-[#009FE3] hover:bg-[#008ac5] disabled:opacity-40 text-white text-xs font-bold uppercase tracking-wider rounded-sm flex items-center justify-center gap-1.5">
                 <Plus className="w-3.5 h-3.5" /> Aanmaken
               </button>
