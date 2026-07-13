@@ -10,6 +10,7 @@ import MapView from './components/MapView';
 import ClusterMapView from './components/ClusterMapView';
 import RouteMapPanel from './components/RouteMapPanel';
 import AIAgentPanel, { AgentOrb, SUGGESTIONS } from './components/AIAgentPanel';
+import VoiceInputButton from './components/VoiceInputButton';
 import { authService } from './services/authService';
 import { preloadAllAddresses, onGeoclusterProgress, GeoclusterProgress, clearClusterCache } from './services/geoclusterService';
 import { queuedNominatim } from './services/nominatimQueue';
@@ -1000,6 +1001,16 @@ function normalizePlaceNameToken(s: string): string {
 const KNOWN_PLACE_NAMES = new Set<string>(
   DUTCH_LOCATIONS.filter(loc => loc !== 'Heel Nederland').map(normalizePlaceNameToken)
 );
+
+// Discipline-woorden die Live Zoeken laat begrijpen dat "architecten Rotterdam" een
+// type-filter (architect) plus een plaats/naam (Rotterdam) is, i.p.v. een letterlijke
+// bedrijfsnaam-zoekopdracht. Gebruikt dezelfde categorieën als detectType().
+const DISCIPLINE_KEYWORDS: Record<string, 'architect' | 'bouwbedrijf' | 'aannemer' | 'materialen'> = {
+  architect: 'architect', architecten: 'architect', architectenbureau: 'architect', architectuur: 'architect',
+  bouwbedrijf: 'bouwbedrijf', bouwbedrijven: 'bouwbedrijf',
+  aannemer: 'aannemer', aannemers: 'aannemer', aannemersbedrijf: 'aannemer', aannemingsbedrijf: 'aannemer',
+  bouwmateriaal: 'materialen', bouwmaterialen: 'materialen', leverancier: 'materialen', leveranciers: 'materialen',
+};
 
 // Kleine, standaard Levenshtein-afstand voor het herkennen van bedrijfsnamen die één letter
 // verschillen door een tikfout (bv. "Kamphorst" vs "Kamphors"), zonder dat elk kort woord
@@ -3237,16 +3248,36 @@ const App: React.FC = () => {
           if (q && !queryIsRadiusOrigin) {
               const naam = (b.naam || '').toLowerCase();
               const naamNorm = normalizeText(b.naam || '');
-              const isKnownAlias = q in NAAM_ALIASSEN || q.length <= 4;
+
+              // Herken discipline-woorden (architect(en), aannemer(s), bouwbedrijf/-bedrijven,
+              // bouwmateriaal/-materialen) los van de rest van de zoekterm. Zonder dit zocht
+              // "architecten Rotterdam" letterlijk naar een bedrijf met "architecten" ÉN
+              // "Rotterdam" in de naam/adres — wat vrijwel nooit iets oplevert, want geen
+              // bedrijfsnaam bevat de plaatsnaam. Nu wordt het gelezen als "type=architect" +
+              // "stad/naam=Rotterdam", en matcht via de bestaande detectType()-logica.
+              const qWordsForType = q.split(/\s+/).filter(Boolean);
+              let impliedType: 'architect' | 'bouwbedrijf' | 'aannemer' | 'materialen' | null = null;
+              const qWordsWithoutType = qWordsForType.filter(w => {
+                const t = DISCIPLINE_KEYWORDS[w];
+                if (t && !impliedType) { impliedType = t; return false; }
+                return true;
+              });
+              if (impliedType && detectType(b) !== impliedType) return false;
+              const qEffective = qWordsWithoutType.length > 0 ? qWordsWithoutType.join(' ') : q;
+              // Alleen een discipline-woord getypt, geen stad/naam erbij: het type-filter
+              // hierboven is dan de hele zoekopdracht, dus verder tekst-matchen overslaan.
+              if (impliedType && qWordsWithoutType.length === 0) return true;
+
+              const isKnownAlias = qEffective in NAAM_ALIASSEN || qEffective.length <= 4;
 
               // Splits query in afzonderlijke zoekwoorden (ook alias-geëxpandeerd)
-              const expandedTerms = expandQuery(q);
+              const expandedTerms = expandQuery(qEffective);
               const allSearchWords = new Set<string>();
               for (const t of expandedTerms) {
                 t.split(/[\s\-\/&,.()+]+/).filter(Boolean).forEach(w => allSearchWords.add(w));
               }
               const searchWordList = Array.from(allSearchWords);
-              const qNorm = normalizeText(q);
+              const qNorm = normalizeText(qEffective);
 
               // Splits naam in losse woorden
               const naamWords = naam.split(/[\s\-\/&,.()+]+/).filter(Boolean);
@@ -3283,7 +3314,7 @@ const App: React.FC = () => {
               });
 
               const contactFields = isKnownAlias ? '' : [b.email, b.email_sales, b.email_overig, b.website].filter(Boolean).join(' ').toLowerCase();
-              const matchFields = matchLocation || (!isKnownAlias && contactFields.includes(q));
+              const matchFields = matchLocation || (!isKnownAlias && contactFields.includes(qEffective));
               if (!matchNaam && !matchFields) return false;
           }
 
@@ -4346,7 +4377,10 @@ const App: React.FC = () => {
                    <div className="flex gap-2 sm:gap-3 mb-3 flex-wrap">
                      <div className="relative w-full">
                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-                       <input type="text" value={dbSearch} onChange={e => { setDbSearch(e.target.value); setDbPage(1); }} placeholder="Zoek op naam, stad, email..." className="w-full pl-9 pr-4 py-2.5 border border-slate-200 text-sm focus:outline-none focus:border-[#009FE3]" />
+                       <input type="text" value={dbSearch} onChange={e => { setDbSearch(e.target.value); setDbPage(1); }} placeholder="Zoek op naam, stad, email..." className="w-full pl-9 pr-10 py-2.5 border border-slate-200 text-sm focus:outline-none focus:border-[#009FE3]" />
+                       <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                         <VoiceInputButton onResult={(text) => { setDbSearch(text); setDbPage(1); }} />
+                       </div>
                      </div>
                    </div>
                    <div className="flex gap-2 sm:gap-3 mb-3 flex-wrap">
@@ -4588,17 +4622,20 @@ const App: React.FC = () => {
                           onBlur={() => setTimeout(() => setShowHistory(false), 150)}
                           onKeyDown={(e) => e.key === 'Enter' && handleManualSearch()}
                           placeholder="Architect, aannemer of bouwbedrijf (bijv. OMA)"
-                          className="w-full pl-14 pr-12 py-4 bg-transparent text-slate-900 font-medium placeholder-slate-400 focus:outline-none text-base"
+                          className="w-full pl-14 pr-20 py-4 bg-transparent text-slate-900 font-medium placeholder-slate-400 focus:outline-none text-base"
                         />
-                        <button
-                          type="button"
-                          onClick={useMyLocation}
-                          disabled={locating}
-                          title="Gebruik mijn locatie"
-                          className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full text-slate-400 hover:text-[#009FE3] hover:bg-[#009FE3]/10 transition-colors disabled:opacity-50 disabled:cursor-wait"
-                        >
-                          {locating ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
-                        </button>
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                          <VoiceInputButton onResult={(text) => { setCity(text); setLocationNote(null); setLocationError(null); if (manualSearchOrigin) clearRadiusAddress(); }} />
+                          <button
+                            type="button"
+                            onClick={useMyLocation}
+                            disabled={locating}
+                            title="Gebruik mijn locatie"
+                            className="p-2 rounded-full text-slate-400 hover:text-[#009FE3] hover:bg-[#009FE3]/10 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                          >
+                            {locating ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
+                          </button>
+                        </div>
                     </div>
                     <button onClick={() => handleManualSearch()} disabled={searchState.isLoading} className="w-full sm:w-auto bg-[#E85E26] hover:bg-[#d14d1b] disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold py-4 px-8 transition-all flex items-center justify-center gap-3 text-sm uppercase tracking-wider min-w-[160px] rounded-lg sm:rounded-lg">
                         {searchState.isLoading ? <Loader2 className="animate-spin w-4 h-4"/> : <ArrowRight className="w-4 h-4" />}
@@ -4656,8 +4693,11 @@ const App: React.FC = () => {
                                  onChange={e => { setRadiusAddressQuery(e.target.value); setRadiusAddressError(null); }}
                                  onKeyDown={e => e.key === 'Enter' && searchFromAddress()}
                                  placeholder="Of zoek vanaf een adres (bv. Weena-Zuid 158, Rotterdam)"
-                                 className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-[#009FE3]"
+                                 className="w-full pl-3 pr-8 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-[#009FE3]"
                                />
+                               <div className="absolute right-1 top-1/2 -translate-y-1/2">
+                                 <VoiceInputButton onResult={(text) => { setRadiusAddressQuery(text); setRadiusAddressError(null); }} className="p-1 rounded-full text-slate-400 hover:text-[#009FE3] hover:bg-[#009FE3]/10 transition-colors" />
+                               </div>
                              </div>
                              <button
                                onClick={searchFromAddress}
@@ -6876,7 +6916,10 @@ const ProvinceFilter: React.FC<{ selectedRegions: string[]; onToggle: (item: str
           <div className="relative mb-3">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
             <input type="text" placeholder="Zoek stad..." value={citySearch} onChange={e => setCitySearch(e.target.value)}
-              className="w-full pl-8 pr-3 py-2 bg-white border border-slate-200 text-xs focus:border-[#009FE3] focus:outline-none rounded-sm" />
+              className="w-full pl-8 pr-9 py-2 bg-white border border-slate-200 text-xs focus:border-[#009FE3] focus:outline-none rounded-sm" />
+            <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+              <VoiceInputButton onResult={setCitySearch} className="p-1 rounded-full text-slate-400 hover:text-[#009FE3] hover:bg-[#009FE3]/10 transition-colors" />
+            </div>
           </div>
 
           {groups.length === 0 && (
