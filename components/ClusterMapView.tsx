@@ -5,6 +5,8 @@ import { queuedNominatim } from '../services/nominatimQueue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MapPin, Loader2, Check, ChevronDown, ChevronRight, Search, X, Navigation } from 'lucide-react';
+import VoiceInputButton from './VoiceInputButton';
+import { fuzzyMatch } from '../utils/fuzzyMatch';
 
 const SRC_COLOR: Record<string, string> = {
   Bouwgarant: '#009FE3',
@@ -244,6 +246,10 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
       marker.on('mouseover', function (this: L.CircleMarker) {
         this.setRadius(this.getRadius() + 3);
         this.openPopup();
+        // Bolletje rustig naar het midden van de kaart pannen — vooral fijn bij bolletjes
+        // dicht tegen de rand (bv. linksonderin), die zijn klein en lastig precies te raken
+        // zolang de popup half buiten beeld valt.
+        if (mapRef.current) mapRef.current.panTo(this.getLatLng(), { animate: true, duration: 0.3 });
       });
       marker.on('mouseout', function (this: L.CircleMarker) {
         this.setRadius(Math.max(3.5, this.getRadius() - 3));
@@ -418,17 +424,22 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
             value={myLocAddr}
             onChange={e => setMyLocAddr(e.target.value)}
             placeholder="Zoek stad of dorp..."
-            className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-sm"
+            className="w-full pl-2 pr-9 py-1.5 text-xs border border-slate-200 rounded-sm"
           />
+          <div className="absolute right-1 top-1/2 -translate-y-1/2">
+            <VoiceInputButton onResult={setMyLocAddr} className="p-1 rounded-full text-slate-400 hover:text-[#009FE3] hover:bg-[#009FE3]/10 transition-colors" />
+          </div>
         </div>
 
-        {/* Steden checkboxes - voegen toe aan selectedRegions */}
+        {/* Steden checkboxes - voegen toe aan selectedRegions. fuzzyMatch i.p.v. gewone
+            .includes() zodat spraakinvoer met net iets andere spelling ("noord holand" via
+            microfoon) alsnog "Noord-Holland" vindt. */}
         {(() => {
-          const query = myLocAddr.toLowerCase().trim();
+          const query = myLocAddr.trim();
           const filteredCities = query.length >= 2
             ? Array.from(new Set(
                 allEntries
-                  .filter(e => (e.stad || '').toLowerCase().includes(query))
+                  .filter(e => fuzzyMatch(e.stad || '', query))
                   .map(e => {
                     const prov = e.provincie || 'Onbekend';
                     const stad = e.stad || 'Onbekend';
@@ -474,8 +485,11 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
           placeholder="Zoek stad..."
           value={citySearch}
           onChange={e => setCitySearch(e.target.value)}
-          className="w-full pl-8 pr-3 py-2 bg-white border border-slate-200 text-xs focus:border-[#009FE3] focus:outline-none rounded-sm"
+          className="w-full pl-8 pr-9 py-2 bg-white border border-slate-200 text-xs focus:border-[#009FE3] focus:outline-none rounded-sm"
         />
+        <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+          <VoiceInputButton onResult={setCitySearch} className="p-1 rounded-full text-slate-400 hover:text-[#009FE3] hover:bg-[#009FE3]/10 transition-colors" />
+        </div>
       </div>
       <button
         onClick={() => setSelectedRegions(prev => new Set([...prev, ...locationGroups.map(g => provKey(g.provincie))]))}
@@ -486,10 +500,15 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
 
       <div className="space-y-0.5 max-h-[calc(100vh-380px)] overflow-y-auto pr-1">
         {locationGroups.map(({ provincie, count, steden }) => {
-          const filteredSteden = citySearch
-            ? steden.filter(s => s.naam.toLowerCase().includes(citySearch.toLowerCase()))
+          // fuzzyMatch i.p.v. gewone .includes() zodat spraakinvoer met een net iets andere
+          // spelling ("noord holand" via microfoon) alsnog matcht. Ook de PROVINCIENAAM zelf
+          // meenemen — zoek je "Noord-Holland" (een provincie, geen stad), dan moet die groep
+          // gewoon getoond worden i.p.v. verborgen omdat er toevallig geen stad zo heet.
+          const provinceMatches = citySearch ? fuzzyMatch(provincie, citySearch) : false;
+          const filteredSteden = citySearch && !provinceMatches
+            ? steden.filter(s => fuzzyMatch(s.naam, citySearch))
             : steden;
-          if (citySearch && filteredSteden.length === 0) return null;
+          if (citySearch && !provinceMatches && filteredSteden.length === 0) return null;
 
           const isOpen = expandedProvincies.has(provincie) || !!citySearch;
           const provSelected = selectedRegions.has(provKey(provincie));

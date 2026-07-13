@@ -88,6 +88,13 @@ export const authService = {
         return toAppUser(data.user as any);
     },
 
+    // WACHTWOORD WIJZIGEN — geldt voor de ingelogde gebruiker zelf, blijft daarna net als
+    // voorheen gewoon gelden (Supabase Auth bewaart dit permanent, niet in localStorage).
+    changePassword: async (newPassword: string): Promise<void> => {
+        const { error } = await supabase.auth.updateUser({ password: newPassword });
+        if (error) throw new Error(error.message);
+    },
+
     // FAVORITES (per account, in Supabase)
     getFavorites: async (userId: string): Promise<DiscoveredCompany[]> => {
         const { data, error } = await supabase.from('favorites').select('*').eq('user_id', userId).order('created_at', { ascending: false });

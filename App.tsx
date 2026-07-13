@@ -11,6 +11,7 @@ import ClusterMapView from './components/ClusterMapView';
 import RouteMapPanel from './components/RouteMapPanel';
 import AIAgentPanel, { AgentOrb, SUGGESTIONS } from './components/AIAgentPanel';
 import VoiceInputButton from './components/VoiceInputButton';
+import { fuzzyMatch } from './utils/fuzzyMatch';
 import { authService } from './services/authService';
 import { preloadAllAddresses, onGeoclusterProgress, GeoclusterProgress, clearClusterCache } from './services/geoclusterService';
 import { queuedNominatim } from './services/nominatimQueue';
@@ -1555,6 +1556,10 @@ const App: React.FC = () => {
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editAvatar, setEditAvatar] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordChangeError, setPasswordChangeError] = useState<string | null>(null);
+  const [passwordChangeMsg, setPasswordChangeMsg] = useState<string | null>(null);
 
   // GEBRUIKERSVOORKEUREN (persistent via localStorage)
   const DEFAULT_HQ_ADDRESS = 'Lansinkesweg 4, 7553 AE Hengelo';
@@ -2702,6 +2707,22 @@ const App: React.FC = () => {
       }
   };
 
+  const handleChangePassword = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setPasswordChangeError(null);
+      setPasswordChangeMsg(null);
+      if (!currentUser) return;
+      if (newPassword.length < 4) { setPasswordChangeError('Wachtwoord moet minstens 4 tekens zijn.'); return; }
+      if (newPassword !== confirmPassword) { setPasswordChangeError('Wachtwoorden komen niet overeen.'); return; }
+      try {
+          await authService.changePassword(newPassword);
+          setNewPassword(''); setConfirmPassword('');
+          setPasswordChangeMsg('Wachtwoord bijgewerkt.');
+      } catch (err: any) {
+          setPasswordChangeError(err.message);
+      }
+  };
+
   // BATCH IMPORT HANDLERS
   const handleCSVUpload = (file: File) => {
     Papa.parse(file, {
@@ -3318,7 +3339,16 @@ const App: React.FC = () => {
                 const termNorm = normalizeText(searchTerm);
                 const allowSubstring = searchTerm.length >= 5;
                 return (allowSubstring && locationStrNorm.includes(termNorm)) ||
-                       locationWords.some(w => w === searchTerm || w.startsWith(searchTerm));
+                       locationWords.some(w => w === searchTerm || w.startsWith(searchTerm)) ||
+                       // Tikfouttolerantie voor plaatsnamen — vooral relevant bij spraakinvoer
+                       // die een stad soms iets anders verstaat/spelt (bv. "roterdam"). Alleen
+                       // voor termen van 4+ tekens, anders matcht bijna elke korte stad wel iets.
+                       (termNorm.length >= 4 && locationWords.some(w => {
+                         const wNorm = normalizeText(w);
+                         if (wNorm.length < 4) return false;
+                         const maxDist = termNorm.length >= 7 ? 2 : 1;
+                         return levenshteinDistance(termNorm, wNorm) <= maxDist;
+                       }));
               });
 
               const contactFields = isKnownAlias ? '' : [b.email, b.email_sales, b.email_overig, b.website].filter(Boolean).join(' ').toLowerCase();
@@ -4004,6 +4034,25 @@ const App: React.FC = () => {
                               </div>
                               <button type="submit" className="w-full py-3 bg-[#009FE3] text-white font-bold uppercase rounded-sm flex items-center justify-center gap-2 hover:bg-[#008ac5] text-xs tracking-wider">
                                   <Save className="w-4 h-4" /> Opslaan
+                              </button>
+                          </form>
+                      )}
+
+                      {settingsTab === 'profiel' && (
+                          <form onSubmit={handleChangePassword} className="space-y-4 mt-6 pt-6 border-t border-slate-200">
+                              <p className="text-xs font-bold text-slate-700 uppercase tracking-wider">Wachtwoord wijzigen</p>
+                              <div>
+                                  <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Nieuw wachtwoord</label>
+                                  <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="w-full p-2.5 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none" />
+                              </div>
+                              <div>
+                                  <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Bevestig nieuw wachtwoord</label>
+                                  <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="w-full p-2.5 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none" />
+                              </div>
+                              {passwordChangeError && <p className="text-xs text-red-500">{passwordChangeError}</p>}
+                              {passwordChangeMsg && <p className="text-xs text-green-600">{passwordChangeMsg}</p>}
+                              <button type="submit" className="w-full py-3 bg-slate-800 text-white font-bold uppercase rounded-sm flex items-center justify-center gap-2 hover:bg-slate-900 text-xs tracking-wider">
+                                  <Lock className="w-4 h-4" /> Wachtwoord bijwerken
                               </button>
                           </form>
                       )}
@@ -5110,7 +5159,7 @@ const App: React.FC = () => {
                   {/* Selecteren-knop: expliciete opt-in, staat los van het bestaande hover/tik-
                       gedrag op de bolletjes (dat blijft precies zoals het was). Alleen als deze
                       aan staat, selecteert een klik op een bolletje het bedrijf i.p.v. niets. */}
-                  <div className="absolute top-3 left-3 z-[1000] flex items-center gap-2">
+                  <div className="absolute top-3 left-16 z-[1000] flex items-center gap-2">
                     <button
                       onClick={() => { setMapSelectionMode(v => !v); if (mapSelectionMode) clearSelection(); }}
                       className={`flex items-center gap-1.5 px-3 py-2 rounded-sm text-xs font-bold uppercase tracking-wider shadow-sm border transition-colors ${mapSelectionMode ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'bg-white text-slate-600 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]'}`}
@@ -6973,10 +7022,15 @@ const ProvinceFilter: React.FC<{ selectedRegions: string[]; onToggle: (item: str
 
           <div className="space-y-0.5 max-h-[420px] overflow-y-auto pr-1">
             {groups.map(({ provincie, count, steden }) => {
-              const filteredSteden = citySearch
-                ? steden.filter(s => s.naam.toLowerCase().includes(citySearch.toLowerCase()))
+              // fuzzyMatch i.p.v. gewone .includes() zodat spraakinvoer met een net iets
+              // andere spelling nog matcht, en de provincienaam zelf ook meetelt (anders
+              // verdwijnt "Noord-Holland" als groep zodra je die provincienaam intikt/inspreekt,
+              // want er is geen stad die toevallig zo heet).
+              const provinceMatches = citySearch ? fuzzyMatch(provincie, citySearch) : false;
+              const filteredSteden = citySearch && !provinceMatches
+                ? steden.filter(s => fuzzyMatch(s.naam, citySearch))
                 : steden;
-              if (citySearch && filteredSteden.length === 0) return null;
+              if (citySearch && !provinceMatches && filteredSteden.length === 0) return null;
 
               const isPOpen = openProvs.has(provincie) || !!citySearch;
               const provSelected = selectedRegions.includes(provincie);
