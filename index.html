@@ -2,7 +2,12 @@
 <html lang="nl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- maximum-scale/user-scalable=no voorkomt dat de hele pagina meepinch-zoomt terwijl je
+         op de kaart aan het pinch-zoomen bent (dat gaf op iPhone een vervelende strijd tussen
+         Safari's eigen paginazoom en Leaflet's eigen kaartzoom, waardoor tikken/selecteren op
+         de kaart onbetrouwbaar werd). viewport-fit=cover zorgt dat de app, als "Zet op
+         beginscherm"-app zonder Safari-balken, netjes rekening houdt met de notch/homebalk. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Inncempro Database & Search</title>
 
     <!-- App-icoon: favicon in de browser-tab, apple-touch-icon voor "Zet op beginscherm"

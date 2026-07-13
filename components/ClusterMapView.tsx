@@ -179,13 +179,22 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
   }, [allEntries]);
 
   // Hoe verder ingezoomd, hoe groter de bolletjes (makkelijker te raken op mobiel) — maar
-  // begrensd tussen 3.5 en 8px radius zodat bedrijven die dicht bij elkaar zitten (bv.
-  // binnenstad Amsterdam) nooit onder elkaar gaan overlappen. Zoom 13 blijft de baseline
-  // radius 5, dezelfde grootte die hiervoor altijd vast stond.
+  // begrensd zodat bedrijven die dicht bij elkaar zitten (bv. binnenstad Amsterdam) nooit
+  // onder elkaar gaan overlappen. Zoom 13 blijft de baseline, dezelfde grootte die hiervoor
+  // altijd vast stond.
+  //
+  // Met canvas-rendering (preferCanvas) IS de getekende straal ook meteen het hele tikgebied —
+  // een radius van een paar pixels is op een telefoon vrijwel onmogelijk precies te raken.
+  // pointer:coarse (aanraakschermen) krijgt daarom een flink grotere straal, puur voor
+  // bruikbaarheid; op desktop met een muis blijft de kleinere, preciezere maat gewoon staan.
+  const isTouchDevice = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
   const CIRCLE_BASE_ZOOM = 13;
   const circleRadiusForZoom = (zoom: number): number => {
     const scale = 1 + (zoom - CIRCLE_BASE_ZOOM) * 0.09;
-    return Math.max(3.5, Math.min(8, 5 * Math.max(0.65, Math.min(1.45, scale))));
+    const factor = Math.max(0.65, Math.min(1.45, scale));
+    return isTouchDevice
+      ? Math.max(9, Math.min(16, 11 * factor))
+      : Math.max(3.5, Math.min(8, 5 * factor));
   };
 
   // Initialize map once
@@ -243,22 +252,33 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
       // Hover toont de info meteen (geen klik meer nodig) en maakt het bolletje eventjes
       // groter zodat duidelijk is welke je aanwijst — bij drukke gebieden (bv. Amsterdam
       // binnenstad) is dat prettiger dan blind moeten klikken. Muis weg = terug naar normaal.
+      // Alleen voor een echte muis: een telefoon heeft geen "hover", tikken vuurt mouseover
+      // en click vlak na elkaar af, en dan zou de popup het tikken op selecteren in de weg
+      // zitten. Op desktop wordt er ook meteen een stukje ingezoomd op het bolletje.
       marker.on('mouseover', function (this: L.CircleMarker) {
+        // Op touch blijft dit ongebruikt: mouseout vuurt daar niet betrouwbaar af na een tik,
+        // waardoor het bolletje anders "vergroot" blijft staan. Touch-schermen hebben door
+        // circleRadiusForZoom hierboven toch al een ruimere straal, dus geen extra nodig.
+        if (isTouchDevice) return;
         this.setRadius(this.getRadius() + 3);
-        this.openPopup();
-        // Bolletje rustig naar het midden van de kaart pannen — vooral fijn bij bolletjes
-        // dicht tegen de rand (bv. linksonderin), die zijn klein en lastig precies te raken
-        // zolang de popup half buiten beeld valt.
-        if (mapRef.current) mapRef.current.panTo(this.getLatLng(), { animate: true, duration: 0.3 });
+        if (!selectionModeRef.current) this.openPopup();
+        if (mapRef.current) {
+          const targetZoom = Math.max(mapRef.current.getZoom(), 15);
+          mapRef.current.setView(this.getLatLng(), targetZoom, { animate: true, duration: 0.3 });
+        }
       });
       marker.on('mouseout', function (this: L.CircleMarker) {
-        this.setRadius(Math.max(3.5, this.getRadius() - 3));
+        if (isTouchDevice) return;
+        if (mapRef.current) this.setRadius(circleRadiusForZoom(mapRef.current.getZoom()));
         this.closePopup();
       });
       // Alleen actief als selectiemodus expliciet aan staat (zie de toggle-knop in App.tsx) —
       // staat hij uit, dan verandert een klik hier niets, en blijft alleen de hover-info
-      // hierboven (die daardoor identiek blijft aan hoe het al werkte).
+      // hierboven (die daardoor identiek blijft aan hoe het al werkte). Op touch is dit de
+      // enige interactie (geen aparte hover-stap), en de vergrote tikstraal hierboven maakt
+      // dit nu ook echt goed te raken.
       marker.on('click', function (this: L.CircleMarker) {
+        if (isTouchDevice && !selectionModeRef.current) this.openPopup();
         if (!selectionModeRef.current) return;
         onToggleSelectionRef.current?.(entry);
       });
