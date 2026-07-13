@@ -65,6 +65,7 @@ export interface User {
     email: string;
     password?: string; // In real app, never store plain text. Mocking for localstorage.
     avatarUrl?: string;
+    role?: string; // functietitel, bv. "Managing director", "Sales"
     themeColor?: string; // Hex code
     createdAt: number;
 }

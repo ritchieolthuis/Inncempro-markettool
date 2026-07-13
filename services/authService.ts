@@ -11,6 +11,7 @@ async function toAppUser(authUser: { id: string; email?: string; created_at: str
     username: profile?.username || authUser.email?.split('@')[0] || 'Gebruiker',
     email: authUser.email || '',
     avatarUrl: profile?.avatar_url || undefined,
+    role: profile?.role || undefined,
     themeColor: profile?.theme_color || '#009FE3',
     createdAt: new Date(authUser.created_at).getTime(),
   };

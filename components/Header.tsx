@@ -65,7 +65,7 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, user, onLogout, onOpenSett
                     >
                         <div className="flex flex-col text-right hidden sm:flex">
                             <span className="text-sm font-bold text-slate-900 leading-tight">{user.username}</span>
-                            <span className="text-[10px] text-slate-500 font-medium truncate max-w-[100px]">{user.email}</span>
+                            <span className="text-[10px] text-slate-500 font-medium truncate max-w-[100px]">{user.role || user.email}</span>
                         </div>
                         <div className="w-10 h-10 rounded-full bg-slate-100 overflow-hidden border border-slate-200">
                             {user.avatarUrl ? (

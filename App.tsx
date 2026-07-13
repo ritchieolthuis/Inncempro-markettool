@@ -4017,6 +4017,22 @@ const App: React.FC = () => {
                   </div>
 
                   <div className="p-6 max-h-[70vh] overflow-y-auto">
+                      {settingsTab === 'profiel' && currentUser?.role && (
+                          <div className="flex items-center gap-3 mb-5 pb-5 border-b border-slate-100">
+                              <div className="w-14 h-14 rounded-full bg-slate-100 overflow-hidden border border-slate-200 flex-shrink-0">
+                                  {currentUser.avatarUrl ? (
+                                      <img src={currentUser.avatarUrl} alt={currentUser.username} className="w-full h-full object-cover" />
+                                  ) : (
+                                      <div className="w-full h-full flex items-center justify-center text-slate-400"><UserIcon className="w-6 h-6" /></div>
+                                  )}
+                              </div>
+                              <div>
+                                  <p className="text-sm font-bold text-slate-900">{currentUser.username}</p>
+                                  <p className="text-xs text-slate-500">{currentUser.role}</p>
+                              </div>
+                          </div>
+                      )}
+
                       {settingsTab === 'profiel' && (
                           <form onSubmit={handleUpdateProfile} className="space-y-4">
                               <div>
