@@ -771,18 +771,29 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
 
   const displayStops = routeMode ? orderedStops : stops;
   const readyCount   = stops.filter(s => s.coords).length;
+  // Google Maps-URL: gebruikt de officieel gedocumenteerde ?api=1&origin=...&destination=...
+  // &waypoints=...-vorm (dezelfde die elders in de app al betrouwbaar werkt), niet de oude
+  // pad-stijl "/dir/A/B/C/D". Die oude vorm laat Google elk pad-segment apart als losse
+  // zoekopdracht interpreteren, wat bij naam+adres-combinaties (bv. "OMA, Rokin 99, 1012 KL,
+  // Amsterdam") regelmatig een segment niet herkent — de rit toont dan alleen punten zonder
+  // berekende rijroute/duur, en een later geopende link kan zelfs een andere (of geen) route
+  // opleveren dan toen hij werd aangemaakt. De ?api=1-vorm is stabiel en reproduceerbaar.
   const mapsUrl = (() => {
     if (!routeMode || !orderedStops.length) return null;
     const enc = (s: Stop) => {
       const r = s.company._raw || s.company;
       return encodeURIComponent([r.naam, r.straat, r.postcode, r.stad].filter(Boolean).join(', '));
     };
-    const parts = [
-      encodeURIComponent(startAddr),
-      ...orderedStops.slice(0, 10).map(enc),
-      ...(returnHome ? [encodeURIComponent(startAddr)] : []),
-    ];
-    return `https://www.google.com/maps/dir/${parts.join('/')}?travelmode=driving`;
+    // Google's Directions-URL verwerkt maximaal zo'n 10 tussenstops betrouwbaar — zelfde grens
+    // die hierboven al gold.
+    const capped = orderedStops.slice(0, 10);
+    const last = capped[capped.length - 1];
+    const destination = returnHome ? encodeURIComponent(startAddr) : enc(last);
+    const waypointStops = returnHome ? capped : capped.slice(0, -1);
+    const waypoints = waypointStops.map(enc).join('|');
+    let url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(startAddr)}&destination=${destination}&travelmode=driving`;
+    if (waypoints) url += `&waypoints=${waypoints}`;
+    return url;
   })();
 
   return (

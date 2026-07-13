@@ -81,13 +81,27 @@ interface ClusterMapViewProps {
   onOpenInDatabase?: (naam: string) => void;
   focusTarget?: { naam: string; straat: string; stad: string; provincie: string } | null;
   onFocusHandled?: () => void;
+  // Selectiemodus voor het bouwen van een route: staat deze uit (standaard), dan verandert er
+  // niets aan het bestaande hover/tik-gedrag. Staat hij aan, dan selecteert een klik op een
+  // bolletje het bedrijf (in plaats van er iets anders aan te veranderen) zodat er een route
+  // van meerdere geselecteerde bedrijven gemaakt kan worden.
+  selectionMode?: boolean;
+  selectedNames?: Set<string>;
+  onToggleSelection?: (entry: GeoEntry) => void;
 }
 
-const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focusTarget, onFocusHandled }) => {
+const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focusTarget, onFocusHandled, selectionMode, selectedNames, onToggleSelection }) => {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const markersBuiltRef = useRef(false);
+  // Refs i.p.v. de props direct in de marker-click gebruiken: de marker-opbouw-effect hieronder
+  // draait alleen bij een nieuwe dataset ([allEntries]) en moet niet opnieuw alle ~4700 markers
+  // aanmaken zodra alleen de selectiemodus aan/uit gaat — dat zou onnodig zwaar en traag zijn.
+  const selectionModeRef = useRef(selectionMode);
+  const onToggleSelectionRef = useRef(onToggleSelection);
+  useEffect(() => { selectionModeRef.current = selectionMode; }, [selectionMode]);
+  useEffect(() => { onToggleSelectionRef.current = onToggleSelection; }, [onToggleSelection]);
 
   const [loading, setLoading] = useState(true);
   const [allEntries, setAllEntries] = useState<GeoEntry[]>([]);
@@ -235,9 +249,31 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
         this.setRadius(Math.max(3.5, this.getRadius() - 3));
         this.closePopup();
       });
+      // Alleen actief als selectiemodus expliciet aan staat (zie de toggle-knop in App.tsx) —
+      // staat hij uit, dan verandert een klik hier niets, en blijft alleen de hover-info
+      // hierboven (die daardoor identiek blijft aan hoe het al werkte).
+      marker.on('click', function (this: L.CircleMarker) {
+        if (!selectionModeRef.current) return;
+        onToggleSelectionRef.current?.(entry);
+      });
       marker.addTo(markersLayerRef.current!);
     });
   }, [allEntries]);
+
+  // Geselecteerde bolletjes duidelijk markeren (dikkere, oranje rand) zodat je in
+  // selectiemodus in één oogopslag ziet welke van de 1-10 je al hebt aangeklikt.
+  useEffect(() => {
+    if (!markersLayerRef.current) return;
+    markersLayerRef.current.eachLayer((layer: any) => {
+      const entry: GeoEntry | undefined = layer._entry;
+      if (!entry) return;
+      const isSelected = !!selectedNames?.has(entry.naam);
+      layer.setStyle({
+        color: isSelected ? '#E85E26' : '#fff',
+        weight: isSelected ? 3 : 1,
+      });
+    });
+  }, [selectedNames]);
 
   // Toggle visibility + zoom-to-fit whenever the region or bron selection changes.
   // Both filters work independently: select REGION alone, BRON alone, or both.

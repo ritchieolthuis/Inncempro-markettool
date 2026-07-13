@@ -2271,6 +2271,24 @@ const App: React.FC = () => {
   });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set()); // key = b.naam (stabiel over alle tabs)
   const [selectedRaws, setSelectedRaws] = useState<Map<string, any>>(new Map()); // naam → raw bedrijfsdata
+  // Selectiemodus op de Kaart-tab: expliciete opt-in knop, staat standaard uit zodat een tik
+  // op een bolletje daar precies blijft doen wat het al deed (info tonen). Gebruikt dezelfde
+  // selectedIds/selectedRaws als Live Zoeken/Database, zodat "Maak route" hierna gewoon de
+  // bestaande handleCreateSmartRoute-logica kan hergebruiken.
+  const [mapSelectionMode, setMapSelectionMode] = useState(false);
+  const toggleMapSelection = (entry: any) => {
+    const naam = entry.naam;
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(naam) ? next.delete(naam) : next.add(naam);
+      return next;
+    });
+    setSelectedRaws(prev => {
+      const next = new Map(prev);
+      next.has(naam) ? next.delete(naam) : next.set(naam, entry);
+      return next;
+    });
+  };
   const [sortMode, setSortMode] = useState<'relevant' | 'az'>(() =>
     (localStorage.getItem('inncempro_pref_sort') as 'relevant' | 'az') || 'relevant');
   const [showRouteMap, setShowRouteMap] = useState(false);
@@ -5098,11 +5116,48 @@ const App: React.FC = () => {
 
             {viewMode === 'map' && (
               <>
-                <div className="w-full flex flex-col" style={{ height: 'calc(100vh - 120px)' }}>
+                <div className="w-full flex flex-col relative" style={{ height: 'calc(100vh - 120px)' }}>
+                  {/* Selecteren-knop: expliciete opt-in, staat los van het bestaande hover/tik-
+                      gedrag op de bolletjes (dat blijft precies zoals het was). Alleen als deze
+                      aan staat, selecteert een klik op een bolletje het bedrijf i.p.v. niets. */}
+                  <div className="absolute top-3 left-3 z-[1000] flex items-center gap-2">
+                    <button
+                      onClick={() => { setMapSelectionMode(v => !v); if (mapSelectionMode) clearSelection(); }}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-sm text-xs font-bold uppercase tracking-wider shadow-sm border transition-colors ${mapSelectionMode ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'bg-white text-slate-600 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]'}`}
+                    >
+                      <Check className="w-3.5 h-3.5" /> {mapSelectionMode ? 'Selecteren aan' : 'Selecteren'}
+                    </button>
+                    {mapSelectionMode && (
+                      <span className="text-[10px] text-slate-500 bg-white/90 px-2 py-1 rounded-sm shadow-sm">Tik bolletjes aan om te selecteren</span>
+                    )}
+                  </div>
+
+                  {/* Zwevende balk: verschijnt zodra je op de kaart iets hebt geselecteerd, met
+                      de namen en een knop om de route in Google Maps te openen (handleCreateSmartRoute,
+                      dezelfde betrouwbare Maps-URL als elders in de app). */}
+                  {mapSelectionMode && selectedIds.size > 0 && (
+                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] bg-white rounded-sm shadow-lg border border-slate-200 px-4 py-3 max-w-lg w-[calc(100%-2rem)]">
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">{selectedIds.size} geselecteerd</span>
+                        <button onClick={clearSelection} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-wider">Wis selectie</button>
+                      </div>
+                      <p className="text-xs text-slate-500 truncate mb-3">{Array.from(selectedIds).join(', ')}</p>
+                      <button
+                        onClick={handleCreateSmartRoute}
+                        className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#009FE3] hover:bg-[#008ac5] text-white text-xs font-bold uppercase tracking-wider rounded-sm transition-colors"
+                      >
+                        <MapPin className="w-3.5 h-3.5" /> Maak route in Google Maps
+                      </button>
+                    </div>
+                  )}
+
                   <ClusterMapView
                     onOpenInDatabase={(naam) => { setDbSearch(naam); setDbPage(1); setViewMode('database'); }}
                     focusTarget={mapFocusTarget}
                     onFocusHandled={() => setMapFocusTarget(null)}
+                    selectionMode={mapSelectionMode}
+                    selectedNames={selectedIds}
+                    onToggleSelection={toggleMapSelection}
                   />
                 </div>
 
