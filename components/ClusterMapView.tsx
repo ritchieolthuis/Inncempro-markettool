@@ -254,7 +254,15 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
       // binnenstad) is dat prettiger dan blind moeten klikken. Muis weg = terug naar normaal.
       // Alleen voor een echte muis: een telefoon heeft geen "hover", tikken vuurt mouseover
       // en click vlak na elkaar af, en dan zou de popup het tikken op selecteren in de weg
-      // zitten. Op desktop wordt er ook meteen een stukje ingezoomd op het bolletje.
+      // zitten.
+      //
+      // Zoomen gebeurt bewust GELEIDELIJK, niet in één rappe sprong: eerst een korte
+      // wachttijd (voorkomt dat je kaart al gaat zoomen terwijl je muis gewoon over de kaart
+      // naar iets anders beweegt), en dan één zoomniveau per keer terwijl je op het bolletje
+      // blijft staan — "hoe langer ik erop sta, hoe meer inzoomen", niet meteen een ultra-zoom.
+      let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+      let zoomInterval: ReturnType<typeof setInterval> | null = null;
+      const HOVER_ZOOM_MAX = 16;
       marker.on('mouseover', function (this: L.CircleMarker) {
         // Op touch blijft dit ongebruikt: mouseout vuurt daar niet betrouwbaar af na een tik,
         // waardoor het bolletje anders "vergroot" blijft staan. Touch-schermen hebben door
@@ -262,13 +270,22 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
         if (isTouchDevice) return;
         this.setRadius(this.getRadius() + 3);
         if (!selectionModeRef.current) this.openPopup();
-        if (mapRef.current) {
-          const targetZoom = Math.max(mapRef.current.getZoom(), 15);
-          mapRef.current.setView(this.getLatLng(), targetZoom, { animate: true, duration: 0.3 });
-        }
+        const latlng = this.getLatLng();
+        hoverTimer = setTimeout(() => {
+          if (!mapRef.current) return;
+          mapRef.current.panTo(latlng, { animate: true, duration: 0.5 });
+          zoomInterval = setInterval(() => {
+            if (!mapRef.current) return;
+            const z = mapRef.current.getZoom();
+            if (z >= HOVER_ZOOM_MAX) { if (zoomInterval) clearInterval(zoomInterval); zoomInterval = null; return; }
+            mapRef.current.setView(latlng, z + 1, { animate: true, duration: 0.8 });
+          }, 900);
+        }, 400);
       });
       marker.on('mouseout', function (this: L.CircleMarker) {
         if (isTouchDevice) return;
+        if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+        if (zoomInterval) { clearInterval(zoomInterval); zoomInterval = null; }
         if (mapRef.current) this.setRadius(circleRadiusForZoom(mapRef.current.getZoom()));
         this.closePopup();
       });
