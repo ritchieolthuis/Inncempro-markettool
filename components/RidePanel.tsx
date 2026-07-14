@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus } from 'lucide-react';
+import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus, GripVertical } from 'lucide-react';
 import { haversineKm, detectType } from '../utils/dagbezoek';
 import { getDrivingDistancesKm } from '../services/routingService';
 import { getClusterData, makeId } from '../services/geoclusterService';
@@ -107,8 +107,12 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
   const [onlyUnvisited, setOnlyUnvisited] = useState(true);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [manualQuery, setManualQuery] = useState('');
+  const [manualLoading, setManualLoading] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
   const [saveListName, setSaveListName] = useState('');
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
   const requestIdRef = useRef(0);
 
@@ -400,10 +404,6 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
     setSuggestions(prev => prev.filter(s => s.bedrijf !== bedrijf));
   };
 
-  const undoLast = () => {
-    setChain(prev => prev.slice(0, -1));
-  };
-
   const resetRide = () => {
     setChain([]);
     setStartCoords(null);
@@ -430,6 +430,53 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
     const km = from ? haversineKm(from.lat, from.lng, coords.lat, coords.lng) : 0;
     setChain(prev => [...prev, { id: `${b.naam}_${Date.now()}`, bedrijf: b, coords, km }]);
     setManualQuery('');
+  };
+
+  // Tussenstop op plaatsnaam (bv. "Apeldoorn" tussen Nijmegen en Deventer) i.p.v. alleen een
+  // bedrijf uit de database — zelfde gratis Nominatim-opzoek als bij het zoeken van een
+  // startpunt. Wordt geprobeerd als er geen bedrijf-match is voor de getypte tekst.
+  const addPlaceWaypoint = async (q: string) => {
+    const query = q.trim();
+    if (!query) return;
+    setManualError(null);
+    setManualLoading(true);
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ' Nederland')}&countrycodes=nl&limit=1`, {
+        headers: { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' },
+      });
+      const d = await r.json();
+      if (d?.[0]) {
+        const coords = { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
+        const from = currentPosition();
+        const km = from ? haversineKm(from.lat, from.lng, coords.lat, coords.lng) : 0;
+        const waypointBedrijf = { naam: query, stad: '', straat: '', postcode: '', isWaypoint: true };
+        setChain(prev => [...prev, { id: `${query}_${Date.now()}`, bedrijf: waypointBedrijf, coords, km }]);
+        setManualQuery('');
+      } else {
+        setManualError(`"${query}" niet gevonden als bedrijf of plaats.`);
+      }
+    } catch {
+      setManualError('Zoeken mislukt, probeer opnieuw.');
+    }
+    setManualLoading(false);
+  };
+
+  // Route-volgorde slepen: km per stop is berekend t.o.v. de vorige stop op het moment van
+  // toevoegen, dus na het verwisselen van volgorde herberekenen we die (hemelsbreed) opnieuw
+  // vanaf het startpunt door de hele keten, anders kloppen de getoonde afstanden niet meer.
+  const reorderChain = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    setChain(prev => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      let from = startCoords;
+      return next.map(s => {
+        const km = from ? haversineKm(from.lat, from.lng, s.coords.lat, s.coords.lng) : s.km;
+        from = s.coords;
+        return { ...s, km };
+      });
+    });
   };
 
   // Google Maps-route in de juiste, betrouwbare volgorde: startpunt -> stop 1 -> stop 2 -> ...
@@ -544,16 +591,36 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
                   <span className="text-slate-700 font-medium truncate">{startLabel || 'Startpunt'}</span>
                 </div>
                 {chain.map((s, i) => (
-                  <div key={s.id} className="flex items-center gap-2 text-sm">
+                  <div
+                    key={s.id}
+                    draggable
+                    onDragStart={() => setDragIndex(i)}
+                    onDragOver={e => { e.preventDefault(); if (dragOverIndex !== i) setDragOverIndex(i); }}
+                    onDragLeave={() => setDragOverIndex(prev => (prev === i ? null : prev))}
+                    onDrop={e => {
+                      e.preventDefault();
+                      if (dragIndex !== null) reorderChain(dragIndex, i);
+                      setDragIndex(null);
+                      setDragOverIndex(null);
+                    }}
+                    onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); }}
+                    className={`flex items-center gap-2 text-sm rounded-sm transition-colors ${dragOverIndex === i && dragIndex !== null && dragIndex !== i ? 'bg-[#009FE3]/10' : ''} ${dragIndex === i ? 'opacity-40' : ''}`}
+                  >
+                    <GripVertical className="w-3.5 h-3.5 text-slate-300 cursor-grab active:cursor-grabbing flex-shrink-0" />
                     <span className="w-5 h-5 rounded-full bg-[#E85E26] text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
                     <span className="text-slate-800 font-medium truncate flex-1">{s.bedrijf.naam}</span>
                     <span className="text-[10px] text-slate-400 flex-shrink-0">{s.km.toFixed(1)} km</span>
-                    {i === chain.length - 1 && (
-                      <button onClick={undoLast} title="Laatste verwijderen" className="text-slate-400 hover:text-red-500 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
-                    )}
+                    <button
+                      onClick={() => setChain(prev => prev.filter((_, idx) => idx !== i))}
+                      title="Verwijderen"
+                      className="text-slate-400 hover:text-red-500 flex-shrink-0"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 ))}
               </div>
+              <p className="mt-1.5 text-[10px] text-slate-400">Sleep aan <GripVertical className="w-2.5 h-2.5 inline -mt-0.5" /> om de volgorde te wijzigen.</p>
               {chain.length > 0 && mapsUrl && (
                 <a href={mapsUrl} target="_blank" rel="noreferrer" className="mt-3 w-full inline-flex items-center justify-center gap-2 py-2 bg-white border border-[#009FE3] text-[#009FE3] text-xs font-bold uppercase tracking-wider rounded-sm hover:bg-[#009FE3]/5">
                   <MapPin className="w-3.5 h-3.5" /> Open route in Google Maps
@@ -625,15 +692,30 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
                 ))}
               </div>
 
-              {/* Handmatig toevoegen */}
+              {/* Handmatig toevoegen: bedrijf uit de database, of Enter voor een tussenstop op
+                  plaatsnaam (bv. "Apeldoorn" tussen Nijmegen en Deventer). */}
               <div className="mt-3">
-                <input
-                  type="text"
-                  value={manualQuery}
-                  onChange={e => setManualQuery(e.target.value)}
-                  placeholder="Of zoek zelf een bedrijf om toe te voegen..."
-                  className="w-full border border-slate-200 rounded-sm px-3 py-2 text-xs focus:outline-none focus:border-[#009FE3]"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={manualQuery}
+                    onChange={e => { setManualQuery(e.target.value); setManualError(null); }}
+                    onKeyDown={e => { if (e.key === 'Enter' && manualCandidates.length === 0) addPlaceWaypoint(manualQuery); }}
+                    placeholder="Zoek bedrijf, of typ een plaatsnaam als tussenstop..."
+                    className="flex-1 border border-slate-200 rounded-sm px-3 py-2 text-xs focus:outline-none focus:border-[#009FE3]"
+                  />
+                  {manualQuery.trim().length >= 2 && manualCandidates.length === 0 && (
+                    <button
+                      onClick={() => addPlaceWaypoint(manualQuery)}
+                      disabled={manualLoading}
+                      title="Als tussenstop toevoegen (plaatsnaam)"
+                      className="px-3 bg-[#009FE3] hover:bg-[#008ac5] disabled:opacity-50 text-white rounded-sm flex-shrink-0"
+                    >
+                      {manualLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
+                </div>
+                {manualError && <p className="mt-1 text-[10px] text-red-500">{manualError}</p>}
                 {manualCandidates.length > 0 && (
                   <div className="mt-1 border border-slate-200 rounded-sm divide-y divide-slate-100 max-h-40 overflow-y-auto">
                     {manualCandidates.map((b: any, i: number) => (
