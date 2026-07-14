@@ -1820,7 +1820,8 @@ const App: React.FC = () => {
   // APP STATE
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'lists' | 'visits' | 'ride'>('search');
+  const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'lists' | 'visits'>('search');
+  const [showRidePanel, setShowRidePanel] = useState(false);
 
   // BATCH IMPORT
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -4302,7 +4303,7 @@ const App: React.FC = () => {
 
         return (
       <div className={`flex flex-col md:flex-row max-w-[1400px] mx-auto w-full flex-grow ${selectedIds.size > 0 ? 'pb-20' : ''}`}>
-          {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && viewMode !== 'ride' && (
+          {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && (
           <aside className={`bg-white border-r border-slate-200 flex-shrink-0 hidden md:flex flex-col h-[calc(100vh-112px)] sticky top-28 transition-all duration-200 ${sidebarCollapsed ? 'w-12' : 'w-80'}`}>
               <div className="p-4 border-b border-slate-100 flex items-center justify-between">
                   {!sidebarCollapsed && <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest font-condensed flex items-center gap-2"><Filter className="w-4 h-4 text-[#009FE3]" /> Filters</h2>}
@@ -4348,17 +4349,13 @@ const App: React.FC = () => {
                      <span className="hidden sm:inline">Mijn bezoeken ({visits.length})</span>
                      <span className="sm:hidden">Bezoeken ({visits.length})</span>
                  </button>
-                 <button data-active={viewMode === 'ride'} onClick={() => { setViewMode('ride'); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'ride' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <Navigation className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
-                     <span>Verderrijden</span>
-                 </button>
              </div>
              {/* Mobiel: fade-hint dat de tabbalk verder scrollt (6 tabs passen niet op smalle schermen) */}
              <div className="sm:hidden pointer-events-none absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent" />
              </div>
 
              {/* Mobiel: filters-knop + slide-up drawer (de aside hierboven is hidden md:flex, dus onzichtbaar op mobiel) */}
-             {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && viewMode !== 'ride' && (
+             {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && (
                <button
                  onClick={() => setShowMobileFilters(true)}
                  className="md:hidden flex items-center justify-center gap-2 w-full mb-4 py-3 bg-white border border-slate-200 rounded-xl shadow-sm text-xs font-bold uppercase tracking-wider text-slate-600 hover:border-[#009FE3] hover:text-[#009FE3] transition-colors"
@@ -4368,7 +4365,7 @@ const App: React.FC = () => {
                </button>
              )}
 
-             {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && viewMode !== 'ride' && showMobileFilters && (
+             {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && showMobileFilters && (
                <div className="md:hidden fixed inset-0 z-50 flex items-end bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowMobileFilters(false)}>
                  <div className="bg-white w-full max-h-[85vh] rounded-t-xl flex flex-col" onClick={e => e.stopPropagation()}>
                    <div className="w-10 h-1 bg-slate-300 rounded-full mx-auto mt-3 flex-shrink-0" />
@@ -5050,7 +5047,66 @@ const App: React.FC = () => {
                 ? visits.filter(v => new Date(v.datum) >= periodCutoff)
                 : visits;
               return (
-              <div className="w-full max-w-6xl mx-auto">
+              <div className="w-full max-w-6xl mx-auto space-y-6">
+                {/* Onderweg: van bedrijf naar bedrijf, telkens de dichtstbijzijnde eerst.
+                    Staat boven de bezoekhistorie omdat het uiteindelijk daar in uitmondt
+                    ("Klaar voor vandaag" logt de rit als bezoeken hieronder). */}
+                <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+                  <button
+                    onClick={() => setShowRidePanel(v => !v)}
+                    className="w-full p-6 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-sm bg-[#009FE3] flex items-center justify-center flex-shrink-0">
+                        <Navigation className="w-4 h-4 text-white" />
+                      </div>
+                      <div className="text-left">
+                        <h2 className="text-lg font-bold text-slate-900">Onderweg</h2>
+                        <p className="text-xs text-slate-400">Rijd van bedrijf naar bedrijf, telkens de dichtstbijzijnde eerst</p>
+                      </div>
+                    </div>
+                    {showRidePanel ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+                  </button>
+                  {showRidePanel && (
+                    <div className="px-6 pb-6 border-t border-slate-100 pt-4">
+                      <RidePanel
+                        allData={activeData}
+                        cityCoords={cityCoords as any}
+                        isVisitedCompany={isVisitedCompany}
+                        embedded
+                        onSaveAsList={(naam, bedrijven) => {
+                          const companies: DiscoveredCompany[] = bedrijven.map((b: any) => ({
+                            id: `${b.naam}|${b.stad || ''}`, name: b.naam, city: b.stad || '', discoveredAt: new Date().toISOString(), _raw: b,
+                          } as any));
+                          createListAndAddSelection(naam, companies);
+                        }}
+                        onLogVisits={async (bedrijven) => {
+                          if (!currentUser) return;
+                          const today = new Date().toISOString().split('T')[0];
+                          const nowIso = new Date().toISOString();
+                          const newVisits = bedrijven.map((b: any) => ({
+                            bedrijf_id: b.id || b.naam,
+                            naam: b.naam,
+                            stad: b.stad || '',
+                            straat: b.straat || '',
+                            postcode: b.postcode || '',
+                            telefoon: b.telefoon || '',
+                            email: b.email || '',
+                            contactpersoon: '',
+                            notitie: 'Toegevoegd via Onderweg',
+                            status: 'bezocht',
+                            datum: today,
+                            created_at: nowIso,
+                            matched: true,
+                          }));
+                          await authService.addVisits(currentUser.id, newVisits);
+                          setVisits(await authService.getVisits(currentUser.id));
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+
                 <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
                   <div className="p-6 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
                     <div className="flex items-center gap-3">
@@ -5173,42 +5229,6 @@ const App: React.FC = () => {
               </div>
               );
             })()}
-
-            {viewMode === 'ride' && (
-              <RidePanel
-                allData={activeData}
-                cityCoords={cityCoords as any}
-                isVisitedCompany={isVisitedCompany}
-                onSaveAsList={(naam, bedrijven) => {
-                  const companies: DiscoveredCompany[] = bedrijven.map((b: any) => ({
-                    id: `${b.naam}|${b.stad || ''}`, name: b.naam, city: b.stad || '', discoveredAt: new Date().toISOString(), _raw: b,
-                  } as any));
-                  createListAndAddSelection(naam, companies);
-                }}
-                onLogVisits={async (bedrijven) => {
-                  if (!currentUser) return;
-                  const today = new Date().toISOString().split('T')[0];
-                  const nowIso = new Date().toISOString();
-                  const newVisits = bedrijven.map((b: any) => ({
-                    bedrijf_id: b.id || b.naam,
-                    naam: b.naam,
-                    stad: b.stad || '',
-                    straat: b.straat || '',
-                    postcode: b.postcode || '',
-                    telefoon: b.telefoon || '',
-                    email: b.email || '',
-                    contactpersoon: '',
-                    notitie: 'Toegevoegd via Verderrijden',
-                    status: 'bezocht',
-                    datum: today,
-                    created_at: nowIso,
-                    matched: true,
-                  }));
-                  await authService.addVisits(currentUser.id, newVisits);
-                  setVisits(await authService.getVisits(currentUser.id));
-                }}
-              />
-            )}
 
             {viewMode === 'map' && (
               <>

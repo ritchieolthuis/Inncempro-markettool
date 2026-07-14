@@ -26,6 +26,9 @@ interface RidePanelProps {
   isVisitedCompany: (b: any) => boolean;
   onSaveAsList: (naam: string, bedrijven: any[]) => void;
   onLogVisits: (bedrijven: any[]) => void;
+  // true = wordt getoond binnen een bestaande kaart/sectie (Mijn bezoeken) — laat dan de eigen
+  // buitenste kaart-rand/titel weg zodat het niet dubbel oogt.
+  embedded?: boolean;
 }
 
 const DISCIPLINES: Array<{ key: 'architect' | 'bouwbedrijf' | 'aannemer' | 'materialen'; label: string }> = [
@@ -46,7 +49,7 @@ function coordsFor(b: any, cityCoords: Record<string, Coords>): Coords | null {
   return cityCoords[stad] || cityCoords[(b.stad || '').trim()] || null;
 }
 
-const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCompany, onSaveAsList, onLogVisits }) => {
+const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCompany, onSaveAsList, onLogVisits, embedded }) => {
   const [startMode, setStartMode] = useState<'gps' | 'search'>('gps');
   const [startQuery, setStartQuery] = useState('');
   const [startCoords, setStartCoords] = useState<Coords | null>(null);
@@ -137,15 +140,38 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
     );
   };
 
+  // Vindt het best passende bedrijf voor een combinatie als "OMA Rotterdam": een simpele
+  // .includes(hele zoekterm) op de naam mist dit compleet, want de plaatsnaam staat in een
+  // ANDER veld (stad) dan de bedrijfsnaam. Telt daarom per zoekwoord punten op, of het nou in
+  // de naam zit (zwaarder) of in de stad (lichter), en pakt de hoogst scorende match — zolang
+  // elk getypt woord ergens teruggevonden wordt.
+  const findCompanyForStart = (q: string): any | null => {
+    const qWords = q.toLowerCase().split(/\s+/).filter(Boolean);
+    if (qWords.length === 0) return null;
+    let best: any = null;
+    let bestScore = 0;
+    for (const b of allData) {
+      const naam = (b.naam || '').toLowerCase();
+      if (!naam) continue;
+      const stad = (b.stad || '').toLowerCase();
+      let score = 0;
+      for (const w of qWords) {
+        if (naam.includes(w)) score += 2;
+        else if (stad.includes(w)) score += 1;
+      }
+      if (score > bestScore) { bestScore = score; best = b; }
+    }
+    return bestScore >= qWords.length ? best : null;
+  };
+
   const searchStart = async () => {
     const q = startQuery.trim();
     if (!q) return;
     setStartError(null);
     setStartLoading(true);
-    // Eerst proberen als bedrijfsnaam in de eigen database (bv. "OMA Rotterdam") — anders als
-    // plaatsnaam via Nominatim (gratis, geen key nodig).
-    const qLower = q.toLowerCase();
-    const companyMatch = allData.find((b: any) => (b.naam || '').toLowerCase().includes(qLower));
+    // Eerst proberen als bedrijfsnaam (evt. met plaats erachter, bv. "OMA Rotterdam") in de
+    // eigen database — anders als plaatsnaam via Nominatim (gratis, geen key nodig).
+    const companyMatch = findCompanyForStart(q);
     if (companyMatch) {
       const coords = coordsFor(companyMatch, cityCoords);
       if (coords) {
@@ -232,18 +258,22 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
     setFinished(true);
   };
 
+  const Wrapper: React.FC<{ children: React.ReactNode }> = ({ children }) =>
+    embedded ? <>{children}</> : <div className="w-full max-w-2xl mx-auto"><div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">{children}</div></div>;
+
   return (
-    <div className="w-full max-w-2xl mx-auto">
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+    <Wrapper>
+        {!embedded && (
         <div className="p-6 border-b border-slate-200 flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-sm bg-[#009FE3] flex items-center justify-center flex-shrink-0">
             <Navigation className="w-4 h-4 text-white" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-slate-900">Verderrijden</h2>
+            <h2 className="text-lg font-bold text-slate-900">Onderweg</h2>
             <p className="text-xs text-slate-400">Rijd van bedrijf naar bedrijf, telkens de dichtstbijzijnde eerst</p>
           </div>
         </div>
+        )}
 
         {!startCoords ? (
           <div className="p-6 space-y-4">
@@ -276,7 +306,7 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
                 <input
                   type="text"
                   value={startQuery}
-                  onChange={e => setStartQuery(e.target.value)}
+                  onChange={e => { setStartQuery(e.target.value); setStartError(null); }}
                   onKeyDown={e => e.key === 'Enter' && searchStart()}
                   placeholder="Bijv. Rotterdam, of OMA Rotterdam"
                   autoFocus
@@ -425,8 +455,7 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
             )}
           </>
         )}
-      </div>
-    </div>
+    </Wrapper>
   );
 };
 
