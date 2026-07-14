@@ -43,9 +43,16 @@ export const AgentOrb: React.FC<{ size?: number; spin?: 'slow' | 'fast'; icon?: 
 );
 
 // Bouwt een Google Maps multi-stop rijroute (max 10 stops — praktische grens van de URL).
+// ?api=1-formaat i.p.v. de oude pad-stijl "/dir/A/B/C": die laat Google elk segment apart als
+// losse zoekopdracht interpreteren, wat een naam+adres-tussenstop kan laten mislukken.
 function googleMapsRouteUrl(bedrijven: any[]): string {
   const enc = (b: any) => encodeURIComponent([b.naam, b.straat, b.postcode, b.stad].filter(Boolean).join(', '));
-  return `https://www.google.com/maps/dir/${bedrijven.slice(0, 10).map(enc).join('/')}?travelmode=driving`;
+  const limited = bedrijven.slice(0, 10);
+  const last = limited[limited.length - 1];
+  const waypoints = limited.slice(0, -1).map(enc).join('|');
+  let url = `https://www.google.com/maps/dir/?api=1&destination=${enc(last)}&travelmode=driving`;
+  if (waypoints) url += `&waypoints=${waypoints}`;
+  return url;
 }
 
 // Actie-rij onder een lijst/route-resultaat: zet de gevonden bedrijven direct op de

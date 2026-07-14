@@ -2,10 +2,32 @@
 import { supabase } from './supabaseClient';
 import { User, DiscoveredCompany, CompanyList } from "../types";
 
+// Kleine offline-cache: bewaart de laatst opgehaalde profiel/favorieten/lijsten-data lokaal,
+// zodat een pagina-load zonder netwerk niet met een lege/kapotte staat eindigt maar gewoon de
+// laatst bekende stand toont. Wordt overschreven zodra een echte netwerk-fetch weer lukt.
+function cacheGet<T>(key: string, fallback: T): T {
+  try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
+}
+function cacheSet(key: string, value: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage vol/geblokkeerd, negeren */ }
+}
+
 // Zet een Supabase Auth-user + profielrij om naar het bestaande User-type, zodat de rest van
-// de app (App.tsx) met hetzelfde object blijft werken als voorheen.
+// de app (App.tsx) met hetzelfde object blijft werken als voorheen. Bij een mislukte
+// (offline) profiel-fetch valt dit terug op de laatst gecachete profielgegevens voor dit
+// account, zodat inloggen-op-bestaande-sessie ook zonder netwerk gewoon username/avatar/rol
+// toont in plaats van "Gebruiker" met lege velden.
 async function toAppUser(authUser: { id: string; email?: string; created_at: string }): Promise<User> {
-  const { data: profile } = await supabase.from('profiles').select('*').eq('id', authUser.id).maybeSingle();
+  const cacheKey = `inncempro_profile_cache_${authUser.id}`;
+  let profile: any = null;
+  try {
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', authUser.id).maybeSingle();
+    if (error) throw error;
+    profile = data;
+    if (profile) cacheSet(cacheKey, profile);
+  } catch {
+    profile = cacheGet(cacheKey, null);
+  }
   return {
     id: authUser.id,
     username: profile?.username || authUser.email?.split('@')[0] || 'Gebruiker',
@@ -98,15 +120,18 @@ export const authService = {
 
     // FAVORITES (per account, in Supabase)
     getFavorites: async (userId: string): Promise<DiscoveredCompany[]> => {
+        const cacheKey = `inncempro_favorites_cache_${userId}`;
         const { data, error } = await supabase.from('favorites').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-        if (error || !data) return [];
-        return data.map((f: any) => ({
+        if (error || !data) return cacheGet(cacheKey, []);
+        const mapped = data.map((f: any) => ({
             id: `${f.name}|${f.city}`,
             name: f.name,
             city: f.city,
             discoveredAt: f.discovered_at,
             ...(f.raw ? { _raw: f.raw } : {}),
         })) as any;
+        cacheSet(cacheKey, mapped);
+        return mapped;
     },
 
     toggleFavorite: async (userId: string, company: DiscoveredCompany): Promise<DiscoveredCompany[]> => {
@@ -127,10 +152,11 @@ export const authService = {
 
     // LISTS (meerdere naam-lijsten met bedrijven, gekoppeld aan User ID)
     getLists: async (userId: string): Promise<CompanyList[]> => {
+        const cacheKey = `inncempro_lists_cache_${userId}`;
         const { data: lists, error } = await supabase.from('lists').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-        if (error || !lists) return [];
+        if (error || !lists) return cacheGet(cacheKey, []);
         const { data: companies } = await supabase.from('list_companies').select('*').in('list_id', lists.map((l: any) => l.id));
-        return lists.map((l: any) => ({
+        const mapped = lists.map((l: any) => ({
             id: l.id,
             name: l.name,
             createdAt: new Date(l.created_at).getTime(),
@@ -138,6 +164,8 @@ export const authService = {
                 .filter((c: any) => c.list_id === l.id)
                 .map((c: any) => ({ id: `${c.name}|${c.city}`, name: c.name, city: c.city, discoveredAt: c.created_at, ...(c.raw ? { _raw: c.raw } : {}) })),
         })) as any;
+        cacheSet(cacheKey, mapped);
+        return mapped;
     },
 
     saveLists: async (_userId: string, _lists: CompanyList[]) => {
@@ -177,12 +205,14 @@ export const authService = {
     // crmKey()-functie in App.tsx (naam|straat|stad, lowercase), zodat het opzoekgedrag exact
     // hetzelfde blijft als in de localStorage-versie.
     getCrmData: async (userId: string): Promise<Record<string, { statuses?: string[]; note?: string; updatedAt: number }>> => {
+        const cacheKey = `inncempro_crm_cache_${userId}`;
         const { data, error } = await supabase.from('crm_data').select('*').eq('user_id', userId);
-        if (error || !data) return {};
+        if (error || !data) return cacheGet(cacheKey, {});
         const result: Record<string, any> = {};
         data.forEach((row: any) => {
             result[row.bedrijf_key] = { statuses: row.statuses || [], note: row.note || '', updatedAt: new Date(row.updated_at).getTime() };
         });
+        cacheSet(cacheKey, result);
         return result;
     },
 
@@ -198,14 +228,17 @@ export const authService = {
 
     // Bezoekhistorie per account.
     getVisits: async (userId: string): Promise<any[]> => {
+        const cacheKey = `inncempro_visits_cache_${userId}`;
         const { data, error } = await supabase.from('visits').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-        if (error || !data) return [];
-        return data.map((v: any) => ({
+        if (error || !data) return cacheGet(cacheKey, []);
+        const mapped = data.map((v: any) => ({
             id: v.id, bedrijf_id: v.bedrijf_id, naam: v.naam, stad: v.stad || '', straat: v.straat || '',
             postcode: v.postcode || '', telefoon: v.telefoon || '', email: v.email || '',
             contactpersoon: v.contactpersoon || '', notitie: v.notitie || '', status: v.status,
             datum: v.datum, matched: v.matched, created_at: v.created_at,
         }));
+        cacheSet(cacheKey, mapped);
+        return mapped;
     },
 
     addVisit: async (userId: string, visit: Record<string, any>): Promise<void> => {

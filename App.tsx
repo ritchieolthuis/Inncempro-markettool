@@ -4634,7 +4634,7 @@ const App: React.FC = () => {
                          <div className="mt-auto pt-2 border-t border-slate-100 space-y-2" onClick={e => e.stopPropagation()}>
                            <div className="flex gap-2">
                              {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
-                             {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
+                             {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent([b.naam, b.straat, b.postcode, b.stad].filter(Boolean).join(', '))}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
                              {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2]`}><Linkedin className="w-3 h-3"/>LinkedIn</a>}
                            </div>
                            <div className="flex gap-2">
@@ -5651,7 +5651,7 @@ const App: React.FC = () => {
                                 <div className="flex items-start gap-2 mt-auto pt-2 border-t border-slate-100" onClick={e => e.stopPropagation()}>
                                   <div className="flex flex-wrap gap-2 flex-1 min-w-0">
                                     {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3]`}><Globe className="w-3 h-3"/>Site</a>}
-                                    {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
+                                    {(b.straat || b.stad) && <a href={`https://maps.google.com/?q=${encodeURIComponent([b.naam, b.straat, b.postcode, b.stad].filter(Boolean).join(', '))}`} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]`}><MapPin className="w-3 h-3"/>Route</a>}
                                     {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className={`${btnBase} bg-white text-slate-700 border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2]`}><Linkedin className="w-3 h-3"/>LinkedIn</a>}
                                   </div>
                                   <FavButton company={company} favorites={favorites} onToggle={toggleFavorite} />
@@ -6599,7 +6599,7 @@ const App: React.FC = () => {
                 {/* Acties */}
                 <div className="flex flex-wrap gap-2 pt-2">
                   {b.website && <a href={toUrl(b.website)} target="_blank" rel="noreferrer" className="flex-none whitespace-nowrap flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-700 rounded-sm transition-all bg-white"><Globe className="w-3.5 h-3.5"/>Website</a>}
-                  {hasAddress && <a href={`https://maps.google.com/?q=${encodeURIComponent(((b.straat||'')+' '+(b.stad||'')).trim())}`} target="_blank" rel="noreferrer" className="flex-none whitespace-nowrap flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26] text-slate-700 rounded-sm transition-all bg-white"><MapPin className="w-3.5 h-3.5"/>Route</a>}
+                  {hasAddress && <a href={`https://maps.google.com/?q=${encodeURIComponent([b.naam, b.straat, b.postcode, b.stad].filter(Boolean).join(', '))}`} target="_blank" rel="noreferrer" className="flex-none whitespace-nowrap flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26] text-slate-700 rounded-sm transition-all bg-white"><MapPin className="w-3.5 h-3.5"/>Route</a>}
                   {b.linkedin_url && <a href={b.linkedin_url} target="_blank" rel="noreferrer" className="flex-none whitespace-nowrap flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold uppercase tracking-wider border border-slate-200 hover:border-[#0A66C2] hover:text-[#0A66C2] text-slate-700 rounded-sm transition-all bg-white"><Linkedin className="w-3.5 h-3.5"/>LinkedIn</a>}
                   {/* Bronnen: ALLE bronnen waar dit bedrijf in voorkomt (BNA, Architectenweb, ...),
                       elk als eigen link — alleen hier, nergens anders op de kaarten. Google-zoeken

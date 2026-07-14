@@ -243,11 +243,20 @@ function nearestNeighbour(start: Coords, pts: GeoEntry[]): GeoEntry[] {
   return out;
 }
 
+// Gebruikt het officiële ?api=1&origin=...&destination=...&waypoints=...-formaat i.p.v. de
+// oude pad-stijl "/dir/A/B/C" — die laat Google elk segment apart als losse zoekopdracht
+// interpreteren, wat bij naam+adres-combinaties regelmatig een tussenstop niet herkent en de
+// rit dan zonder berekende rijroute/duur laat (zelfde bug als eerder gefixt in RouteMapPanel).
 function buildMapsUrl(stops: GeoEntry[], start: string, returnHome: boolean) {
   const enc = (b: any) => encodeURIComponent([b.naam, b.straat, b.postcode, b.stad].filter(Boolean).join(', '));
   const limited = stops.slice(0, 10);
-  const parts = [encodeURIComponent(start), ...limited.map(s => enc(s.entry)), ...(returnHome ? [encodeURIComponent(start)] : [])];
-  return `https://www.google.com/maps/dir/${parts.join('/')}?travelmode=driving`;
+  const last = limited[limited.length - 1];
+  const destination = returnHome ? encodeURIComponent(start) : enc(last.entry);
+  const waypointStops = returnHome ? limited : limited.slice(0, -1);
+  const waypoints = waypointStops.map(s => enc(s.entry)).join('|');
+  let url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(start)}&destination=${destination}&travelmode=driving`;
+  if (waypoints) url += `&waypoints=${waypoints}`;
+  return url;
 }
 
 // ─── Address verification ─────────────────────────────────────────────────────
