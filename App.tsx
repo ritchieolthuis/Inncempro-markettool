@@ -1063,6 +1063,24 @@ function overlapScore(qWords: string[], bWords: string[]): number {
 
 const DEFAULT_ORIGIN = "Lansinkesweg 4, 7553 AE Hengelo";
 
+// Fallback als de browser's eigen Geolocation API faalt (geweigerde toestemming, geen WiFi-
+// scan mogelijk, een VM/netwerk waar de browser geen positie kan bepalen, etc.) — een gratis,
+// geen-sleutel-nodig IP-locatiedienst. Minder precies dan GPS/WiFi (meestal stad-niveau i.p.v.
+// straat-niveau), maar werkt zonder browserpermissie en faalt zelden helemaal.
+async function geolocateViaIP(): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const r = await fetch('https://ipwho.is/', { signal: controller.signal });
+    clearTimeout(timeout);
+    const d = await r.json();
+    if (d?.success !== false && typeof d?.latitude === 'number' && typeof d?.longitude === 'number') {
+      return { lat: d.latitude, lng: d.longitude };
+    }
+  } catch { /* ook dit mislukt — dan blijft de foutmelding staan */ }
+  return null;
+}
+
 // Coördinaten van veelgebruikte Nederlandse steden
 const DUTCH_CITY_COORDS: Record<string, { lat: number; lng: number }> = {
   'hengelo': { lat: 52.2549, lng: 6.7782 },
@@ -3594,7 +3612,24 @@ const App: React.FC = () => {
           );
           executeSearch(undefined, undefined, '', nearest.coords, nextRadius, []);
         },
-        (err) => {
+        async (err) => {
+          // Methode 2: browser-locatie faalde (geweigerd, geen WiFi-scan mogelijk, timeout) —
+          // val terug op IP-gebaseerde locatie, minder precies maar werkt zonder permissie.
+          const ipCoords = await geolocateViaIP();
+          if (ipCoords) {
+            const nearest = findNearestCity(ipCoords.lat, ipCoords.lng);
+            setLocating(false);
+            if (nearest) {
+              const displayName = toDisplayCityName(nearest.name);
+              const nextRadius = radiusKm ?? 20;
+              setCity(displayName);
+              setRadiusKm(nextRadius);
+              setSelectedRegions([]);
+              setLocationNote(`📍 Gedetecteerd via IP: ${displayName} (minder precies dan GPS). Klopt dit niet? Pas het aan.`);
+              executeSearch(undefined, undefined, '', nearest.coords, nextRadius, []);
+              return;
+            }
+          }
           setLocating(false);
           setLocationError(
             err.code === err.PERMISSION_DENIED

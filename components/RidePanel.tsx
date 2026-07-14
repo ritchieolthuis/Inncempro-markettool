@@ -239,7 +239,23 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
         setStartLabel('Mijn locatie');
         setStartLoading(false);
       },
-      (err) => {
+      async (err) => {
+        // Browser-locatie faalde (geweigerd, geen WiFi-scan mogelijk, timeout) — val terug op
+        // een gratis IP-gebaseerde locatiedienst (stad-niveau, geen browserpermissie nodig)
+        // i.p.v. de gebruiker met een doodlopende foutmelding achter te laten.
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 5000);
+          const r = await fetch('https://ipwho.is/', { signal: controller.signal });
+          clearTimeout(timeout);
+          const d = await r.json();
+          if (d?.success !== false && typeof d?.latitude === 'number' && typeof d?.longitude === 'number') {
+            setStartCoords({ lat: d.latitude, lng: d.longitude });
+            setStartLabel(`Mijn locatie${d.city ? ` (${d.city}, via IP)` : ' (via IP)'}`);
+            setStartLoading(false);
+            return;
+          }
+        } catch { /* ook dit mislukt — val door naar de foutmelding hieronder */ }
         setStartLoading(false);
         setStartError(
           err.code === err.PERMISSION_DENIED
