@@ -454,18 +454,6 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
         </div>
         )}
 
-        {/* Kaart: zelfde tegels en popup-info (adres, telefoon, email, Live Zoeken, Google
-            Maps, website) als op de Kaart-tab. Verschijnt meteen zodra dit paneel openklapt
-            (niet pas na het kiezen van een startpunt). Startpunt = blauw "S", route-stops
-            genummerd oranje, voorstellen als bolletjes zoals op de Kaart-tab. */}
-        <div className="border-b border-slate-100">
-          {/* bg-slate-200: zichtbaar tijdens het laden van tegels (of als tegels om wat voor
-              reden dan ook niet lukken), zodat dit nooit als "kapot wit vlak" oogt maar
-              meteen als een (nog lege) kaart. Responsieve hoogte: op telefoon iets lager
-              zodat de rest van het paneel (route/voorstellen) ook nog in beeld past. */}
-          <div ref={mapDivRef} className="w-full h-56 sm:h-72 bg-slate-200" />
-        </div>
-
         {!startCoords ? (
           <div className="p-6 space-y-4">
             <div className="flex gap-2">
@@ -549,6 +537,13 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
                   <MapPin className="w-3.5 h-3.5" /> Open route in Google Maps
                 </a>
               )}
+            </div>
+
+            {/* Kaart: zelfde tegels en popup-info (adres, telefoon, email, Live Zoeken, Google
+                Maps, website) als op de Kaart-tab. Startpunt = blauw "S", route-stops genummerd
+                oranje, voorstellen als bolletjes. */}
+            <div className="border-b border-slate-100">
+              <div ref={mapDivRef} className="w-full h-56 sm:h-72 bg-slate-200" />
             </div>
 
             {/* Filters */}
