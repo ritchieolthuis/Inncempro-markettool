@@ -260,6 +260,13 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
       // wachttijd (voorkomt dat je kaart al gaat zoomen terwijl je muis gewoon over de kaart
       // naar iets anders beweegt), en dan één zoomniveau per keer terwijl je op het bolletje
       // blijft staan — "hoe langer ik erop sta, hoe meer inzoomen", niet meteen een ultra-zoom.
+      //
+      // BELANGRIJK: setZoomAround (niet setView/panTo) houdt het bolletje op precies dezelfde
+      // schermpositie terwijl er wordt ingezoomd — dat is hoe scroll-zoom op elke kaart werkt.
+      // setView/panTo verplaatst het aangewezen punt juist NAAR HET MIDDEN van het scherm, wat
+      // hier de bug was: een bolletje linksonderin "vloog" naar het midden zodra er werd
+      // ingezoomd, en zodra het onder de muis vandaan schoof pakte een ander bolletje de hover
+      // over en vloog IK naar weer een andere plek — vandaar het heen-en-weer "wegvliegen".
       let hoverTimer: ReturnType<typeof setTimeout> | null = null;
       let zoomInterval: ReturnType<typeof setInterval> | null = null;
       const HOVER_ZOOM_MAX = 16;
@@ -273,12 +280,11 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
         const latlng = this.getLatLng();
         hoverTimer = setTimeout(() => {
           if (!mapRef.current) return;
-          mapRef.current.panTo(latlng, { animate: true, duration: 0.5 });
           zoomInterval = setInterval(() => {
             if (!mapRef.current) return;
             const z = mapRef.current.getZoom();
             if (z >= HOVER_ZOOM_MAX) { if (zoomInterval) clearInterval(zoomInterval); zoomInterval = null; return; }
-            mapRef.current.setView(latlng, z + 1, { animate: true, duration: 0.8 });
+            mapRef.current.setZoomAround(latlng, z + 1, { animate: true });
           }, 900);
         }, 400);
       });
