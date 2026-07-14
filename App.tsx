@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Loader2, ArrowRight, X, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send, Clock, Eye, List, Linkedin } from 'lucide-react';
+import { Search, Loader2, ArrowRight, X, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send, Clock, Eye, List, Linkedin, Navigation } from 'lucide-react';
 import Papa from 'papaparse';
 import bouwgarantData from './bouwgarant_data.json';
 import cityCoords from './city_coords.json';
@@ -11,6 +11,7 @@ import ClusterMapView from './components/ClusterMapView';
 import RouteMapPanel from './components/RouteMapPanel';
 import AIAgentPanel, { AgentOrb, SUGGESTIONS } from './components/AIAgentPanel';
 import VoiceInputButton from './components/VoiceInputButton';
+import RidePanel from './components/RidePanel';
 import { fuzzyMatch } from './utils/fuzzyMatch';
 import { authService } from './services/authService';
 import { preloadAllAddresses, onGeoclusterProgress, GeoclusterProgress, clearClusterCache } from './services/geoclusterService';
@@ -1819,7 +1820,7 @@ const App: React.FC = () => {
   // APP STATE
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'lists' | 'visits'>('search');
+  const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'lists' | 'visits' | 'ride'>('search');
 
   // BATCH IMPORT
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -4301,7 +4302,7 @@ const App: React.FC = () => {
 
         return (
       <div className={`flex flex-col md:flex-row max-w-[1400px] mx-auto w-full flex-grow ${selectedIds.size > 0 ? 'pb-20' : ''}`}>
-          {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && (
+          {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && viewMode !== 'ride' && (
           <aside className={`bg-white border-r border-slate-200 flex-shrink-0 hidden md:flex flex-col h-[calc(100vh-112px)] sticky top-28 transition-all duration-200 ${sidebarCollapsed ? 'w-12' : 'w-80'}`}>
               <div className="p-4 border-b border-slate-100 flex items-center justify-between">
                   {!sidebarCollapsed && <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest font-condensed flex items-center gap-2"><Filter className="w-4 h-4 text-[#009FE3]" /> Filters</h2>}
@@ -4347,13 +4348,17 @@ const App: React.FC = () => {
                      <span className="hidden sm:inline">Mijn bezoeken ({visits.length})</span>
                      <span className="sm:hidden">Bezoeken ({visits.length})</span>
                  </button>
+                 <button data-active={viewMode === 'ride'} onClick={() => { setViewMode('ride'); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'ride' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                     <Navigation className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                     <span>Verderrijden</span>
+                 </button>
              </div>
              {/* Mobiel: fade-hint dat de tabbalk verder scrollt (6 tabs passen niet op smalle schermen) */}
              <div className="sm:hidden pointer-events-none absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent" />
              </div>
 
              {/* Mobiel: filters-knop + slide-up drawer (de aside hierboven is hidden md:flex, dus onzichtbaar op mobiel) */}
-             {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && (
+             {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && viewMode !== 'ride' && (
                <button
                  onClick={() => setShowMobileFilters(true)}
                  className="md:hidden flex items-center justify-center gap-2 w-full mb-4 py-3 bg-white border border-slate-200 rounded-xl shadow-sm text-xs font-bold uppercase tracking-wider text-slate-600 hover:border-[#009FE3] hover:text-[#009FE3] transition-colors"
@@ -4363,7 +4368,7 @@ const App: React.FC = () => {
                </button>
              )}
 
-             {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && showMobileFilters && (
+             {viewMode !== 'map' && viewMode !== 'lists' && viewMode !== 'visits' && viewMode !== 'ride' && showMobileFilters && (
                <div className="md:hidden fixed inset-0 z-50 flex items-end bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowMobileFilters(false)}>
                  <div className="bg-white w-full max-h-[85vh] rounded-t-xl flex flex-col" onClick={e => e.stopPropagation()}>
                    <div className="w-10 h-1 bg-slate-300 rounded-full mx-auto mt-3 flex-shrink-0" />
@@ -5168,6 +5173,42 @@ const App: React.FC = () => {
               </div>
               );
             })()}
+
+            {viewMode === 'ride' && (
+              <RidePanel
+                allData={activeData}
+                cityCoords={cityCoords as any}
+                isVisitedCompany={isVisitedCompany}
+                onSaveAsList={(naam, bedrijven) => {
+                  const companies: DiscoveredCompany[] = bedrijven.map((b: any) => ({
+                    id: `${b.naam}|${b.stad || ''}`, name: b.naam, city: b.stad || '', discoveredAt: new Date().toISOString(), _raw: b,
+                  } as any));
+                  createListAndAddSelection(naam, companies);
+                }}
+                onLogVisits={async (bedrijven) => {
+                  if (!currentUser) return;
+                  const today = new Date().toISOString().split('T')[0];
+                  const nowIso = new Date().toISOString();
+                  const newVisits = bedrijven.map((b: any) => ({
+                    bedrijf_id: b.id || b.naam,
+                    naam: b.naam,
+                    stad: b.stad || '',
+                    straat: b.straat || '',
+                    postcode: b.postcode || '',
+                    telefoon: b.telefoon || '',
+                    email: b.email || '',
+                    contactpersoon: '',
+                    notitie: 'Toegevoegd via Verderrijden',
+                    status: 'bezocht',
+                    datum: today,
+                    created_at: nowIso,
+                    matched: true,
+                  }));
+                  await authService.addVisits(currentUser.id, newVisits);
+                  setVisits(await authService.getVisits(currentUser.id));
+                }}
+              />
+            )}
 
             {viewMode === 'map' && (
               <>
