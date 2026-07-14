@@ -5113,6 +5113,7 @@ const App: React.FC = () => {
                         cityCoords={cityCoords as any}
                         isVisitedCompany={isVisitedCompany}
                         onOpenInDatabase={(naam) => { setDbSearch(naam); setDbPage(1); setViewMode('database'); }}
+                        onOpenInLiveZoeken={(naam) => { setSelectedRegions([]); setSelectedTypes([]); setSelectedWerksoort([]); setSelectedContact([]); setRadiusKm(null); setCity(naam); setViewMode('search'); executeSearch(undefined, undefined, naam, null, null); }}
                         embedded
                         onSaveAsList={(naam, bedrijven) => {
                           const companies: DiscoveredCompany[] = bedrijven.map((b: any) => ({

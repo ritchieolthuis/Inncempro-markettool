@@ -8,9 +8,9 @@ import 'leaflet/dist/leaflet.css';
 
 type Coords = { lat: number; lng: number };
 
-// Exact dezelfde popup-inhoud (naam, adres, telefoon, email, website-link, Google Maps-link,
-// "Open in database") als op de Kaart-tab (components/ClusterMapView.tsx popupHtml) — bewust
-// gekopieerd i.p.v. een eigen variant verzonnen, zodat je hier precies dezelfde informatie ziet.
+// Zelfde popup-opzet (naam, adres, telefoon, email) als op de Kaart-tab
+// (components/ClusterMapView.tsx popupHtml), met drie link/knoppen: Live Zoeken (voor de
+// rij-afstand in meters), Google Maps en Website.
 function popupHtml(b: any, extra?: string): string {
   const website = b.website ? (/^https?:\/\//i.test(b.website) ? b.website : `https://${b.website}`) : '';
   const naamEsc = (b.naam || '').replace(/'/g, "\\'");
@@ -23,9 +23,9 @@ function popupHtml(b: any, extra?: string): string {
     ${b.telefoon ? `<div style="margin-top:4px;color:#374151;font-size:12px">📞 ${b.telefoon}</div>` : ''}
     ${b.email ? `<div style="color:#374151;font-size:12px">✉️ ${b.email}</div>` : ''}
     <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-      ${website ? `<a href="${website}" target="_blank" rel="noopener" style="font-size:11px;color:#009FE3;border:1px solid #009FE3;padding:3px 8px;border-radius:4px;text-decoration:none">Website →</a>` : ''}
+      <button onclick="window._inncemRideLiveZoeken('${naamEsc}')" style="font-size:11px;color:#E85E26;background:none;border:1px solid #E85E26;padding:3px 8px;border-radius:4px;cursor:pointer">Live Zoeken →</button>
       <a href="https://www.google.com/maps/search/?api=1&query=${mapsQuery}" target="_blank" rel="noopener" style="font-size:11px;color:#16a34a;border:1px solid #16a34a;padding:3px 8px;border-radius:4px;text-decoration:none">Google Maps →</a>
-      <button onclick="window._inncemRideNav('${naamEsc}')" style="font-size:11px;color:#1e293b;background:#f1f5f9;border:1px solid #cbd5e1;padding:3px 8px;border-radius:4px;cursor:pointer">Open in database →</button>
+      ${website ? `<a href="${website}" target="_blank" rel="noopener" style="font-size:11px;color:#009FE3;border:1px solid #009FE3;padding:3px 8px;border-radius:4px;text-decoration:none">Website →</a>` : ''}
     </div>
     ${b.source ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b">${b.source}</div>` : ''}
   </div>`;
@@ -62,6 +62,9 @@ interface RidePanelProps {
   onSaveAsList: (naam: string, bedrijven: any[]) => void;
   onLogVisits: (bedrijven: any[]) => void;
   onOpenInDatabase?: (naam: string) => void;
+  // Zelfde "Zoeken in Live"-actie als de Bedrijvendatabase-kaartjes: zoekt dit bedrijf op in
+  // Live Zoeken, dat (in tegenstelling tot de database) ook de rij-afstand in meters toont.
+  onOpenInLiveZoeken?: (naam: string) => void;
   // true = wordt getoond binnen een bestaande kaart/sectie (Mijn bezoeken) — laat dan de eigen
   // buitenste kaart-rand/titel weg zodat het niet dubbel oogt.
   embedded?: boolean;
@@ -85,7 +88,7 @@ function coordsFor(b: any, cityCoords: Record<string, Coords>): Coords | null {
   return cityCoords[stad] || cityCoords[(b.stad || '').trim()] || null;
 }
 
-const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCompany, onSaveAsList, onLogVisits, onOpenInDatabase, embedded }) => {
+const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCompany, onSaveAsList, onLogVisits, onOpenInDatabase, onOpenInLiveZoeken, embedded }) => {
   const mapDivRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
@@ -172,21 +175,21 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chain, filterTypes, onlyUnvisited, suggestCount, startCoords]);
 
-  // "Open in database" vanuit een kaart-popup — zelfde patroon als de Kaart-tab
-  // (window._inncemMapNav daar), maar onder een eigen naam zodat ze elkaar niet overschrijven
+  // "Open in database" + "Live Zoeken" vanuit een kaart-popup — zelfde patroon als de Kaart-tab
+  // (window._inncemMapNav daar), maar onder eigen namen zodat ze elkaar niet overschrijven
   // als beide ooit tegelijk in de DOM zitten.
   useEffect(() => {
     (window as any)._inncemRideNav = (naam: string) => onOpenInDatabase?.(naam);
-    return () => { delete (window as any)._inncemRideNav; };
-  }, [onOpenInDatabase]);
+    (window as any)._inncemRideLiveZoeken = (naam: string) => onOpenInLiveZoeken?.(naam);
+    return () => { delete (window as any)._inncemRideNav; delete (window as any)._inncemRideLiveZoeken; };
+  }, [onOpenInDatabase, onOpenInLiveZoeken]);
 
-  // De kaart initialiseert pas zodra er een startpunt is (dus pas ná "vanaf mijn locatie" of
-  // "zoek startpunt") — hiervoor is er nog niets zinvols te tonen, en dit hele paneel zit al
-  // achter de "Onderweg"-inklapper, dus de kaart komt sowieso nooit vanzelf in beeld bovenop
-  // de bezoekhistorie. Zelfde Google-tegels als de Kaart-tab, voor een herkenbaar beeld.
+  // De kaart initialiseert zodra dit paneel opengeklapt wordt (niet pas na het kiezen van een
+  // startpunt) — zelfde Nederland-overzicht en Google-tegels als de Kaart-tab, zodat je meteen
+  // iets ziet en voorstellen er automatisch bij komen zodra je een startpunt kiest.
   useEffect(() => {
-    if (!startCoords || !mapDivRef.current || mapRef.current) return;
-    mapRef.current = L.map(mapDivRef.current, { preferCanvas: true }).setView([startCoords.lat, startCoords.lng], 12);
+    if (!mapDivRef.current || mapRef.current) return;
+    mapRef.current = L.map(mapDivRef.current, { preferCanvas: true }).setView([52.1326, 5.2913], 7);
     const googleMapsApiKey = 'AIzaSyDtsaBhb-Uq3xWvqE6mnmv3sXYM3dM3TUY';
     L.tileLayer(`https://mt1.google.com/vt/lyrs=r&x={x}&y={y}&z={z}&scale=2&key=${googleMapsApiKey}`, {
       attribution: '© Google Maps', maxZoom: 20, minZoom: 1, tileSize: 256,
@@ -194,10 +197,10 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
     markersLayerRef.current = L.layerGroup().addTo(mapRef.current);
 
     // Leaflet bakt de containergrootte in op het moment van L.map(...) — dit paneel verschijnt
-    // pas net (net ná het inklappen van "Onderweg" + het zetten van het startpunt in dezelfde
-    // render), dus de browser heeft de layout soms nog niet definitief berekend op dat exacte
-    // moment, wat een grijze/lege kaart oplevert totdat er iets anders 'm dwingt te hertekenen.
-    // invalidateSize() forceert Leaflet de echte afmetingen opnieuw te meten.
+    // pas net (net ná het inklappen van "Onderweg"), dus de browser heeft de layout soms nog
+    // niet definitief berekend op dat exacte moment, wat een grijze/lege kaart oplevert totdat
+    // er iets anders 'm dwingt te hertekenen. invalidateSize() forceert Leaflet de echte
+    // afmetingen opnieuw te meten.
     const map = mapRef.current;
     const raf = requestAnimationFrame(() => map.invalidateSize());
     const t = setTimeout(() => map.invalidateSize(), 200);
@@ -211,19 +214,23 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
       mapRef.current?.remove();
       mapRef.current = null;
     };
-  }, [startCoords]);
+  }, []);
 
   // Markers herbouwen zodra startpunt, route of voorstellen wijzigen: startpunt (blauw "S"),
-  // route-stops genummerd (oranje, zelfde stijl als Route Kaart), voorstellen als kleinere
-  // grijze pins zodat je meteen ziet wat er verderop ligt vóórdat je 'm aanklikt.
+  // route-stops genummerd (oranje, zelfde stijl als Route Kaart). Voorstellen worden als kleine
+  // bolletjes getekend — zelfde stijl (L.circleMarker) als de Kaart-tab — zodat je meteen ziet
+  // wat er verderop ligt vóórdat je 'm aanklikt.
   useEffect(() => {
-    if (!mapRef.current || !markersLayerRef.current || !startCoords) return;
+    if (!mapRef.current || !markersLayerRef.current) return;
     markersLayerRef.current.clearLayers();
-    const bounds: L.LatLngExpression[] = [[startCoords.lat, startCoords.lng]];
+    const bounds: L.LatLngExpression[] = [];
 
-    L.marker([startCoords.lat, startCoords.lng], { icon: makePin('#1e293b', 'S') })
-      .bindPopup(`<div style="font-family:system-ui;font-size:13px"><b>${startLabel || 'Startpunt'}</b></div>`)
-      .addTo(markersLayerRef.current);
+    if (startCoords) {
+      bounds.push([startCoords.lat, startCoords.lng]);
+      L.marker([startCoords.lat, startCoords.lng], { icon: makePin('#1e293b', 'S') })
+        .bindPopup(`<div style="font-family:system-ui;font-size:13px"><b>${startLabel || 'Startpunt'}</b></div>`)
+        .addTo(markersLayerRef.current);
+    }
 
     chain.forEach((s, i) => {
       L.marker([s.coords.lat, s.coords.lng], { icon: makePin('#E85E26', i + 1) })
@@ -233,13 +240,17 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
     });
 
     suggestions.forEach(s => {
-      L.marker([s.coords.lat, s.coords.lng], { icon: makePin('#94a3b8', '') })
+      L.circleMarker([s.coords.lat, s.coords.lng], {
+        radius: 6, color: '#fff', weight: 1.5, fillColor: '#94a3b8', fillOpacity: 0.9, interactive: true,
+      })
         .bindPopup(popupHtml(s.bedrijf, `${s.km.toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`))
         .addTo(markersLayerRef.current!);
       bounds.push([s.coords.lat, s.coords.lng]);
     });
 
-    mapRef.current.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [40, 40], maxZoom: 14 });
+    if (bounds.length > 0) {
+      mapRef.current.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [40, 40], maxZoom: 14 });
+    }
   }, [startCoords, startLabel, chain, suggestions]);
 
   // Zelfde geolocation-opties als "Gebruik mijn locatie" bij Live Zoeken (useMyLocation in
@@ -433,6 +444,14 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
         </div>
         )}
 
+        {/* Kaart: zelfde tegels en popup-info (adres, telefoon, email, Live Zoeken, Google
+            Maps, website) als op de Kaart-tab. Verschijnt meteen zodra dit paneel openklapt
+            (niet pas na het kiezen van een startpunt). Startpunt = blauw "S", route-stops
+            genummerd oranje, voorstellen als bolletjes zoals op de Kaart-tab. */}
+        <div className="border-b border-slate-100">
+          <div ref={mapDivRef} className="w-full h-72" />
+        </div>
+
         {!startCoords ? (
           <div className="p-6 space-y-4">
             <div className="flex gap-2">
@@ -516,14 +535,6 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
                   <MapPin className="w-3.5 h-3.5" /> Open route in Google Maps
                 </a>
               )}
-            </div>
-
-            {/* Kaart: zelfde tegels en popup-info (adres, telefoon, email, website, Google
-                Maps, "open in database") als op de Kaart-tab. Startpunt = blauw "S", route-
-                stops genummerd oranje, voorstellen als grijze pins zodat je ziet wat verderop
-                ligt vóórdat je erop klikt. */}
-            <div className="border-b border-slate-100">
-              <div ref={mapDivRef} className="w-full h-72" />
             </div>
 
             {/* Filters */}
