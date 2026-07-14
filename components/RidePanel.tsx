@@ -499,11 +499,13 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
     setFinished(true);
   };
 
-  const Wrapper: React.FC<{ children: React.ReactNode }> = ({ children }) =>
-    embedded ? <>{children}</> : <div className="w-full max-w-2xl mx-auto"><div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">{children}</div></div>;
-
-  return (
-    <Wrapper>
+  // BELANGRIJK: geen wrapper-COMPONENT die binnen deze functie gedefinieerd wordt. Dat gaf een
+  // nieuwe component-identiteit bij elke render, waardoor React de héle subtree (inclusief de
+  // Leaflet-kaart-div) bij elke state-wijziging weggooide en opnieuw opbouwde — terwijl de
+  // init-useEffect (deps []) niet opnieuw draaide, dus de kaart bleef daarna leeg/wit. Nu een
+  // gewone conditionele JSX-boom die dezelfde DOM-node behoudt over renders heen.
+  const inner = (
+    <>
         {!embedded && (
         <div className="p-6 border-b border-slate-200 flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-sm bg-[#009FE3] flex items-center justify-center flex-shrink-0">
@@ -749,8 +751,12 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
             )}
           </>
         )}
-    </Wrapper>
+    </>
   );
+
+  return embedded
+    ? inner
+    : <div className="w-full max-w-2xl mx-auto"><div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">{inner}</div></div>;
 };
 
 export default RidePanel;
