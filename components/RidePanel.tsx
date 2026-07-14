@@ -217,18 +217,30 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
     mapRef.current.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [40, 40], maxZoom: 14 });
   }, [startCoords, startLabel, chain, suggestions]);
 
+  // Zelfde geolocation-opties als "Gebruik mijn locatie" bij Live Zoeken (useMyLocation in
+  // App.tsx), die daar wél altijd werkt. enableHighAccuracy:true vraagt om GPS-precisie, en op
+  // apparaten zonder GPS-chip (de meeste desktops/laptops) laat dat de opzoek regelmatig
+  // mislukken of hangen i.p.v. netjes terugvallen op WiFi/IP-positionering — enableHighAccuracy:
+  // false gebruikt diezelfde snellere, breder beschikbare methode die bij Live Zoeken al werkt.
   const useMyLocation = () => {
     setStartError(null);
     setStartLoading(true);
-    if (!navigator.geolocation) { setStartError('Locatie niet beschikbaar in deze browser.'); setStartLoading(false); return; }
+    if (!navigator.geolocation) { setStartError('Locatiebepaling niet ondersteund door je browser.'); setStartLoading(false); return; }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setStartCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         setStartLabel('Mijn locatie');
         setStartLoading(false);
       },
-      () => { setStartError('Kon je locatie niet ophalen. Sta locatietoegang toe, of zoek handmatig.'); setStartLoading(false); },
-      { enableHighAccuracy: true, timeout: 10000 }
+      (err) => {
+        setStartLoading(false);
+        setStartError(
+          err.code === err.PERMISSION_DENIED
+            ? 'Locatietoegang geweigerd. Sta dit toe in je browserinstellingen, of zoek handmatig.'
+            : 'Kon je locatie niet bepalen. Probeer het opnieuw, of zoek handmatig.'
+        );
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 }
     );
   };
 
