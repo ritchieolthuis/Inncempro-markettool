@@ -454,6 +454,13 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
         </div>
         )}
 
+        {/* Kaart: ALTIJD renderen, niet in een ternary-branch — anders wordt de div pas
+            gerenderd zodra startCoords ingesteld is, en faalt de mapInit useEffect stil
+            omdat mapDivRef.current undefined is. */}
+        <div className="border-b border-slate-100">
+          <div ref={mapDivRef} className="w-full h-56 sm:h-72 bg-slate-200" />
+        </div>
+
         {!startCoords ? (
           <div className="p-6 space-y-4">
             <div className="flex gap-2">
@@ -537,13 +544,6 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
                   <MapPin className="w-3.5 h-3.5" /> Open route in Google Maps
                 </a>
               )}
-            </div>
-
-            {/* Kaart: zelfde tegels en popup-info (adres, telefoon, email, Live Zoeken, Google
-                Maps, website) als op de Kaart-tab. Startpunt = blauw "S", route-stops genummerd
-                oranje, voorstellen als bolletjes. */}
-            <div className="border-b border-slate-100">
-              <div ref={mapDivRef} className="w-full h-56 sm:h-72 bg-slate-200" />
             </div>
 
             {/* Filters */}
