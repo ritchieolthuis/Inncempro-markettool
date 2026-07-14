@@ -254,6 +254,11 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
     });
 
     if (bounds.length > 0) {
+      // Leaflet's interne maatcache kan verouderd zijn tegen de tijd dat er data binnenkomt
+      // (startpunt/voorstellen komen pas ná een async opzoek/fetch) — zonder deze her-meting
+      // vóór fitBounds kon de kaart daarna leeg/wit ogen omdat tegels buiten het echte,
+      // inmiddels veranderde zichtgebied werden geplaatst.
+      mapRef.current.invalidateSize();
       mapRef.current.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [40, 40], maxZoom: 14 });
     }
   }, [startCoords, startLabel, chain, suggestions]);
