@@ -239,9 +239,14 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
       bounds.push([s.coords.lat, s.coords.lng]);
     });
 
+    // Zelfde tikstraal-verruiming voor aanraakschermen als de Kaart-tab (ClusterMapView) —
+    // een bolletje van een paar pixels is op een telefoon vrijwel onmogelijk precies te raken.
+    const isTouchDevice = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+    const suggestionRadius = isTouchDevice ? 11 : 6;
+
     suggestions.forEach(s => {
       L.circleMarker([s.coords.lat, s.coords.lng], {
-        radius: 6, color: '#fff', weight: 1.5, fillColor: '#94a3b8', fillOpacity: 0.9, interactive: true,
+        radius: suggestionRadius, color: '#fff', weight: 1.5, fillColor: '#94a3b8', fillOpacity: 0.9, interactive: true,
       })
         .bindPopup(popupHtml(s.bedrijf, `${s.km.toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`))
         .addTo(markersLayerRef.current!);
@@ -449,7 +454,11 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
             (niet pas na het kiezen van een startpunt). Startpunt = blauw "S", route-stops
             genummerd oranje, voorstellen als bolletjes zoals op de Kaart-tab. */}
         <div className="border-b border-slate-100">
-          <div ref={mapDivRef} className="w-full h-72" />
+          {/* bg-slate-200: zichtbaar tijdens het laden van tegels (of als tegels om wat voor
+              reden dan ook niet lukken), zodat dit nooit als "kapot wit vlak" oogt maar
+              meteen als een (nog lege) kaart. Responsieve hoogte: op telefoon iets lager
+              zodat de rest van het paneel (route/voorstellen) ook nog in beeld past. */}
+          <div ref={mapDivRef} className="w-full h-56 sm:h-72 bg-slate-200" />
         </div>
 
         {!startCoords ? (
