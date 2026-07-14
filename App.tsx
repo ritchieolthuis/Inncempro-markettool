@@ -5073,6 +5073,7 @@ const App: React.FC = () => {
                         allData={activeData}
                         cityCoords={cityCoords as any}
                         isVisitedCompany={isVisitedCompany}
+                        onOpenInDatabase={(naam) => { setDbSearch(naam); setDbPage(1); setViewMode('database'); }}
                         embedded
                         onSaveAsList={(naam, bedrijven) => {
                           const companies: DiscoveredCompany[] = bedrijven.map((b: any) => ({

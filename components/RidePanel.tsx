@@ -3,8 +3,43 @@ import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus } 
 import { haversineKm, detectType } from '../utils/dagbezoek';
 import { getDrivingDistancesKm } from '../services/routingService';
 import { getClusterData, makeId } from '../services/geoclusterService';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 type Coords = { lat: number; lng: number };
+
+// Exact dezelfde popup-inhoud (naam, adres, telefoon, email, website-link, Google Maps-link,
+// "Open in database") als op de Kaart-tab (components/ClusterMapView.tsx popupHtml) — bewust
+// gekopieerd i.p.v. een eigen variant verzonnen, zodat je hier precies dezelfde informatie ziet.
+function popupHtml(b: any, extra?: string): string {
+  const website = b.website ? (/^https?:\/\//i.test(b.website) ? b.website : `https://${b.website}`) : '';
+  const naamEsc = (b.naam || '').replace(/'/g, "\\'");
+  const mapsQuery = encodeURIComponent([b.naam, b.straat, b.postcode, b.stad].filter(Boolean).join(', '));
+  return `<div style="font-family:system-ui;font-size:13px;min-width:210px">
+    ${extra ? `<div style="font-size:10px;font-weight:700;color:#E85E26;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:2px">${extra}</div>` : ''}
+    <b style="color:#1e293b">${b.naam || ''}</b><br/>
+    <span style="color:#64748b;font-size:12px">${b.straat || ''}</span><br/>
+    <span style="color:#64748b;font-size:12px">${[b.postcode, b.stad].filter(Boolean).join(' ')}</span>
+    ${b.telefoon ? `<div style="margin-top:4px;color:#374151;font-size:12px">📞 ${b.telefoon}</div>` : ''}
+    ${b.email ? `<div style="color:#374151;font-size:12px">✉️ ${b.email}</div>` : ''}
+    <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+      ${website ? `<a href="${website}" target="_blank" rel="noopener" style="font-size:11px;color:#009FE3;border:1px solid #009FE3;padding:3px 8px;border-radius:4px;text-decoration:none">Website →</a>` : ''}
+      <a href="https://www.google.com/maps/search/?api=1&query=${mapsQuery}" target="_blank" rel="noopener" style="font-size:11px;color:#16a34a;border:1px solid #16a34a;padding:3px 8px;border-radius:4px;text-decoration:none">Google Maps →</a>
+      <button onclick="window._inncemRideNav('${naamEsc}')" style="font-size:11px;color:#1e293b;background:#f1f5f9;border:1px solid #cbd5e1;padding:3px 8px;border-radius:4px;cursor:pointer">Open in database →</button>
+    </div>
+    ${b.source ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b">${b.source}</div>` : ''}
+  </div>`;
+}
+
+function makePin(color: string, label: number | string) {
+  return L.divIcon({
+    html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36">
+      <path d="M12 0C5.4 0 0 5.4 0 12c0 7.5 12 24 12 24s12-16.5 12-24C24 5.4 18.6 0 12 0z" fill="${color}" stroke="white" stroke-width="1.5"/>
+      <text x="12" y="16" text-anchor="middle" fill="white" font-size="9" font-weight="700" font-family="system-ui">${label}</text>
+    </svg>`,
+    className: '', iconSize: [24, 36], iconAnchor: [12, 36], popupAnchor: [0, -38],
+  });
+}
 
 interface RideStop {
   id: string;
@@ -26,6 +61,7 @@ interface RidePanelProps {
   isVisitedCompany: (b: any) => boolean;
   onSaveAsList: (naam: string, bedrijven: any[]) => void;
   onLogVisits: (bedrijven: any[]) => void;
+  onOpenInDatabase?: (naam: string) => void;
   // true = wordt getoond binnen een bestaande kaart/sectie (Mijn bezoeken) — laat dan de eigen
   // buitenste kaart-rand/titel weg zodat het niet dubbel oogt.
   embedded?: boolean;
@@ -49,7 +85,11 @@ function coordsFor(b: any, cityCoords: Record<string, Coords>): Coords | null {
   return cityCoords[stad] || cityCoords[(b.stad || '').trim()] || null;
 }
 
-const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCompany, onSaveAsList, onLogVisits, embedded }) => {
+const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCompany, onSaveAsList, onLogVisits, onOpenInDatabase, embedded }) => {
+  const mapDivRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const markersLayerRef = useRef<L.LayerGroup | null>(null);
+
   const [startMode, setStartMode] = useState<'gps' | 'search'>('gps');
   const [startQuery, setStartQuery] = useState('');
   const [startCoords, setStartCoords] = useState<Coords | null>(null);
@@ -124,6 +164,58 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
     if (pos) computeSuggestions(pos);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chain, filterTypes, onlyUnvisited, suggestCount, startCoords]);
+
+  // "Open in database" vanuit een kaart-popup — zelfde patroon als de Kaart-tab
+  // (window._inncemMapNav daar), maar onder een eigen naam zodat ze elkaar niet overschrijven
+  // als beide ooit tegelijk in de DOM zitten.
+  useEffect(() => {
+    (window as any)._inncemRideNav = (naam: string) => onOpenInDatabase?.(naam);
+    return () => { delete (window as any)._inncemRideNav; };
+  }, [onOpenInDatabase]);
+
+  // De kaart initialiseert pas zodra er een startpunt is (dus pas ná "vanaf mijn locatie" of
+  // "zoek startpunt") — hiervoor is er nog niets zinvols te tonen, en dit hele paneel zit al
+  // achter de "Onderweg"-inklapper, dus de kaart komt sowieso nooit vanzelf in beeld bovenop
+  // de bezoekhistorie. Zelfde Google-tegels als de Kaart-tab, voor een herkenbaar beeld.
+  useEffect(() => {
+    if (!startCoords || !mapDivRef.current || mapRef.current) return;
+    mapRef.current = L.map(mapDivRef.current, { preferCanvas: true }).setView([startCoords.lat, startCoords.lng], 12);
+    const googleMapsApiKey = 'AIzaSyDtsaBhb-Uq3xWvqE6mnmv3sXYM3dM3TUY';
+    L.tileLayer(`https://mt1.google.com/vt/lyrs=r&x={x}&y={y}&z={z}&scale=2&key=${googleMapsApiKey}`, {
+      attribution: '© Google Maps', maxZoom: 20, minZoom: 1, tileSize: 256,
+    }).addTo(mapRef.current);
+    markersLayerRef.current = L.layerGroup().addTo(mapRef.current);
+    return () => { mapRef.current?.remove(); mapRef.current = null; };
+  }, [startCoords]);
+
+  // Markers herbouwen zodra startpunt, route of voorstellen wijzigen: startpunt (blauw "S"),
+  // route-stops genummerd (oranje, zelfde stijl als Route Kaart), voorstellen als kleinere
+  // grijze pins zodat je meteen ziet wat er verderop ligt vóórdat je 'm aanklikt.
+  useEffect(() => {
+    if (!mapRef.current || !markersLayerRef.current || !startCoords) return;
+    markersLayerRef.current.clearLayers();
+    const bounds: L.LatLngExpression[] = [[startCoords.lat, startCoords.lng]];
+
+    L.marker([startCoords.lat, startCoords.lng], { icon: makePin('#1e293b', 'S') })
+      .bindPopup(`<div style="font-family:system-ui;font-size:13px"><b>${startLabel || 'Startpunt'}</b></div>`)
+      .addTo(markersLayerRef.current);
+
+    chain.forEach((s, i) => {
+      L.marker([s.coords.lat, s.coords.lng], { icon: makePin('#E85E26', i + 1) })
+        .bindPopup(popupHtml(s.bedrijf, `Stop ${i + 1} van de route`))
+        .addTo(markersLayerRef.current!);
+      bounds.push([s.coords.lat, s.coords.lng]);
+    });
+
+    suggestions.forEach(s => {
+      L.marker([s.coords.lat, s.coords.lng], { icon: makePin('#94a3b8', '') })
+        .bindPopup(popupHtml(s.bedrijf, `${s.km.toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`))
+        .addTo(markersLayerRef.current!);
+      bounds.push([s.coords.lat, s.coords.lng]);
+    });
+
+    mapRef.current.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [40, 40], maxZoom: 14 });
+  }, [startCoords, startLabel, chain, suggestions]);
 
   const useMyLocation = () => {
     setStartError(null);
@@ -358,6 +450,14 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
                   <MapPin className="w-3.5 h-3.5" /> Open route in Google Maps
                 </a>
               )}
+            </div>
+
+            {/* Kaart: zelfde tegels en popup-info (adres, telefoon, email, website, Google
+                Maps, "open in database") als op de Kaart-tab. Startpunt = blauw "S", route-
+                stops genummerd oranje, voorstellen als grijze pins zodat je ziet wat verderop
+                ligt vóórdat je erop klikt. */}
+            <div className="border-b border-slate-100">
+              <div ref={mapDivRef} className="w-full h-72" />
             </div>
 
             {/* Filters */}
