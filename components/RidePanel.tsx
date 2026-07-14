@@ -114,12 +114,12 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
     return startCoords;
   };
 
-  // Zoekt de N dichtstbijzijnde nog-niet-in-de-rit-zittende bedrijven vanaf de huidige positie,
-  // met echte rijafstand (gratis publieke OSRM-server, zelfde als Route Kaart al gebruikt) —
-  // valt per kandidaat stil terug op hemelsbrede afstand als die specifieke opzoek mislukt.
+  // Zoekt de N dichtstbijzijnde nog-niet-in-de-rit-zittende bedrijven vanaf de huidige positie.
+  // Toont eerst meteen de hemelsbrede sortering (instant, geen netwerk nodig) en verfijnt die
+  // daarna op de achtergrond met echte rijafstand (gratis publieke OSRM-server) — zo hoef je
+  // nooit op een lege/ladende lijst te wachten, en de volgorde klopt binnen een paar tellen.
   const computeSuggestions = async (from: Coords) => {
     const myRequestId = ++requestIdRef.current;
-    setLoadingSuggestions(true);
     const inChain = new Set(chain.map(s => (s.bedrijf.naam || '').toLowerCase().trim()));
 
     const candidates: Array<{ bedrijf: any; coords: Coords; haversine: number }> = [];
@@ -134,12 +134,19 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
       if (hv > 75) continue; // ruime radius, scheelt duizenden onnodige OSRM-aanvragen
       candidates.push({ bedrijf: b, coords, haversine: hv });
     }
-    // Alleen de dichtstbijzijnde ~40 (hemelsbreed) daadwerkelijk aan OSRM voorleggen voor
-    // echte rijafstand — genoeg marge om de top-N na herordening nog te kloppen, zonder de
-    // gratis publieke server met duizenden punten tegelijk te belasten.
     candidates.sort((a, b) => a.haversine - b.haversine);
-    const shortlist = candidates.slice(0, 40);
 
+    // Stap 1 — meteen tonen op hemelsbrede afstand, geen wachttijd.
+    const instant: Suggestion[] = candidates.slice(0, suggestCount).map(c => ({
+      bedrijf: c.bedrijf, coords: c.coords, km: c.haversine, driving: false,
+    }));
+    setSuggestions(instant);
+
+    // Stap 2 — op de achtergrond verfijnen met echte rijafstand. Kleinere shortlist (25 i.p.v.
+    // eerder 40) voor een snellere OSRM-respons; genoeg marge om de top-N na herordening nog
+    // te kloppen.
+    setLoadingSuggestions(true);
+    const shortlist = candidates.slice(0, 25);
     let driving: (number | null)[] = [];
     try {
       driving = await getDrivingDistancesKm(from, shortlist.map(c => c.coords));
@@ -240,7 +247,9 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
             : 'Kon je locatie niet bepalen. Probeer het opnieuw, of zoek handmatig.'
         );
       },
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 }
+      // maximumAge: 60s — zelfde versnelling als bij Live Zoeken: een al bekende recente
+      // locatie mag hergebruikt worden i.p.v. altijd een volledig verse opzoek te forceren.
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
     );
   };
 

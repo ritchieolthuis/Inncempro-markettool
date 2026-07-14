@@ -3602,7 +3602,11 @@ const App: React.FC = () => {
               : 'Kon je locatie niet bepalen. Probeer het opnieuw.'
           );
         },
-        { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 }
+        // maximumAge: 60s in plaats van 0 — een net opgehaalde locatie (bv. via een eerdere
+        // klik, of door de browser al gecached) mag hergebruikt worden i.p.v. altijd een
+        // volledig verse (tragere) opzoek te forceren. Bij een écht nieuwe locatie ververst
+        // de browser dit vanzelf zodra de cache verlopen is.
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
       );
     } else {
       setLocating(false);
