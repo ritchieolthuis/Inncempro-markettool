@@ -189,30 +189,42 @@ export function makeId(b: any): string {
   return `${(b.naam || '').toLowerCase().trim()}|${(b.straat || '').toLowerCase().trim()}|${(b.postcode || '').toLowerCase().replace(/\s/g, '')}`;
 }
 
+// In-memory memoisatie: zonder dit leest/parset elke aanroep van getClusterData() de hele
+// localStorage-cache (duizenden entries) opnieuw en bouwt een gloednieuwe Map — onschuldig
+// als het één keer per render gebeurt (Kaart-tab), maar fataal traag als iets dit per bedrijf
+// in een lus aanroept (zoals RidePanel/Onderweg deed: duizenden keren opnieuw parsen kostte
+// daar de gerapporteerde ~30 seconden). saveCachedClusterData() muteert dezelfde Map-referentie
+// en houdt de memo dus automatisch actueel; clearClusterCache() reset 'm expliciet.
+let clusterDataMemo: Map<string, GeoEntry> | null | undefined;
+
 function loadCachedClusterData(): Map<string, GeoEntry> | null {
+  if (clusterDataMemo !== undefined) return clusterDataMemo;
   try {
     const stored = localStorage.getItem(GEO_CACHE_KEY);
     const timestamp = localStorage.getItem(GEO_TIMESTAMP_KEY);
 
-    if (!stored || !timestamp) return null;
+    if (!stored || !timestamp) { clusterDataMemo = null; return null; }
 
     const age = Date.now() - parseInt(timestamp, 10);
-    if (age > CACHE_DURATION) return null;
+    if (age > CACHE_DURATION) { clusterDataMemo = null; return null; }
 
     const data = JSON.parse(stored);
-    if (data.version !== CACHE_VERSION) return null;
+    if (data.version !== CACHE_VERSION) { clusterDataMemo = null; return null; }
 
     const map = new Map<string, GeoEntry>();
     data.entries.forEach((e: GeoEntry) => {
       map.set(e.id, e);
     });
+    clusterDataMemo = map;
     return map;
   } catch {
+    clusterDataMemo = null;
     return null;
   }
 }
 
 function saveCachedClusterData(entries: Map<string, GeoEntry>) {
+  clusterDataMemo = entries; // memo bijwerken, ook als dit een nieuw gebouwde Map is (preloadAllAddresses)
   try {
     const data = {
       version: CACHE_VERSION,
@@ -333,6 +345,7 @@ export function getClusterData(): Map<string, GeoEntry> | null {
 export function clearClusterCache() {
   localStorage.removeItem(GEO_CACHE_KEY);
   localStorage.removeItem(GEO_TIMESTAMP_KEY);
+  clusterDataMemo = undefined;
 }
 
 // ─── Achtergrond-verfijning: echte adres-geocoding via Nominatim (gratis) ──────────────

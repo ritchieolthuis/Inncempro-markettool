@@ -192,7 +192,25 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
       attribution: '© Google Maps', maxZoom: 20, minZoom: 1, tileSize: 256,
     }).addTo(mapRef.current);
     markersLayerRef.current = L.layerGroup().addTo(mapRef.current);
-    return () => { mapRef.current?.remove(); mapRef.current = null; };
+
+    // Leaflet bakt de containergrootte in op het moment van L.map(...) — dit paneel verschijnt
+    // pas net (net ná het inklappen van "Onderweg" + het zetten van het startpunt in dezelfde
+    // render), dus de browser heeft de layout soms nog niet definitief berekend op dat exacte
+    // moment, wat een grijze/lege kaart oplevert totdat er iets anders 'm dwingt te hertekenen.
+    // invalidateSize() forceert Leaflet de echte afmetingen opnieuw te meten.
+    const map = mapRef.current;
+    const raf = requestAnimationFrame(() => map.invalidateSize());
+    const t = setTimeout(() => map.invalidateSize(), 200);
+    const ro = new ResizeObserver(() => map.invalidateSize());
+    ro.observe(mapDivRef.current);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t);
+      ro.disconnect();
+      mapRef.current?.remove();
+      mapRef.current = null;
+    };
   }, [startCoords]);
 
   // Markers herbouwen zodra startpunt, route of voorstellen wijzigen: startpunt (blauw "S"),
@@ -329,6 +347,17 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
 
   const advanceTo = (s: Suggestion) => {
     setChain(prev => [...prev, { id: `${(s.bedrijf.naam || '')}_${Date.now()}`, bedrijf: s.bedrijf, coords: s.coords, km: s.km }]);
+  };
+
+  // Alle huidige voorstellen in één keer toevoegen (in hun huidige, al op afstand gesorteerde
+  // volgorde) i.p.v. ze één voor één te moeten accepteren. Na het toevoegen berekent de bestaande
+  // useEffect automatisch een nieuwe lijst voorstellen vanaf de nieuwe laatste stop.
+  const advanceAll = () => {
+    if (suggestions.length === 0) return;
+    setChain(prev => [
+      ...prev,
+      ...suggestions.map((s, i) => ({ id: `${(s.bedrijf.naam || '')}_${Date.now()}_${i}`, bedrijf: s.bedrijf, coords: s.coords, km: s.km })),
+    ]);
   };
 
   const dismissSuggestion = (bedrijf: any) => {
@@ -528,11 +557,22 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
 
             {/* Voorstellen */}
             <div className="px-6 py-4">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between mb-2 gap-2">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   Dichtstbijzijnde vanaf {chain.length > 0 ? chain[chain.length - 1].bedrijf.naam : (startLabel || 'startpunt')}
                 </span>
-                {loadingSuggestions && <Loader2 className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {loadingSuggestions && <Loader2 className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
+                  {suggestions.length > 0 && (
+                    <button
+                      onClick={advanceAll}
+                      title="Alle onderstaande voorstellen toevoegen aan de route"
+                      className="text-[10px] font-bold uppercase tracking-wider text-green-600 hover:text-green-700 hover:underline flex items-center gap-1"
+                    >
+                      <Check className="w-3 h-3" /> Accepteer alles ({suggestions.length})
+                    </button>
+                  )}
+                </div>
               </div>
               {suggestions.length === 0 && !loadingSuggestions && (
                 <p className="text-xs text-slate-400 py-4 text-center">Geen bedrijven gevonden binnen bereik met deze filters.</p>
