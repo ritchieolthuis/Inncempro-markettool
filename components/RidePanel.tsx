@@ -189,19 +189,33 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
   // iets ziet en voorstellen er automatisch bij komen zodra je een startpunt kiest.
   useEffect(() => {
     if (!mapDivRef.current || mapRef.current) return;
-    mapRef.current = L.map(mapDivRef.current, { preferCanvas: true }).setView([52.1326, 5.2913], 7);
-    const googleMapsApiKey = 'AIzaSyDtsaBhb-Uq3xWvqE6mnmv3sXYM3dM3TUY';
-    L.tileLayer(`https://mt1.google.com/vt/lyrs=r&x={x}&y={y}&z={z}&scale=2&key=${googleMapsApiKey}`, {
-      attribution: '© Google Maps', maxZoom: 20, minZoom: 1, tileSize: 256,
-    }).addTo(mapRef.current);
-    markersLayerRef.current = L.layerGroup().addTo(mapRef.current);
+    // React 18 StrictMode (aan in dit project) mount elke effect twee keer (mount->cleanup->
+    // mount) om bugs bloot te leggen. Leaflet zet een interne `_leaflet_id` op de container-DOM-
+    // node; blijft die na de eerste cleanup onverhoopt hangen, dan gooit de TWEEDE L.map()-
+    // aanroep "Map container is already initialized" — een fout die nergens zichtbaar wordt
+    // voor de gebruiker (geen console open), waarna mapRef.current voorgoed null blijft en de
+    // kaart voor de rest van de sessie leeg oogt. Expliciet opruimen + try/catch met logging
+    // voorkomt dit en maakt een eventuele andere oorzaak voortaan zichtbaar in de console.
+    delete (mapDivRef.current as any)._leaflet_id;
+    let map: L.Map;
+    try {
+      map = L.map(mapDivRef.current, { preferCanvas: true }).setView([52.1326, 5.2913], 7);
+      mapRef.current = map;
+      const googleMapsApiKey = 'AIzaSyDtsaBhb-Uq3xWvqE6mnmv3sXYM3dM3TUY';
+      L.tileLayer(`https://mt1.google.com/vt/lyrs=r&x={x}&y={y}&z={z}&scale=2&key=${googleMapsApiKey}`, {
+        attribution: '© Google Maps', maxZoom: 20, minZoom: 1, tileSize: 256,
+      }).addTo(map);
+      markersLayerRef.current = L.layerGroup().addTo(map);
+    } catch (e) {
+      console.error('[Onderweg] Kaart kon niet initialiseren:', e);
+      return;
+    }
 
     // Leaflet bakt de containergrootte in op het moment van L.map(...) — dit paneel verschijnt
     // pas net (net ná het inklappen van "Onderweg"), dus de browser heeft de layout soms nog
     // niet definitief berekend op dat exacte moment, wat een grijze/lege kaart oplevert totdat
     // er iets anders 'm dwingt te hertekenen. invalidateSize() forceert Leaflet de echte
     // afmetingen opnieuw te meten.
-    const map = mapRef.current;
     const raf = requestAnimationFrame(() => map.invalidateSize());
     const t = setTimeout(() => map.invalidateSize(), 200);
     const ro = new ResizeObserver(() => map.invalidateSize());
@@ -211,7 +225,8 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
       cancelAnimationFrame(raf);
       clearTimeout(t);
       ro.disconnect();
-      mapRef.current?.remove();
+      map.remove();
+      if (mapDivRef.current) delete (mapDivRef.current as any)._leaflet_id;
       mapRef.current = null;
     };
   }, []);
