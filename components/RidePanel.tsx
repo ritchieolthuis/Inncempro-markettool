@@ -106,6 +106,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const mapDivRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
+  const tileLayerRef = useRef<L.TileLayer | null>(null);
 
   const [startMode, setStartMode] = useState<'gps' | 'search'>('gps');
   const [startQuery, setStartQuery] = useState('');
@@ -225,9 +226,16 @@ const RidePanel: React.FC<RidePanelProps> = ({
       map = L.map(mapDivRef.current, { preferCanvas: true }).setView([52.1326, 5.2913], 7);
       mapRef.current = map;
       const googleMapsApiKey = 'AIzaSyDtsaBhb-Uq3xWvqE6mnmv3sXYM3dM3TUY';
-      L.tileLayer(`https://mt1.google.com/vt/lyrs=r&x={x}&y={y}&z={z}&scale=2&key=${googleMapsApiKey}`, {
+      const tileLayer = L.tileLayer(`https://mt1.google.com/vt/lyrs=r&x={x}&y={y}&z={z}&scale=2&key=${googleMapsApiKey}`, {
         attribution: '© Google Maps', maxZoom: 20, minZoom: 1, tileSize: 256,
       }).addTo(map);
+      tileLayerRef.current = tileLayer;
+      // Zichtbaar maken in de console als Google's tegel-server een tegel weigert (bv.
+      // rate-limit/quota) — zonder dit faalt een tegel stil en zie je alleen een grijs vlak
+      // zonder enige aanwijzing waarom.
+      tileLayer.on('tileerror', (e: any) => {
+        console.error('[Onderweg] Kaarttegel kon niet laden:', e?.tile?.src || e);
+      });
       markersLayerRef.current = L.layerGroup().addTo(map);
     } catch (e) {
       console.error('[Onderweg] Kaart kon niet initialiseren:', e);
@@ -238,10 +246,13 @@ const RidePanel: React.FC<RidePanelProps> = ({
     // pas net (net ná het inklappen van "Onderweg"), dus de browser heeft de layout soms nog
     // niet definitief berekend op dat exacte moment, wat een grijze/lege kaart oplevert totdat
     // er iets anders 'm dwingt te hertekenen. invalidateSize() forceert Leaflet de echte
-    // afmetingen opnieuw te meten.
-    const raf = requestAnimationFrame(() => map.invalidateSize());
-    const t = setTimeout(() => map.invalidateSize(), 200);
-    const ro = new ResizeObserver(() => map.invalidateSize());
+    // afmetingen opnieuw te meten; redraw() dwingt de tegellaag daarna alle zichtbare tegels
+    // opnieuw op te vragen (invalidateSize alleen update soms niet elke nieuw-zichtbare tegel,
+    // vooral bij een grote, plotselinge sprong in grootte zoals in/uit fullscreen).
+    const resync = () => { map.invalidateSize(); tileLayerRef.current?.redraw(); };
+    const raf = requestAnimationFrame(resync);
+    const t = setTimeout(resync, 200);
+    const ro = new ResizeObserver(resync);
     ro.observe(mapDivRef.current);
 
     return () => {
@@ -251,6 +262,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
       map.remove();
       if (mapDivRef.current) delete (mapDivRef.current as any)._leaflet_id;
       mapRef.current = null;
+      tileLayerRef.current = null;
     };
   }, []);
 
@@ -310,13 +322,21 @@ const RidePanel: React.FC<RidePanelProps> = ({
     }
   }, [startCoords, startLabel, chain, suggestions]);
 
-  // Fullscreen togglet de containergrootte; Leaflet moet daarna opnieuw meten anders blijft de
-  // kaart op de oude (kleine of grote) afmeting hangen met grijze randen.
+  // Fullscreen togglet de containergrootte (klein <-> volledig scherm) in één keer, een veel
+  // grotere sprong dan de geleidelijke resizes die de ResizeObserver hierboven normaal opvangt.
+  // invalidateSize() alleen laat Leaflet soms geloven dat de zichtbare tegels nog kloppen
+  // terwijl de container inmiddels veel groter is — expliciet redraw() ná de her-meting dwingt
+  // de tegellaag alle nu-zichtbare tegels opnieuw op te vragen. Twee pogingen (vroeg + iets
+  // later) omdat de `fixed`+`flex`-layout in sommige browsers pas na een extra reflow z'n
+  // definitieve afmeting heeft.
   useEffect(() => {
     if (!mapRef.current) return;
     const map = mapRef.current;
-    const t = setTimeout(() => map.invalidateSize(), 60);
-    return () => clearTimeout(t);
+    const resync = () => { map.invalidateSize(); tileLayerRef.current?.redraw(); };
+    const raf = requestAnimationFrame(resync);
+    const t1 = setTimeout(resync, 120);
+    const t2 = setTimeout(resync, 400);
+    return () => { cancelAnimationFrame(raf); clearTimeout(t1); clearTimeout(t2); };
   }, [isFullscreen]);
 
   // Zelfde geolocation-opties als "Gebruik mijn locatie" bij Live Zoeken (useMyLocation in
