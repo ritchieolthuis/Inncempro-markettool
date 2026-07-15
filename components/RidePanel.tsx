@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus, GripVertical, ChevronUp, ChevronDown, Maximize2, Minimize2, Wand2, Repeat } from 'lucide-react';
 import { haversineKm, detectType, optimizeRoute, scoreInsertionCandidates } from '../utils/dagbezoek';
 import { getDrivingDistancesKm } from '../services/routingService';
@@ -158,6 +158,8 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const [suggestPage, setSuggestPage] = useState(1);
   const [suggestTotal, setSuggestTotal] = useState(0);
   const [filterTypes, setFilterTypes] = useState<Set<'architect' | 'bouwbedrijf' | 'aannemer' | 'materialen'>>(new Set());
+  const [filterSources, setFilterSources] = useState<Set<string>>(new Set());
+  const [sortMode, setSortMode] = useState<'afstand' | 'az'>('afstand');
   const [onlyUnvisited, setOnlyUnvisited] = useState(true);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [manualQuery, setManualQuery] = useState('');
@@ -176,6 +178,14 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const [replaceStopId, setReplaceStopId] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
+
+  // Beschikbare bronnen (bv. Bouwgarant, Architectenweb, BNA, ...) voor het bronfilter —
+  // afgeleid uit de echte data i.p.v. hardgecodeerd, zodat 'm altijd klopt met wat er is.
+  const availableSources = useMemo(() => {
+    const set = new Set<string>();
+    for (const b of allData) set.add(b.source || 'Onbekend');
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'nl'));
+  }, [allData]);
 
   const currentPosition = (): Coords | null => {
     if (chain.length > 0) return chain[chain.length - 1].coords;
@@ -198,6 +208,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
       const naam = (b.naam || '').toLowerCase().trim();
       if (!naam || inChain.has(naam)) continue;
       if (filterTypes.size > 0 && !filterTypes.has(detectType(b) as any)) continue;
+      if (filterSources.size > 0 && !filterSources.has(b.source || 'Onbekend')) continue;
       if (onlyUnvisited && isVisitedCompany(b)) continue;
       const coords = coordsFor(b, cityCoords);
       if (!coords) continue;
@@ -205,7 +216,13 @@ const RidePanel: React.FC<RidePanelProps> = ({
       if (hv > 75) continue; // ruime radius, scheelt duizenden onnodige berekeningen
       candidates.push({ bedrijf: b, coords, haversine: hv });
     }
-    candidates.sort((a, b) => a.haversine - b.haversine);
+    // A-Z sorteert alfabetisch; "op afstand" (standaard) sorteert dichtstbij eerst. De
+    // pagina-indeling volgt altijd deze volgorde, ook al verfijnt stap 2 hieronder de km's.
+    if (sortMode === 'az') {
+      candidates.sort((a, b) => (a.bedrijf.naam || '').localeCompare(b.bedrijf.naam || '', 'nl'));
+    } else {
+      candidates.sort((a, b) => a.haversine - b.haversine);
+    }
 
     const totalPages = Math.max(1, Math.ceil(candidates.length / suggestCount));
     const clampedPage = Math.min(Math.max(1, page), totalPages);
@@ -217,7 +234,9 @@ const RidePanel: React.FC<RidePanelProps> = ({
     // Stap 1 — meteen tonen op hemelsbrede afstand, geen wachttijd.
     setSuggestions(pageItems.map(c => ({ bedrijf: c.bedrijf, coords: c.coords, km: c.haversine, driving: false })));
 
-    // Stap 2 — op de achtergrond verfijnen met echte rijafstand, alleen voor deze pagina.
+    // Stap 2 — op de achtergrond verfijnen met echte rijafstand, alleen voor deze pagina. Bij
+    // A-Z blijft de alfabetische volgorde staan (alleen de getoonde km's worden nauwkeuriger);
+    // bij "op afstand" wordt de pagina daarna nog even op de nu bekende rijafstand herordend.
     setLoadingSuggestions(true);
     let driving: (number | null)[] = [];
     try {
@@ -233,7 +252,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
       km: driving[i] ?? c.haversine,
       driving: driving[i] != null,
     }));
-    withDistance.sort((a, b) => a.km - b.km);
+    if (sortMode === 'afstand') withDistance.sort((a, b) => a.km - b.km);
     setSuggestions(withDistance);
     setLoadingSuggestions(false);
   };
@@ -242,7 +261,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
     const pos = currentPosition();
     if (pos) computeSuggestions(pos, 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chain, filterTypes, onlyUnvisited, suggestCount, startCoords]);
+  }, [chain, filterTypes, filterSources, sortMode, onlyUnvisited, suggestCount, startCoords]);
 
   const goToSuggestPage = (page: number) => {
     const pos = currentPosition();
@@ -908,22 +927,54 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   );
                 })}
               </div>
-              <div className="flex items-center justify-between gap-4">
+              {/* Bronfilter (Bouwgarant, Architectenweb, BNA, ...) — alleen als er meer dan 1
+                  bron in de data zit, anders heeft filteren geen zin. */}
+              {availableSources.length > 1 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {availableSources.map(src => {
+                    const active = filterSources.has(src);
+                    return (
+                      <button
+                        key={src}
+                        onClick={() => setFilterSources(prev => { const next = new Set(prev); next.has(src) ? next.delete(src) : next.add(src); return next; })}
+                        className={`px-2.5 py-1 text-[10px] font-bold rounded-full border transition-colors ${active ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'}`}
+                      >
+                        {src}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-4 flex-wrap">
                 <label className="flex items-center gap-2 text-xs text-slate-600">
                   <input type="checkbox" checked={onlyUnvisited} onChange={e => setOnlyUnvisited(e.target.checked)} className="accent-[#E85E26]" />
                   Alleen nog niet bezocht
                 </label>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-slate-400">Per pagina:</span>
-                  {[10, 20].map(n => (
-                    <button
-                      key={n}
-                      onClick={() => setSuggestCount(n)}
-                      className={`px-2 py-1 text-[10px] font-bold rounded-sm border ${suggestCount === n ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}
-                    >
-                      {n}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-400">Sorteer:</span>
+                    {([['afstand', 'Dichtstbij'], ['az', 'A-Z']] as const).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        onClick={() => setSortMode(mode)}
+                        className={`px-2 py-1 text-[10px] font-bold rounded-sm border ${sortMode === mode ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-400">Per pagina:</span>
+                    {[10, 20].map(n => (
+                      <button
+                        key={n}
+                        onClick={() => setSuggestCount(n)}
+                        className={`px-2 py-1 text-[10px] font-bold rounded-sm border ${suggestCount === n ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -969,13 +1020,37 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   </div>
                 ))}
               </div>
-              {suggestTotal > suggestCount && (
-                <div className="flex items-center justify-center gap-3 mt-2 pt-2 border-t border-slate-100">
-                  <button onClick={() => goToSuggestPage(suggestPage - 1)} disabled={suggestPage <= 1} className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] disabled:opacity-30 disabled:text-slate-400 hover:underline">← Vorige</button>
-                  <span className="text-[10px] text-slate-400">Pagina {suggestPage} van {Math.max(1, Math.ceil(suggestTotal / suggestCount))}</span>
-                  <button onClick={() => goToSuggestPage(suggestPage + 1)} disabled={suggestPage >= Math.ceil(suggestTotal / suggestCount)} className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] disabled:opacity-30 disabled:text-slate-400 hover:underline">Volgende →</button>
-                </div>
-              )}
+              {suggestTotal > suggestCount && (() => {
+                const totalSuggestPages = Math.max(1, Math.ceil(suggestTotal / suggestCount));
+                return (
+                  <div className="flex items-center justify-center gap-3 mt-2 pt-2 border-t border-slate-100">
+                    <button onClick={() => goToSuggestPage(suggestPage - 1)} disabled={suggestPage <= 1} className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] disabled:opacity-30 disabled:text-slate-400 hover:underline">← Vorige</button>
+                    <span className="text-[10px] text-slate-400">Pagina {suggestPage} van {totalSuggestPages}</span>
+                    <button onClick={() => goToSuggestPage(suggestPage + 1)} disabled={suggestPage >= totalSuggestPages} className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] disabled:opacity-30 disabled:text-slate-400 hover:underline">Volgende →</button>
+                    {/* Direct naar een paginanummer springen (bv. "12"), zelfde patroon als de
+                        Bedrijvendatabase-paginering. */}
+                    <form
+                      onSubmit={e => {
+                        e.preventDefault();
+                        const v = parseInt((e.currentTarget.elements.namedItem('spg') as HTMLInputElement).value, 10);
+                        if (v >= 1 && v <= totalSuggestPages) goToSuggestPage(v);
+                      }}
+                      className="flex items-center gap-1"
+                    >
+                      <input
+                        name="spg"
+                        type="number"
+                        min={1}
+                        max={totalSuggestPages}
+                        defaultValue={suggestPage}
+                        key={suggestPage}
+                        placeholder="pag."
+                        className="w-12 text-center border border-slate-300 text-[10px] py-1 rounded-sm focus:outline-none focus:border-[#009FE3]"
+                      />
+                    </form>
+                  </div>
+                );
+              })()}
 
               {/* Handmatig toevoegen: een bedrijf uit de database, OF een tussenstop op
                   plaatsnaam (bv. "Apeldoorn" tussen Nijmegen en Deventer). De plaats-optie
