@@ -185,6 +185,10 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const [editStartQuery, setEditStartQuery] = useState('');
 
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  // Zoekstraal — zelfde sleepbare "Straal"-slider als Live Zoeken (0 tot max), i.p.v. een vaste
+  // 75 km harde grens. Bepaalt hoeveel bedrijven er ÜBERHAUPT in de resultaten (en dus de
+  // paginering) terechtkomen.
+  const [radiusKm, setRadiusKm] = useState(75);
   // Aantal per pagina (10 of 20) — beperkt hoeveel er tegelijk op de kaart/lijst komt, maar
   // niet meer het totaal: alle bedrijven binnen bereik zijn bereikbaar via de paginering
   // hieronder, net als bij Live Zoeken.
@@ -247,7 +251,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
       const coords = coordsFor(b, cityCoords);
       if (!coords) continue;
       const hv = haversineKm(from.lat, from.lng, coords.lat, coords.lng);
-      if (hv > 75) continue; // ruime radius, scheelt duizenden onnodige berekeningen
+      if (hv > radiusKm) continue;
       candidates.push({ bedrijf: b, coords, haversine: hv });
     }
     // A-Z sorteert alfabetisch; "op afstand" (standaard) sorteert dichtstbij eerst. De
@@ -295,7 +299,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
     const pos = currentPosition();
     if (pos) computeSuggestions(pos, 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chain, filterTypes, filterSources, sortMode, onlyUnvisited, suggestCount, startCoords]);
+  }, [chain, filterTypes, filterSources, sortMode, onlyUnvisited, suggestCount, radiusKm, startCoords]);
 
   const goToSuggestPage = (page: number) => {
     const pos = currentPosition();
@@ -969,6 +973,21 @@ const RidePanel: React.FC<RidePanelProps> = ({
                     </button>
                   );
                 })}
+              </div>
+              {/* Zoekstraal — zelfde sleepbare "Straal"-slider als Live Zoeken, van 1 tot 150 km.
+                  Bepaalt hoeveel bedrijven er in de resultaten/paginering hieronder komen. */}
+              <div className="flex items-center gap-3 flex-wrap bg-slate-50 border border-slate-200 rounded-sm px-3 py-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex-shrink-0">Straal</span>
+                <input
+                  type="range"
+                  min={5}
+                  max={150}
+                  step={5}
+                  value={radiusKm}
+                  onChange={e => setRadiusKm(Number(e.target.value))}
+                  className="flex-1 min-w-[100px] accent-[#009FE3] h-1.5"
+                />
+                <span className="text-xs font-bold text-[#009FE3] w-14 flex-shrink-0">{radiusKm} km</span>
               </div>
               {/* Bronfilter (Bouwgarant, Architectenweb, BNA, ...) — alleen als er meer dan 1
                   bron in de data zit, anders heeft filteren geen zin. */}
