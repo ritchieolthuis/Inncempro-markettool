@@ -41,6 +41,40 @@ function makePin(color: string, label: number | string) {
   });
 }
 
+const HOVER_ZOOM_MAX = 16;
+const isTouchDevice = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+
+// Exact dezelfde "hoe langer je erop blijft staan, hoe meer inzoomen"-hover als de Kaart-tab
+// (components/ClusterMapView.tsx) — bewust hergebruikt i.p.v. een eigen variant, zodat het
+// hier hetzelfde aanvoelt. Geleidelijk, niet in één sprong: eerst een korte wachttijd (voorkomt
+// zoomen terwijl de muis gewoon voorbijglijdt), dan één zoomniveau per keer zolang je blijft
+// staan. setZoomAround (niet setView/panTo) houdt het aangewezen punt op exact dezelfde
+// schermpositie terwijl er wordt ingezoomd. Uitgeschakeld op touch (geen "hover" op een
+// telefoon; tikken vuurt mouseover/click vlak na elkaar af, wat daar zou hinderen).
+function attachHoverZoom(layer: L.Marker | L.CircleMarker, map: L.Map, onHover?: () => void, onLeave?: () => void) {
+  if (isTouchDevice) return;
+  let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+  let zoomInterval: ReturnType<typeof setInterval> | null = null;
+  layer.on('mouseover', function () {
+    onHover?.();
+    layer.openPopup();
+    const latlng = layer.getLatLng();
+    hoverTimer = setTimeout(() => {
+      zoomInterval = setInterval(() => {
+        const z = map.getZoom();
+        if (z >= HOVER_ZOOM_MAX) { if (zoomInterval) clearInterval(zoomInterval); zoomInterval = null; return; }
+        map.setZoomAround(latlng, z + 1, { animate: true });
+      }, 900);
+    }, 400);
+  });
+  layer.on('mouseout', function () {
+    if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+    if (zoomInterval) { clearInterval(zoomInterval); zoomInterval = null; }
+    onLeave?.();
+    layer.closePopup();
+  });
+}
+
 interface RideStop {
   id: string;
   bedrijf: any;
@@ -344,19 +378,23 @@ const RidePanel: React.FC<RidePanelProps> = ({
     const bounds: L.LatLngExpression[] = [];
     const routeLine: L.LatLngExpression[] = [];
 
+    const map = mapRef.current;
+
     if (startCoords) {
       bounds.push([startCoords.lat, startCoords.lng]);
       routeLine.push([startCoords.lat, startCoords.lng]);
-      L.marker([startCoords.lat, startCoords.lng], { icon: makePin('#1e293b', 'S') })
+      const startMarker = L.marker([startCoords.lat, startCoords.lng], { icon: makePin('#1e293b', 'S') })
         .bindPopup(`<div style="font-family:system-ui;font-size:13px"><b>${startLabel || 'Startpunt'}</b></div>`)
         .addTo(markersLayerRef.current);
+      attachHoverZoom(startMarker, map);
     }
 
     chain.forEach((s, i) => {
       routeLine.push([s.coords.lat, s.coords.lng]);
-      L.marker([s.coords.lat, s.coords.lng], { icon: makePin('#E85E26', i + 1) })
+      const stopMarker = L.marker([s.coords.lat, s.coords.lng], { icon: makePin('#E85E26', i + 1) })
         .bindPopup(popupHtml(s.bedrijf, `Stop ${i + 1} van de route`))
         .addTo(markersLayerRef.current!);
+      attachHoverZoom(stopMarker, map);
       bounds.push([s.coords.lat, s.coords.lng]);
     });
 
@@ -368,15 +406,20 @@ const RidePanel: React.FC<RidePanelProps> = ({
 
     // Zelfde tikstraal-verruiming voor aanraakschermen als de Kaart-tab (ClusterMapView) —
     // een bolletje van een paar pixels is op een telefoon vrijwel onmogelijk precies te raken.
-    const isTouchDevice = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
     const suggestionRadius = isTouchDevice ? 11 : 6;
 
     suggestions.forEach(s => {
-      L.circleMarker([s.coords.lat, s.coords.lng], {
+      const bolletje = L.circleMarker([s.coords.lat, s.coords.lng], {
         radius: suggestionRadius, color: '#fff', weight: 1.5, fillColor: '#94a3b8', fillOpacity: 0.9, interactive: true,
       })
         .bindPopup(popupHtml(s.bedrijf, `${s.km.toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`))
         .addTo(markersLayerRef.current!);
+      // Zelfde hover-gedrag als de bolletjes op de Kaart-tab: even iets groter en geleidelijk
+      // inzoomen zolang de muis erop blijft staan.
+      attachHoverZoom(bolletje, map,
+        () => bolletje.setRadius(suggestionRadius + 3),
+        () => bolletje.setRadius(suggestionRadius),
+      );
       bounds.push([s.coords.lat, s.coords.lng]);
     });
 
