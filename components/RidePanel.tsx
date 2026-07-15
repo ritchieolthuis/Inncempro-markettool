@@ -51,13 +51,19 @@ const isTouchDevice = typeof window !== 'undefined' && window.matchMedia('(point
 // staan. setZoomAround (niet setView/panTo) houdt het aangewezen punt op exact dezelfde
 // schermpositie terwijl er wordt ingezoomd. Uitgeschakeld op touch (geen "hover" op een
 // telefoon; tikken vuurt mouseover/click vlak na elkaar af, wat daar zou hinderen).
+//
+// BEWUST GEEN openPopup() hier (in tegenstelling tot ClusterMapView): op de smalle Onderweg-
+// kaart (relatief kort, en de popup hier heeft 3 knoppen dus is breder) botste Leaflet's eigen
+// "pan popup in beeld"-gedrag (autoPan, standaard aan) elke hover met de lopende zoom-timer —
+// bij iedere hover sprong de kaart daardoor naar een hoek i.p.v. rustig in te zoomen. Een klik/
+// tik opent de popup nog gewoon (Leaflet's eigen standaardgedrag, hier niet aangeraakt); hover
+// doet nu uitsluitend het geleidelijke inzoomen.
 function attachHoverZoom(layer: L.Marker | L.CircleMarker, map: L.Map, onHover?: () => void, onLeave?: () => void) {
   if (isTouchDevice) return;
   let hoverTimer: ReturnType<typeof setTimeout> | null = null;
   let zoomInterval: ReturnType<typeof setInterval> | null = null;
   layer.on('mouseover', function () {
     onHover?.();
-    layer.openPopup();
     const latlng = layer.getLatLng();
     hoverTimer = setTimeout(() => {
       zoomInterval = setInterval(() => {
@@ -71,7 +77,9 @@ function attachHoverZoom(layer: L.Marker | L.CircleMarker, map: L.Map, onHover?:
     if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
     if (zoomInterval) { clearInterval(zoomInterval); zoomInterval = null; }
     onLeave?.();
-    layer.closePopup();
+    // Geen closePopup() hier: er wordt niet meer op hover geopend, dus dit zou anders een
+    // popup die je zelf via een klik/tik open hebt gezet, weer dichtgooien zodra de muis er
+    // toevallig overheen beweegt.
   });
 }
 
@@ -383,12 +391,16 @@ const RidePanel: React.FC<RidePanelProps> = ({
     const routeLine: L.LatLngExpression[] = [];
 
     const map = mapRef.current;
+    // Popup blijft binnen de (relatief smalle/korte) kaart, met genoeg marge tot de rand — zonder
+    // dit kon een popup dicht bij de rand deels buiten de kaart-container vallen (afgekapte
+    // tekst), vooral op telefoon waar de kaart maar een fractie van het scherm beslaat.
+    const popupOpts: L.PopupOptions = { maxWidth: 240, autoPanPadding: [16, 16] };
 
     if (startCoords) {
       bounds.push([startCoords.lat, startCoords.lng]);
       routeLine.push([startCoords.lat, startCoords.lng]);
       const startMarker = L.marker([startCoords.lat, startCoords.lng], { icon: makePin('#1e293b', 'S') })
-        .bindPopup(`<div style="font-family:system-ui;font-size:13px"><b>${startLabel || 'Startpunt'}</b></div>`)
+        .bindPopup(`<div style="font-family:system-ui;font-size:13px"><b>${startLabel || 'Startpunt'}</b></div>`, popupOpts)
         .addTo(markersLayerRef.current);
       attachHoverZoom(startMarker, map);
     }
@@ -396,7 +408,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
     chain.forEach((s, i) => {
       routeLine.push([s.coords.lat, s.coords.lng]);
       const stopMarker = L.marker([s.coords.lat, s.coords.lng], { icon: makePin('#E85E26', i + 1) })
-        .bindPopup(popupHtml(s.bedrijf, `Stop ${i + 1} van de route`))
+        .bindPopup(popupHtml(s.bedrijf, `Stop ${i + 1} van de route`), popupOpts)
         .addTo(markersLayerRef.current!);
       attachHoverZoom(stopMarker, map);
       bounds.push([s.coords.lat, s.coords.lng]);
@@ -416,7 +428,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
       const bolletje = L.circleMarker([s.coords.lat, s.coords.lng], {
         radius: suggestionRadius, color: '#fff', weight: 1.5, fillColor: '#94a3b8', fillOpacity: 0.9, interactive: true,
       })
-        .bindPopup(popupHtml(s.bedrijf, `${s.km.toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`))
+        .bindPopup(popupHtml(s.bedrijf, `${s.km.toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`), popupOpts)
         .addTo(markersLayerRef.current!);
       // Zelfde hover-gedrag als de bolletjes op de Kaart-tab: even iets groter en geleidelijk
       // inzoomen zolang de muis erop blijft staan.
@@ -775,7 +787,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
             omdat mapDivRef.current undefined is. In fullscreen wordt de wrapper een vaste
             overlay over het hele scherm (zelfde idee als de Route Kaart bij Lijsten). */}
         <div className={isFullscreen ? 'fixed inset-0 z-[9999] bg-white flex flex-col' : 'relative border-b border-slate-100'}>
-          <div ref={mapDivRef} className={isFullscreen ? 'flex-1 w-full bg-slate-200' : 'w-full h-56 sm:h-72 bg-slate-200'} />
+          <div ref={mapDivRef} className={isFullscreen ? 'flex-1 w-full bg-slate-200' : 'w-full h-72 sm:h-80 bg-slate-200'} />
           <button
             onClick={() => setIsFullscreen(v => !v)}
             title={isFullscreen ? 'Verklein kaart' : 'Kaart volledig scherm'}
