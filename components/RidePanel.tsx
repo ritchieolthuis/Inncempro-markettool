@@ -151,7 +151,12 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const [editStartQuery, setEditStartQuery] = useState('');
 
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [suggestCount, setSuggestCount] = useState(8);
+  // Aantal per pagina (10 of 20) — beperkt hoeveel er tegelijk op de kaart/lijst komt, maar
+  // niet meer het totaal: alle bedrijven binnen bereik zijn bereikbaar via de paginering
+  // hieronder, net als bij Live Zoeken.
+  const [suggestCount, setSuggestCount] = useState(10);
+  const [suggestPage, setSuggestPage] = useState(1);
+  const [suggestTotal, setSuggestTotal] = useState(0);
   const [filterTypes, setFilterTypes] = useState<Set<'architect' | 'bouwbedrijf' | 'aannemer' | 'materialen'>>(new Set());
   const [onlyUnvisited, setOnlyUnvisited] = useState(true);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
@@ -173,11 +178,14 @@ const RidePanel: React.FC<RidePanelProps> = ({
     return startCoords;
   };
 
-  // Zoekt de N dichtstbijzijnde nog-niet-in-de-rit-zittende bedrijven vanaf de huidige positie.
-  // Toont eerst meteen de hemelsbrede sortering (instant, geen netwerk nodig) en verfijnt die
-  // daarna op de achtergrond met echte rijafstand (gratis publieke OSRM-server) — zo hoef je
-  // nooit op een lege/ladende lijst te wachten, en de volgorde klopt binnen een paar tellen.
-  const computeSuggestions = async (from: Coords) => {
+  // Zoekt ALLE nog-niet-in-de-rit-zittende bedrijven binnen bereik vanaf de huidige positie
+  // (niet meer alleen de eerste N) en toont die gepagineerd — net als Live Zoeken, maar dan op
+  // afstand gesorteerd. `page` kiest welk blok van `suggestCount` (10/20) je ziet; de kaart/
+  // lijst plot alleen de huidige pagina, zodat het nooit vol/complex oogt. Toont eerst meteen
+  // de hemelsbrede sortering (instant, geen netwerk nodig) en verfijnt die pagina daarna op de
+  // achtergrond met echte rijafstand (gratis publieke OSRM-server, alleen voor de zichtbare
+  // pagina — scheelt onnodige aanvragen voor bedrijven die je toch niet ziet).
+  const computeSuggestions = async (from: Coords, page: number) => {
     const myRequestId = ++requestIdRef.current;
     const inChain = new Set(chain.map(s => (s.bedrijf.naam || '').toLowerCase().trim()));
 
@@ -190,46 +198,52 @@ const RidePanel: React.FC<RidePanelProps> = ({
       const coords = coordsFor(b, cityCoords);
       if (!coords) continue;
       const hv = haversineKm(from.lat, from.lng, coords.lat, coords.lng);
-      if (hv > 75) continue; // ruime radius, scheelt duizenden onnodige OSRM-aanvragen
+      if (hv > 75) continue; // ruime radius, scheelt duizenden onnodige berekeningen
       candidates.push({ bedrijf: b, coords, haversine: hv });
     }
     candidates.sort((a, b) => a.haversine - b.haversine);
 
-    // Stap 1 — meteen tonen op hemelsbrede afstand, geen wachttijd.
-    const instant: Suggestion[] = candidates.slice(0, suggestCount).map(c => ({
-      bedrijf: c.bedrijf, coords: c.coords, km: c.haversine, driving: false,
-    }));
-    setSuggestions(instant);
+    const totalPages = Math.max(1, Math.ceil(candidates.length / suggestCount));
+    const clampedPage = Math.min(Math.max(1, page), totalPages);
+    const pageItems = candidates.slice((clampedPage - 1) * suggestCount, clampedPage * suggestCount);
 
-    // Stap 2 — op de achtergrond verfijnen met echte rijafstand. Kleinere shortlist (25 i.p.v.
-    // eerder 40) voor een snellere OSRM-respons; genoeg marge om de top-N na herordening nog
-    // te kloppen.
+    setSuggestTotal(candidates.length);
+    setSuggestPage(clampedPage);
+
+    // Stap 1 — meteen tonen op hemelsbrede afstand, geen wachttijd.
+    setSuggestions(pageItems.map(c => ({ bedrijf: c.bedrijf, coords: c.coords, km: c.haversine, driving: false })));
+
+    // Stap 2 — op de achtergrond verfijnen met echte rijafstand, alleen voor deze pagina.
     setLoadingSuggestions(true);
-    const shortlist = candidates.slice(0, 25);
     let driving: (number | null)[] = [];
     try {
-      driving = await getDrivingDistancesKm(from, shortlist.map(c => c.coords));
+      driving = await getDrivingDistancesKm(from, pageItems.map(c => c.coords));
     } catch {
-      driving = shortlist.map(() => null);
+      driving = pageItems.map(() => null);
     }
     if (myRequestId !== requestIdRef.current) return; // een nieuwere aanvraag heeft dit al ingehaald
 
-    const withDistance: Suggestion[] = shortlist.map((c, i) => ({
+    const withDistance: Suggestion[] = pageItems.map((c, i) => ({
       bedrijf: c.bedrijf,
       coords: c.coords,
       km: driving[i] ?? c.haversine,
       driving: driving[i] != null,
     }));
     withDistance.sort((a, b) => a.km - b.km);
-    setSuggestions(withDistance.slice(0, suggestCount));
+    setSuggestions(withDistance);
     setLoadingSuggestions(false);
   };
 
   useEffect(() => {
     const pos = currentPosition();
-    if (pos) computeSuggestions(pos);
+    if (pos) computeSuggestions(pos, 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chain, filterTypes, onlyUnvisited, suggestCount, startCoords]);
+
+  const goToSuggestPage = (page: number) => {
+    const pos = currentPosition();
+    if (pos) computeSuggestions(pos, page);
+  };
 
   // "Open in database" + "Live Zoeken" vanuit een kaart-popup — zelfde patroon als de Kaart-tab
   // (window._inncemMapNav daar), maar onder eigen namen zodat ze elkaar niet overschrijven
@@ -899,28 +913,37 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   Alleen nog niet bezocht
                 </label>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-slate-400">Voorstellen:</span>
-                  <input type="range" min={1} max={20} value={suggestCount} onChange={e => setSuggestCount(Number(e.target.value))} className="w-20 accent-[#009FE3]" />
-                  <span className="text-xs font-bold text-slate-700 w-5">{suggestCount}</span>
+                  <span className="text-[10px] text-slate-400">Per pagina:</span>
+                  {[10, 20].map(n => (
+                    <button
+                      key={n}
+                      onClick={() => setSuggestCount(n)}
+                      className={`px-2 py-1 text-[10px] font-bold rounded-sm border ${suggestCount === n ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}
+                    >
+                      {n}
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
 
-            {/* Voorstellen */}
+            {/* Voorstellen: gepagineerd door ALLE bedrijven binnen bereik (net als Live Zoeken),
+                op afstand gesorteerd — niet meer afgekapt tot alleen de eerste N. */}
             <div className="px-6 py-4">
               <div className="flex items-center justify-between mb-2 gap-2">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   Dichtstbijzijnde vanaf {chain.length > 0 ? chain[chain.length - 1].bedrijf.naam : (startLabel || 'startpunt')}
+                  {suggestTotal > 0 && <span className="normal-case font-normal text-slate-400"> — {suggestTotal} binnen bereik</span>}
                 </span>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {loadingSuggestions && <Loader2 className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
                   {suggestions.length > 0 && (
                     <button
                       onClick={advanceAll}
-                      title="Alle onderstaande voorstellen toevoegen aan de route"
+                      title="Alle voorstellen op deze pagina toevoegen aan de route"
                       className="text-[10px] font-bold uppercase tracking-wider text-green-600 hover:text-green-700 hover:underline flex items-center gap-1"
                     >
-                      <Check className="w-3 h-3" /> Accepteer alles ({suggestions.length})
+                      <Check className="w-3 h-3" /> Accepteer pagina ({suggestions.length})
                     </button>
                   )}
                 </div>
@@ -931,15 +954,27 @@ const RidePanel: React.FC<RidePanelProps> = ({
               <div className="space-y-1.5 max-h-80 overflow-y-auto">
                 {suggestions.map((s, i) => (
                   <div key={i} className="flex items-center gap-2 p-2.5 border border-slate-100 rounded-sm hover:border-[#009FE3]/40 transition-colors">
-                    <button onClick={() => advanceTo(s)} className="flex-1 min-w-0 text-left">
-                      <p className="text-sm font-semibold text-slate-800 truncate">{s.bedrijf.naam}</p>
-                      <p className="text-[10px] text-slate-400">{s.bedrijf.stad} · {s.km.toFixed(1)} km{s.driving ? ' rijden' : ' (hemelsbreed)'}</p>
+                    {/* Klik op naam = open dit bedrijf in Live Zoeken (niet meteen toevoegen aan
+                        de route) — accepteren/overslaan gebeurt expliciet via de knoppen ernaast. */}
+                    <button onClick={() => onOpenInLiveZoeken?.(s.bedrijf.naam)} title="Open in Live Zoeken" className="flex-1 min-w-0 text-left flex items-center gap-1.5">
+                      <Search className="w-3 h-3 text-slate-300 flex-shrink-0" />
+                      <span className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-800 truncate">{s.bedrijf.naam}</p>
+                        <p className="text-[10px] text-slate-400">{s.bedrijf.stad} · {s.km.toFixed(1)} km{s.driving ? ' rijden' : ' (hemelsbreed)'}</p>
+                      </span>
                     </button>
-                    <button onClick={() => advanceTo(s)} title="Dit is de volgende stop" className="p-1.5 rounded-full text-green-600 hover:bg-green-50 flex-shrink-0"><Check className="w-4 h-4" /></button>
+                    <button onClick={() => advanceTo(s)} title="Accepteer als volgende stop" className="p-1.5 rounded-full text-green-600 hover:bg-green-50 flex-shrink-0"><Check className="w-4 h-4" /></button>
                     <button onClick={() => dismissSuggestion(s.bedrijf)} title="Overslaan" className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 flex-shrink-0"><X className="w-4 h-4" /></button>
                   </div>
                 ))}
               </div>
+              {suggestTotal > suggestCount && (
+                <div className="flex items-center justify-center gap-3 mt-2 pt-2 border-t border-slate-100">
+                  <button onClick={() => goToSuggestPage(suggestPage - 1)} disabled={suggestPage <= 1} className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] disabled:opacity-30 disabled:text-slate-400 hover:underline">← Vorige</button>
+                  <span className="text-[10px] text-slate-400">Pagina {suggestPage} van {Math.max(1, Math.ceil(suggestTotal / suggestCount))}</span>
+                  <button onClick={() => goToSuggestPage(suggestPage + 1)} disabled={suggestPage >= Math.ceil(suggestTotal / suggestCount)} className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] disabled:opacity-30 disabled:text-slate-400 hover:underline">Volgende →</button>
+                </div>
+              )}
 
               {/* Handmatig toevoegen: een bedrijf uit de database, OF een tussenstop op
                   plaatsnaam (bv. "Apeldoorn" tussen Nijmegen en Deventer). De plaats-optie
