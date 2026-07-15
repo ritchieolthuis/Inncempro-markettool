@@ -168,6 +168,10 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Verhoogt telkens als de kaart volledig opnieuw opgebouwd wordt (fullscreen-toggle) — laat
+  // de marker-herbouw-effect hieronder weten dat het de markers op de NIEUWE kaartinstantie
+  // opnieuw moet tekenen.
+  const [mapGeneration, setMapGeneration] = useState(0);
   // Welke stop wordt nu vervangen (toont buurt-suggesties); null = geen.
   const [replaceStopId, setReplaceStopId] = useState<string | null>(null);
 
@@ -254,22 +258,27 @@ const RidePanel: React.FC<RidePanelProps> = ({
     return () => { delete (window as any)._inncemRideNav; delete (window as any)._inncemRideLiveZoeken; };
   }, [onOpenInDatabase, onOpenInLiveZoeken]);
 
-  // De kaart initialiseert zodra dit paneel opengeklapt wordt (niet pas na het kiezen van een
-  // startpunt) — zelfde Nederland-overzicht en Google-tegels als de Kaart-tab, zodat je meteen
-  // iets ziet en voorstellen er automatisch bij komen zodra je een startpunt kiest.
-  useEffect(() => {
-    if (!mapDivRef.current || mapRef.current) return;
+  // Bouwt de kaart (tegels + markerlaag) helemaal opnieuw op in de huidige mapDivRef-
+  // container. Gebruikt bij het openklappen van dit paneel ÉN bij elke fullscreen-toggle:
+  // Leaflet's eigen resize-hersync (invalidateSize + tileLayer.redraw) bleek onbetrouwbaar bij
+  // de grote, plotselinge sprong in containergrootte van/naar fullscreen — de tegellaag bleef
+  // dan leeg terwijl markers/popups gewoon zichtbaar bleven. Volledig opnieuw opbouwen tegen de
+  // dán-actuele containergrootte is een fractie trager (korte herlaad-flits) maar betrouwbaar.
+  const buildMap = () => {
+    if (!mapDivRef.current) return;
+    if (mapRef.current) {
+      mapRef.current.remove();
+      mapRef.current = null;
+      tileLayerRef.current = null;
+    }
     // React 18 StrictMode (aan in dit project) mount elke effect twee keer (mount->cleanup->
     // mount) om bugs bloot te leggen. Leaflet zet een interne `_leaflet_id` op de container-DOM-
-    // node; blijft die na de eerste cleanup onverhoopt hangen, dan gooit de TWEEDE L.map()-
-    // aanroep "Map container is already initialized" — een fout die nergens zichtbaar wordt
-    // voor de gebruiker (geen console open), waarna mapRef.current voorgoed null blijft en de
-    // kaart voor de rest van de sessie leeg oogt. Expliciet opruimen + try/catch met logging
-    // voorkomt dit en maakt een eventuele andere oorzaak voortaan zichtbaar in de console.
+    // node; blijft die onverhoopt hangen, dan gooit de volgende L.map()-aanroep "Map container
+    // is already initialized" — een fout die nergens zichtbaar wordt voor de gebruiker (geen
+    // console open), waarna mapRef.current voorgoed null blijft en de kaart leeg oogt.
     delete (mapDivRef.current as any)._leaflet_id;
-    let map: L.Map;
     try {
-      map = L.map(mapDivRef.current, { preferCanvas: true }).setView([52.1326, 5.2913], 7);
+      const map = L.map(mapDivRef.current, { preferCanvas: true }).setView([52.1326, 5.2913], 7);
       mapRef.current = map;
       const googleMapsApiKey = 'AIzaSyDtsaBhb-Uq3xWvqE6mnmv3sXYM3dM3TUY';
       const tileLayer = L.tileLayer(`https://mt1.google.com/vt/lyrs=r&x={x}&y={y}&z={z}&scale=2&key=${googleMapsApiKey}`, {
@@ -283,33 +292,27 @@ const RidePanel: React.FC<RidePanelProps> = ({
         console.error('[Onderweg] Kaarttegel kon niet laden:', e?.tile?.src || e);
       });
       markersLayerRef.current = L.layerGroup().addTo(map);
+      const raf = requestAnimationFrame(() => map.invalidateSize());
+      setTimeout(() => map.invalidateSize(), 200);
+      return raf;
     } catch (e) {
       console.error('[Onderweg] Kaart kon niet initialiseren:', e);
-      return;
     }
+  };
 
-    // Leaflet bakt de containergrootte in op het moment van L.map(...) — dit paneel verschijnt
-    // pas net (net ná het inklappen van "Onderweg"), dus de browser heeft de layout soms nog
-    // niet definitief berekend op dat exacte moment, wat een grijze/lege kaart oplevert totdat
-    // er iets anders 'm dwingt te hertekenen. invalidateSize() forceert Leaflet de echte
-    // afmetingen opnieuw te meten; redraw() dwingt de tegellaag daarna alle zichtbare tegels
-    // opnieuw op te vragen (invalidateSize alleen update soms niet elke nieuw-zichtbare tegel,
-    // vooral bij een grote, plotselinge sprong in grootte zoals in/uit fullscreen).
-    const resync = () => { map.invalidateSize(); tileLayerRef.current?.redraw(); };
-    const raf = requestAnimationFrame(resync);
-    const t = setTimeout(resync, 200);
-    const ro = new ResizeObserver(resync);
-    ro.observe(mapDivRef.current);
-
+  useEffect(() => {
+    const raf = buildMap();
+    const ro = new ResizeObserver(() => mapRef.current?.invalidateSize());
+    if (mapDivRef.current) ro.observe(mapDivRef.current);
     return () => {
-      cancelAnimationFrame(raf);
-      clearTimeout(t);
+      if (raf) cancelAnimationFrame(raf);
       ro.disconnect();
-      map.remove();
+      mapRef.current?.remove();
       if (mapDivRef.current) delete (mapDivRef.current as any)._leaflet_id;
       mapRef.current = null;
       tileLayerRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Markers + route-lijn herbouwen zodra startpunt, route of voorstellen wijzigen. Consistent
@@ -366,23 +369,21 @@ const RidePanel: React.FC<RidePanelProps> = ({
       mapRef.current.invalidateSize();
       mapRef.current.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [40, 40], maxZoom: 14 });
     }
-  }, [startCoords, startLabel, chain, suggestions]);
+  }, [startCoords, startLabel, chain, suggestions, mapGeneration]);
 
   // Fullscreen togglet de containergrootte (klein <-> volledig scherm) in één keer, een veel
-  // grotere sprong dan de geleidelijke resizes die de ResizeObserver hierboven normaal opvangt.
-  // invalidateSize() alleen laat Leaflet soms geloven dat de zichtbare tegels nog kloppen
-  // terwijl de container inmiddels veel groter is — expliciet redraw() ná de her-meting dwingt
-  // de tegellaag alle nu-zichtbare tegels opnieuw op te vragen. Twee pogingen (vroeg + iets
-  // later) omdat de `fixed`+`flex`-layout in sommige browsers pas na een extra reflow z'n
-  // definitieve afmeting heeft.
+  // grotere sprong dan de geleidelijke resizes die de ResizeObserver hierboven normaal opvangt
+  // — invalidateSize()/redraw() bleken dat niet betrouwbaar bij te benen (tegels bleven leeg
+  // terwijl markers gewoon werkten). Bouwt de kaart daarom volledig opnieuw op (buildMap
+  // hierboven) tegen de nieuwe containergrootte, en telt mapGeneration op zodat de marker-
+  // herbouw-effect de route/voorstellen opnieuw op de NIEUWE kaartinstantie tekent. Skipt de
+  // allereerste render (die kaart is net al gebouwd door de mount-effect hierboven).
+  const didMountRef = useRef(false);
   useEffect(() => {
-    if (!mapRef.current) return;
-    const map = mapRef.current;
-    const resync = () => { map.invalidateSize(); tileLayerRef.current?.redraw(); };
-    const raf = requestAnimationFrame(resync);
-    const t1 = setTimeout(resync, 120);
-    const t2 = setTimeout(resync, 400);
-    return () => { cancelAnimationFrame(raf); clearTimeout(t1); clearTimeout(t2); };
+    if (!didMountRef.current) { didMountRef.current = true; return; }
+    buildMap();
+    setMapGeneration(g => g + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFullscreen]);
 
   // Zelfde geolocation-opties als "Gebruik mijn locatie" bij Live Zoeken (useMyLocation in
