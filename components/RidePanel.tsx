@@ -457,20 +457,28 @@ const RidePanel: React.FC<RidePanelProps> = ({
   // apparaten zonder GPS-chip (de meeste desktops/laptops) laat dat de opzoek regelmatig
   // mislukken of hangen i.p.v. netjes terugvallen op WiFi/IP-positionering — enableHighAccuracy:
   // false gebruikt diezelfde snellere, breder beschikbare methode die bij Live Zoeken al werkt.
+  // Kan ook aangeroepen worden als er al (een eerdere, evt. onnauwkeurige via-IP) startCoords
+  // staan — bv. via de "opnieuw via GPS"-knop hieronder, zodra het startpunt al gezet is. Reset
+  // daarom altijd expliciet, en herberekent de km's van een eventuele al opgebouwde route zodra
+  // de nieuwe locatie binnenkomt (anders blijven de afstanden op de OUDE locatie gebaseerd).
   const useMyLocation = () => {
     setStartError(null);
     setStartLoading(true);
     if (!navigator.geolocation) { setStartError('Locatiebepaling niet ondersteund door je browser.'); setStartLoading(false); return; }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setStartCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setStartCoords(coords);
         setStartLabel('Mijn locatie');
+        setChain(prev => recomputeKm(prev, coords));
         setStartLoading(false);
       },
       async (err) => {
         // Browser-locatie faalde (geweigerd, geen WiFi-scan mogelijk, timeout) — val terug op
         // een gratis IP-gebaseerde locatiedienst (stad-niveau, geen browserpermissie nodig)
-        // i.p.v. de gebruiker met een doodlopende foutmelding achter te laten.
+        // i.p.v. de gebruiker met een doodlopende foutmelding achter te laten. Duidelijk
+        // gelabeld "via IP" zodat je ziet dat dit minder precies is dan echte GPS, en met de
+        // knop hiernaast kun je op elk moment opnieuw een precieze GPS-poging doen.
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 5000);
@@ -478,8 +486,10 @@ const RidePanel: React.FC<RidePanelProps> = ({
           clearTimeout(timeout);
           const d = await r.json();
           if (d?.success !== false && typeof d?.latitude === 'number' && typeof d?.longitude === 'number') {
-            setStartCoords({ lat: d.latitude, lng: d.longitude });
+            const coords = { lat: d.latitude, lng: d.longitude };
+            setStartCoords(coords);
             setStartLabel(`Mijn locatie${d.city ? ` (${d.city}, via IP)` : ' (via IP)'}`);
+            setChain(prev => recomputeKm(prev, coords));
             setStartLoading(false);
             return;
           }
@@ -491,9 +501,13 @@ const RidePanel: React.FC<RidePanelProps> = ({
             : 'Kon je locatie niet bepalen. Probeer het opnieuw, of zoek handmatig.'
         );
       },
-      // maximumAge: 60s — zelfde versnelling als bij Live Zoeken: een al bekende recente
-      // locatie mag hergebruikt worden i.p.v. altijd een volledig verse opzoek te forceren.
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+      // enableHighAccuracy: false — bewust ZO gelaten (niet terug naar true): eerder deze sessie
+      // bleek true juist de oorzaak van "Kon je locatie niet bepalen"-fouten op apparaten zonder
+      // GPS-chip (de meeste desktops/laptops), opgelost door dezelfde methode als Live Zoeken te
+      // gebruiken. maximumAge: 0 (i.p.v. 60s) forceert wél een verse meting i.p.v. een gecachete
+      // positie terug te geven — belangrijk specifiek voor de "opnieuw via GPS"-knop hieronder,
+      // die je juist gebruikt omdat de vorige (via-IP) locatie niet klopte.
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 }
     );
   };
 
@@ -874,6 +888,12 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   ) : (
                     <>
                       <span className="text-slate-700 font-medium truncate flex-1">{startLabel || 'Startpunt'}</span>
+                      {/* Opnieuw via GPS: nodig zodra het startpunt al gezet is (bv. een minder
+                          precieze via-IP locatie) — zonder deze knop was er geen manier meer om
+                          een verse GPS-poging te doen, alleen handmatig een adres typen. */}
+                      <button onClick={useMyLocation} disabled={startLoading} title="Opnieuw via GPS" className="text-slate-400 hover:text-[#E85E26] disabled:opacity-50 flex-shrink-0">
+                        {startLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Navigation className="w-3.5 h-3.5" />}
+                      </button>
                       <button onClick={() => { setEditStart(true); setEditStartQuery(''); }} title="Startlocatie aanpassen (exact adres)" className="text-slate-400 hover:text-[#009FE3] flex-shrink-0"><MapPin className="w-3.5 h-3.5" /></button>
                     </>
                   )}
