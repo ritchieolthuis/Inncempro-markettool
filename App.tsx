@@ -1840,6 +1840,12 @@ const App: React.FC = () => {
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'lists' | 'visits'>('search');
   const [showRidePanel, setShowRidePanel] = useState(false);
+  // Onderweg-route hier opgetild i.p.v. in RidePanel zelf, zodat de opgebouwde route blijft
+  // staan als je naar een ander tabblad gaat en terugkomt (RidePanel unmount dan wél, maar
+  // App niet). Blijft in-memory: leeg bij paginarefresh of als je 'm expliciet reset.
+  const [rideStartCoords, setRideStartCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [rideStartLabel, setRideStartLabel] = useState('');
+  const [rideChain, setRideChain] = useState<any[]>([]);
 
   // BATCH IMPORT
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -5112,6 +5118,13 @@ const App: React.FC = () => {
                         allData={activeData}
                         cityCoords={cityCoords as any}
                         isVisitedCompany={isVisitedCompany}
+                        startCoords={rideStartCoords}
+                        setStartCoords={setRideStartCoords}
+                        startLabel={rideStartLabel}
+                        setStartLabel={setRideStartLabel}
+                        chain={rideChain}
+                        setChain={setRideChain}
+                        liveLocationCoords={searchOriginCoords}
                         onOpenInDatabase={(naam) => { setDbSearch(naam); setDbPage(1); setViewMode('database'); }}
                         onOpenInLiveZoeken={(naam) => { setSelectedRegions([]); setSelectedTypes([]); setSelectedWerksoort([]); setSelectedContact([]); setRadiusKm(null); setCity(naam); setViewMode('search'); executeSearch(undefined, undefined, naam, null, null); }}
                         embedded

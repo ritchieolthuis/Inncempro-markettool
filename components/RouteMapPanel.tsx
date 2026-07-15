@@ -23,28 +23,6 @@ const ROUTES_KEY = 'inncempro_saved_routes';
 type Coords   = [number, number];
 type GeoCache = Record<string, Coords | null>;
 
-// Route optimization using Nearest Neighbor heuristic
-const optimizeRoute = async (stops: Array<{ lat: number; lng: number; name: string }>, startCoords: { lat: number; lng: number }) => {
-  if (stops.length <= 2) return stops;
-  const visited = [startCoords];
-  const remaining = [...stops];
-  const route = [];
-  while (remaining.length > 0) {
-    const current = visited[visited.length - 1];
-    let nearest = remaining[0];
-    let nearestDist = Math.sqrt(Math.pow(nearest.lat - current.lat, 2) + Math.pow(nearest.lng - current.lng, 2));
-    let nearestIdx = 0;
-    for (let i = 1; i < remaining.length; i++) {
-      const dist = Math.sqrt(Math.pow(remaining[i].lat - current.lat, 2) + Math.pow(remaining[i].lng - current.lng, 2));
-      if (dist < nearestDist) { nearest = remaining[i]; nearestDist = dist; nearestIdx = i; }
-    }
-    route.push(nearest);
-    visited.push(nearest);
-    remaining.splice(nearestIdx, 1);
-  }
-  return route;
-};
-
 type VerifyStatus = 'idle' | 'checking' | 'ok' | 'suspect' | 'not_found';
 interface AddressSuggestion {
   straat: string;

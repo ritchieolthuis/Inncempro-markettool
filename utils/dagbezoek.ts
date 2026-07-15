@@ -110,6 +110,32 @@ export function haversineKm(lat1: number, lon1: number, lat2: number, lon2: numb
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
+// Route-optimalisatie via de Nearest Neighbor-heuristiek: begint bij het startpunt en pakt
+// telkens de dichtstbijzijnde nog-niet-bezochte stop. Levert een korte, "logische" volgorde
+// i.p.v. kriskras. Gedeeld door RouteMapPanel (Lijsten-kaart) en RidePanel (Onderweg) zodat
+// beide exact hetzelfde gedrag houden.
+export function optimizeRoute<T extends { lat: number; lng: number }>(
+  stops: T[],
+  startCoords: { lat: number; lng: number },
+): T[] {
+  if (stops.length <= 2) return stops;
+  let current: { lat: number; lng: number } = startCoords;
+  const remaining = [...stops];
+  const route: T[] = [];
+  while (remaining.length > 0) {
+    let nearestIdx = 0;
+    let nearestDist = Math.hypot(remaining[0].lat - current.lat, remaining[0].lng - current.lng);
+    for (let i = 1; i < remaining.length; i++) {
+      const dist = Math.hypot(remaining[i].lat - current.lat, remaining[i].lng - current.lng);
+      if (dist < nearestDist) { nearestDist = dist; nearestIdx = i; }
+    }
+    const [next] = remaining.splice(nearestIdx, 1);
+    route.push(next);
+    current = { lat: next.lat, lng: next.lng };
+  }
+  return route;
+}
+
 function distanceScore(km: number): number {
   if (km <= 5)  return 100;
   if (km <= 10) return 80;

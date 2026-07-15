@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus, GripVertical, ChevronUp, ChevronDown } from 'lucide-react';
-import { haversineKm, detectType } from '../utils/dagbezoek';
+import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus, GripVertical, ChevronUp, ChevronDown, Maximize2, Minimize2, Wand2, Trash2, Repeat } from 'lucide-react';
+import { haversineKm, detectType, optimizeRoute, scoreInsertionCandidates } from '../utils/dagbezoek';
 import { getDrivingDistancesKm } from '../services/routingService';
 import { getClusterData, makeId } from '../services/geoclusterService';
 import L from 'leaflet';
@@ -65,6 +65,17 @@ interface RidePanelProps {
   // Zelfde "Zoeken in Live"-actie als de Bedrijvendatabase-kaartjes: zoekt dit bedrijf op in
   // Live Zoeken, dat (in tegenstelling tot de database) ook de rij-afstand in meters toont.
   onOpenInLiveZoeken?: (naam: string) => void;
+  // Route + startpunt worden vanuit App aangeleverd (gecontroleerd), zodat ze blijven bestaan
+  // als je naar een ander tabblad gaat en terugkomt (RidePanel unmount, App niet).
+  startCoords: Coords | null;
+  setStartCoords: (c: Coords | null) => void;
+  startLabel: string;
+  setStartLabel: (s: string) => void;
+  chain: RideStop[];
+  setChain: React.Dispatch<React.SetStateAction<RideStop[]>>;
+  // Als Live Zoeken al een locatie heeft bepaald, bieden we die als 1-klik startpunt aan
+  // (exact dezelfde coördinaat die Live Zoeken gebruikt — die werkt bij de gebruiker altijd).
+  liveLocationCoords?: Coords | null;
   // true = wordt getoond binnen een bestaande kaart/sectie (Mijn bezoeken) — laat dan de eigen
   // buitenste kaart-rand/titel weg zodat het niet dubbel oogt.
   embedded?: boolean;
@@ -88,19 +99,22 @@ function coordsFor(b: any, cityCoords: Record<string, Coords>): Coords | null {
   return cityCoords[stad] || cityCoords[(b.stad || '').trim()] || null;
 }
 
-const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCompany, onSaveAsList, onLogVisits, onOpenInDatabase, onOpenInLiveZoeken, embedded }) => {
+const RidePanel: React.FC<RidePanelProps> = ({
+  allData, cityCoords, isVisitedCompany, onSaveAsList, onLogVisits, onOpenInDatabase, onOpenInLiveZoeken,
+  startCoords, setStartCoords, startLabel, setStartLabel, chain, setChain, liveLocationCoords, embedded,
+}) => {
   const mapDivRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
 
   const [startMode, setStartMode] = useState<'gps' | 'search'>('gps');
   const [startQuery, setStartQuery] = useState('');
-  const [startCoords, setStartCoords] = useState<Coords | null>(null);
-  const [startLabel, setStartLabel] = useState('');
   const [startLoading, setStartLoading] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  // Startpunt aanpassen (exact adres typen) terwijl er al een route loopt.
+  const [editStart, setEditStart] = useState(false);
+  const [editStartQuery, setEditStartQuery] = useState('');
 
-  const [chain, setChain] = useState<RideStop[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suggestCount, setSuggestCount] = useState(8);
   const [filterTypes, setFilterTypes] = useState<Set<'architect' | 'bouwbedrijf' | 'aannemer' | 'materialen'>>(new Set());
@@ -113,6 +127,11 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
   const [saveListName, setSaveListName] = useState('');
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  // Geselecteerde stops (voor bulk verwijderen/vervangen) — sleutel = stop-id.
+  const [selectedStops, setSelectedStops] = useState<Set<string>>(new Set());
+  // Welke stop wordt nu vervangen (toont buurt-suggesties); null = geen.
+  const [replaceStopId, setReplaceStopId] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
 
@@ -235,28 +254,37 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
     };
   }, []);
 
-  // Markers herbouwen zodra startpunt, route of voorstellen wijzigen: startpunt (blauw "S"),
-  // route-stops genummerd (oranje, zelfde stijl als Route Kaart). Voorstellen worden als kleine
-  // bolletjes getekend — zelfde stijl (L.circleMarker) als de Kaart-tab — zodat je meteen ziet
-  // wat er verderop ligt vóórdat je 'm aanklikt.
+  // Markers + route-lijn herbouwen zodra startpunt, route of voorstellen wijzigen. Consistent
+  // met de Route Kaart (Lijsten): startpunt = blauwe "S"-pin, route-stops = genummerde oranje
+  // pins, verbonden door een oranje route-lijn in volgorde. Voorstellen = kleine grijze
+  // bolletjes (duidelijk anders dan de route zelf, maar één consistente stijl).
   useEffect(() => {
     if (!mapRef.current || !markersLayerRef.current) return;
     markersLayerRef.current.clearLayers();
     const bounds: L.LatLngExpression[] = [];
+    const routeLine: L.LatLngExpression[] = [];
 
     if (startCoords) {
       bounds.push([startCoords.lat, startCoords.lng]);
+      routeLine.push([startCoords.lat, startCoords.lng]);
       L.marker([startCoords.lat, startCoords.lng], { icon: makePin('#1e293b', 'S') })
         .bindPopup(`<div style="font-family:system-ui;font-size:13px"><b>${startLabel || 'Startpunt'}</b></div>`)
         .addTo(markersLayerRef.current);
     }
 
     chain.forEach((s, i) => {
+      routeLine.push([s.coords.lat, s.coords.lng]);
       L.marker([s.coords.lat, s.coords.lng], { icon: makePin('#E85E26', i + 1) })
         .bindPopup(popupHtml(s.bedrijf, `Stop ${i + 1} van de route`))
         .addTo(markersLayerRef.current!);
       bounds.push([s.coords.lat, s.coords.lng]);
     });
+
+    // Route-lijn (zelfde idee als de Route Kaart bij Lijsten) zodat je de volgorde als een echte
+    // route ziet i.p.v. losse punten.
+    if (routeLine.length >= 2) {
+      L.polyline(routeLine, { color: '#E85E26', weight: 3, opacity: 0.7 }).addTo(markersLayerRef.current!);
+    }
 
     // Zelfde tikstraal-verruiming voor aanraakschermen als de Kaart-tab (ClusterMapView) —
     // een bolletje van een paar pixels is op een telefoon vrijwel onmogelijk precies te raken.
@@ -281,6 +309,15 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
       mapRef.current.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [40, 40], maxZoom: 14 });
     }
   }, [startCoords, startLabel, chain, suggestions]);
+
+  // Fullscreen togglet de containergrootte; Leaflet moet daarna opnieuw meten anders blijft de
+  // kaart op de oude (kleine of grote) afmeting hangen met grijze randen.
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const map = mapRef.current;
+    const t = setTimeout(() => map.invalidateSize(), 60);
+    return () => clearTimeout(t);
+  }, [isFullscreen]);
 
   // Zelfde geolocation-opties als "Gebruik mijn locatie" bij Live Zoeken (useMyLocation in
   // App.tsx), die daar wél altijd werkt. enableHighAccuracy:true vraagt om GPS-precisie, en op
@@ -464,19 +501,109 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
   // Route-volgorde slepen: km per stop is berekend t.o.v. de vorige stop op het moment van
   // toevoegen, dus na het verwisselen van volgorde herberekenen we die (hemelsbreed) opnieuw
   // vanaf het startpunt door de hele keten, anders kloppen de getoonde afstanden niet meer.
+  // Herberekent de km-per-stop (hemelsbreed) vanaf het startpunt door de hele keten. Gedeeld
+  // door herordenen/optimaliseren/vervangen zodat de getoonde afstanden altijd blijven kloppen.
+  const recomputeKm = (stops: RideStop[]): RideStop[] => {
+    let from: Coords | null = startCoords;
+    return stops.map(s => {
+      const km = from ? haversineKm(from.lat, from.lng, s.coords.lat, s.coords.lng) : s.km;
+      from = s.coords;
+      return { ...s, km };
+    });
+  };
+
   const reorderChain = (fromIndex: number, toIndex: number) => {
     if (fromIndex === toIndex) return;
     setChain(prev => {
       const next = [...prev];
       const [moved] = next.splice(fromIndex, 1);
       next.splice(toIndex, 0, moved);
-      let from = startCoords;
-      return next.map(s => {
-        const km = from ? haversineKm(from.lat, from.lng, s.coords.lat, s.coords.lng) : s.km;
-        from = s.coords;
-        return { ...s, km };
-      });
+      return recomputeKm(next);
     });
+  };
+
+  // Optimaliseer de route tot een logische volgorde (Nearest Neighbor vanaf het startpunt) —
+  // hergebruikt exact dezelfde helper als de Route Kaart bij Lijsten.
+  const optimizeChain = () => {
+    if (!startCoords || chain.length < 3) return;
+    const ordered = optimizeRoute(
+      chain.map(s => ({ ...s, lat: s.coords.lat, lng: s.coords.lng })),
+      startCoords,
+    ).map(({ lat, lng, ...rest }) => rest as RideStop);
+    setChain(recomputeKm(ordered));
+  };
+
+  // Startpunt zetten vanuit de al bekende Live Zoeken-locatie (exact dezelfde coördinaat die
+  // Live Zoeken gebruikt) — 1 klik, geen nieuwe permissie/opzoek nodig.
+  const useLiveLocation = () => {
+    if (!liveLocationCoords) return;
+    setStartError(null);
+    setStartCoords({ lat: liveLocationCoords.lat, lng: liveLocationCoords.lng });
+    setStartLabel('Mijn locatie (via Live Zoeken)');
+  };
+
+  // Startpunt aanpassen naar een exact adres (straat + plaats): Nominatim geeft straat-niveau
+  // coördinaten terug, niet alleen het centrum van een dorp/stad.
+  const updateStartAddress = async (q: string) => {
+    const query = q.trim();
+    if (!query) return;
+    setStartError(null);
+    setStartLoading(true);
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ' Nederland')}&countrycodes=nl&limit=1&addressdetails=1`, {
+        headers: { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' },
+      });
+      const d = await r.json();
+      if (d?.[0]) {
+        setStartCoords({ lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) });
+        setStartLabel(query);
+        setChain(prev => recomputeKm(prev));
+        setEditStart(false);
+        setEditStartQuery('');
+      } else {
+        setStartError(`"${query}" niet gevonden.`);
+      }
+    } catch {
+      setStartError('Zoeken mislukt, probeer opnieuw.');
+    }
+    setStartLoading(false);
+  };
+
+  // Selectie voor bulk-acties.
+  const toggleSelectStop = (id: string) => {
+    setSelectedStops(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedStops(new Set());
+  const removeSelected = () => {
+    setChain(prev => recomputeKm(prev.filter(s => !selectedStops.has(s.id))));
+    clearSelection();
+  };
+  const removeStop = (id: string) => {
+    setChain(prev => recomputeKm(prev.filter(s => s.id !== id)));
+    setSelectedStops(prev => { const n = new Set(prev); n.delete(id); return n; });
+  };
+
+  // Buurt-suggesties om een stop te vervangen: bedrijven dicht bij de vorige én volgende stop,
+  // met dezelfde scoring als de Route Kaart (scoreInsertionCandidates). Zo blijft de route
+  // logisch als je een stop omruilt.
+  const replaceCandidatesFor = (id: string): any[] => {
+    const idx = chain.findIndex(s => s.id === id);
+    if (idx < 0) return [];
+    const prevCoords = idx > 0 ? chain[idx - 1].coords : startCoords;
+    const nextCoords = idx < chain.length - 1 ? chain[idx + 1].coords : null;
+    const existingNames = new Set<string>(chain.filter(s => s.id !== id).map(s => String(s.bedrijf.naam || '').toLowerCase()));
+    return scoreInsertionCandidates(allData, prevCoords, nextCoords, cityCoords as any, existingNames, 8, '')
+      .map(c => c.bedrijf);
+  };
+  const replaceStopWith = (id: string, b: any) => {
+    const coords = coordsFor(b, cityCoords);
+    if (!coords) return;
+    setChain(prev => recomputeKm(prev.map(s => s.id === id ? { ...s, bedrijf: b, coords } : s)));
+    setReplaceStopId(null);
   };
 
   // Google Maps-route in de juiste, betrouwbare volgorde: startpunt -> stop 1 -> stop 2 -> ...
@@ -520,9 +647,17 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
 
         {/* Kaart: ALTIJD renderen, niet in een ternary-branch — anders wordt de div pas
             gerenderd zodra startCoords ingesteld is, en faalt de mapInit useEffect stil
-            omdat mapDivRef.current undefined is. */}
-        <div className="border-b border-slate-100">
-          <div ref={mapDivRef} className="w-full h-56 sm:h-72 bg-slate-200" />
+            omdat mapDivRef.current undefined is. In fullscreen wordt de wrapper een vaste
+            overlay over het hele scherm (zelfde idee als de Route Kaart bij Lijsten). */}
+        <div className={isFullscreen ? 'fixed inset-0 z-[9999] bg-white flex flex-col' : 'relative border-b border-slate-100'}>
+          <div ref={mapDivRef} className={isFullscreen ? 'flex-1 w-full bg-slate-200' : 'w-full h-56 sm:h-72 bg-slate-200'} />
+          <button
+            onClick={() => setIsFullscreen(v => !v)}
+            title={isFullscreen ? 'Verklein kaart' : 'Kaart volledig scherm'}
+            className="absolute top-2 right-2 z-[1000] bg-white/95 border border-slate-200 rounded-sm p-1.5 shadow-sm hover:bg-white text-slate-600"
+          >
+            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
         </div>
 
         {!startCoords ? (
@@ -543,14 +678,24 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
             </div>
 
             {startMode === 'gps' ? (
-              <button
-                onClick={useMyLocation}
-                disabled={startLoading}
-                className="w-full py-3 bg-[#E85E26] hover:bg-[#d54f1a] disabled:opacity-50 text-white text-xs font-bold uppercase tracking-wider rounded-sm flex items-center justify-center gap-2"
-              >
-                {startLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
-                Start bij mijn huidige locatie
-              </button>
+              <div className="space-y-2">
+                <button
+                  onClick={useMyLocation}
+                  disabled={startLoading}
+                  className="w-full py-3 bg-[#E85E26] hover:bg-[#d54f1a] disabled:opacity-50 text-white text-xs font-bold uppercase tracking-wider rounded-sm flex items-center justify-center gap-2"
+                >
+                  {startLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
+                  Start bij mijn huidige locatie
+                </button>
+                {liveLocationCoords && (
+                  <button
+                    onClick={useLiveLocation}
+                    className="w-full py-2 bg-white border border-[#009FE3] text-[#009FE3] text-[11px] font-bold uppercase tracking-wider rounded-sm hover:bg-[#009FE3]/5 flex items-center justify-center gap-2"
+                  >
+                    <Navigation className="w-3.5 h-3.5" /> Gebruik mijn Live Zoeken-locatie
+                  </button>
+                )}
+              </div>
             ) : (
               <div className="flex gap-2">
                 <input
@@ -585,16 +730,58 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
             <div className="px-6 pt-5 pb-3 border-b border-slate-100">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Route tot nu toe</span>
-                <button onClick={resetRide} title="Rit resetten" className="text-slate-400 hover:text-red-500"><RotateCcw className="w-3.5 h-3.5" /></button>
+                <div className="flex items-center gap-2">
+                  {chain.length >= 3 && (
+                    <button onClick={optimizeChain} title="Maak er een logische route van (dichtstbijzijnde eerst)" className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] hover:underline flex items-center gap-1">
+                      <Wand2 className="w-3 h-3" /> Optimaliseer
+                    </button>
+                  )}
+                  <button onClick={resetRide} title="Rit resetten" className="text-slate-400 hover:text-red-500"><RotateCcw className="w-3.5 h-3.5" /></button>
+                </div>
               </div>
+
+              {/* Bulk-actiebalk: verschijnt zodra er stops geselecteerd zijn (selectievakjes). */}
+              {selectedStops.size > 0 && (
+                <div className="mb-2 flex items-center justify-between gap-2 bg-[#009FE3]/5 border border-[#009FE3]/30 rounded-sm px-3 py-2">
+                  <span className="text-[11px] font-bold text-[#009FE3]">{selectedStops.size} geselecteerd</span>
+                  <div className="flex items-center gap-3">
+                    <button onClick={removeSelected} className="text-[10px] font-bold uppercase tracking-wider text-red-600 hover:underline flex items-center gap-1"><Trash2 className="w-3 h-3" /> Verwijder</button>
+                    <button onClick={clearSelection} className="text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:underline">Deselecteer</button>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-1.5">
+                {/* Startpunt (0) — aanpasbaar naar een exact adres. */}
                 <div className="flex items-center gap-2 text-sm">
                   <span className="w-5 h-5 rounded-full bg-slate-800 text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">0</span>
-                  <span className="text-slate-700 font-medium truncate">{startLabel || 'Startpunt'}</span>
+                  {editStart ? (
+                    <div className="flex-1 flex gap-1.5">
+                      <input
+                        type="text"
+                        value={editStartQuery}
+                        onChange={e => { setEditStartQuery(e.target.value); setStartError(null); }}
+                        onKeyDown={e => e.key === 'Enter' && updateStartAddress(editStartQuery)}
+                        placeholder="Exact adres, bv. Lansinkesweg 4 Hengelo"
+                        autoFocus
+                        className="flex-1 border border-slate-200 rounded-sm px-2 py-1 text-xs focus:outline-none focus:border-[#009FE3]"
+                      />
+                      <button onClick={() => updateStartAddress(editStartQuery)} disabled={startLoading || !editStartQuery.trim()} className="px-2 bg-[#009FE3] disabled:opacity-50 text-white rounded-sm flex-shrink-0">
+                        {startLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                      </button>
+                      <button onClick={() => { setEditStart(false); setEditStartQuery(''); }} className="px-1.5 text-slate-400 hover:text-slate-700 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="text-slate-700 font-medium truncate flex-1">{startLabel || 'Startpunt'}</span>
+                      <button onClick={() => { setEditStart(true); setEditStartQuery(''); }} title="Startlocatie aanpassen (exact adres)" className="text-slate-400 hover:text-[#009FE3] flex-shrink-0"><MapPin className="w-3.5 h-3.5" /></button>
+                    </>
+                  )}
                 </div>
+
                 {chain.map((s, i) => (
+                  <React.Fragment key={s.id}>
                   <div
-                    key={s.id}
                     draggable
                     onDragStart={() => setDragIndex(i)}
                     onDragOver={e => { e.preventDefault(); if (dragOverIndex !== i) setDragOverIndex(i); }}
@@ -606,38 +793,50 @@ const RidePanel: React.FC<RidePanelProps> = ({ allData, cityCoords, isVisitedCom
                       setDragOverIndex(null);
                     }}
                     onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); }}
-                    className={`flex items-center gap-2 text-sm rounded-sm transition-colors ${dragOverIndex === i && dragIndex !== null && dragIndex !== i ? 'bg-[#009FE3]/10' : ''} ${dragIndex === i ? 'opacity-40' : ''}`}
+                    className={`flex items-center gap-1.5 text-sm rounded-sm transition-colors ${dragOverIndex === i && dragIndex !== null && dragIndex !== i ? 'bg-[#009FE3]/10' : ''} ${dragIndex === i ? 'opacity-40' : ''}`}
                   >
+                    <input type="checkbox" checked={selectedStops.has(s.id)} onChange={() => toggleSelectStop(s.id)} className="accent-[#009FE3] flex-shrink-0" title="Selecteer voor bulk-actie" />
                     <GripVertical className="hidden sm:block w-3.5 h-3.5 text-slate-300 cursor-grab active:cursor-grabbing flex-shrink-0" />
                     <span className="w-5 h-5 rounded-full bg-[#E85E26] text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
                     <span className="text-slate-800 font-medium truncate flex-1">{s.bedrijf.naam}</span>
-                    <span className="text-[10px] text-slate-400 flex-shrink-0">{s.km.toFixed(1)} km</span>
+                    <span className="text-[10px] text-slate-400 flex-shrink-0 hidden sm:inline">{s.km.toFixed(1)} km</span>
+                    {/* Open dit bedrijf in Live Zoeken (waar de rij-afstand in meters staat). */}
+                    {!s.bedrijf.isWaypoint && onOpenInLiveZoeken && (
+                      <button onClick={() => onOpenInLiveZoeken(s.bedrijf.naam)} title="Open in Live Zoeken" className="text-slate-400 hover:text-[#E85E26] flex-shrink-0"><Search className="w-3.5 h-3.5" /></button>
+                    )}
+                    {/* Vervang deze stop door een buurt-suggestie. */}
+                    {!s.bedrijf.isWaypoint && (
+                      <button onClick={() => setReplaceStopId(replaceStopId === s.id ? null : s.id)} title="Vervang deze stop" className={`flex-shrink-0 ${replaceStopId === s.id ? 'text-[#009FE3]' : 'text-slate-400 hover:text-[#009FE3]'}`}><Repeat className="w-3.5 h-3.5" /></button>
+                    )}
                     {/* Omhoog/omlaag: werkt overal (ook op telefoon/tablet), in tegenstelling tot
                         native drag-and-drop dat op touch-schermen niet vuurt. */}
-                    <button
-                      onClick={() => reorderChain(i, i - 1)}
-                      disabled={i === 0}
-                      title="Omhoog"
-                      className="text-slate-400 hover:text-[#009FE3] disabled:opacity-20 disabled:hover:text-slate-400 flex-shrink-0"
-                    >
+                    <button onClick={() => reorderChain(i, i - 1)} disabled={i === 0} title="Omhoog" className="text-slate-400 hover:text-[#009FE3] disabled:opacity-20 disabled:hover:text-slate-400 flex-shrink-0">
                       <ChevronUp className="w-4 h-4" />
                     </button>
-                    <button
-                      onClick={() => reorderChain(i, i + 1)}
-                      disabled={i === chain.length - 1}
-                      title="Omlaag"
-                      className="text-slate-400 hover:text-[#009FE3] disabled:opacity-20 disabled:hover:text-slate-400 flex-shrink-0"
-                    >
+                    <button onClick={() => reorderChain(i, i + 1)} disabled={i === chain.length - 1} title="Omlaag" className="text-slate-400 hover:text-[#009FE3] disabled:opacity-20 disabled:hover:text-slate-400 flex-shrink-0">
                       <ChevronDown className="w-4 h-4" />
                     </button>
-                    <button
-                      onClick={() => setChain(prev => prev.filter((_, idx) => idx !== i))}
-                      title="Verwijderen"
-                      className="text-slate-400 hover:text-red-500 flex-shrink-0"
-                    >
+                    <button onClick={() => removeStop(s.id)} title="Verwijderen" className="text-slate-400 hover:text-red-500 flex-shrink-0">
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
+
+                  {/* Vervang-paneel: buurt-suggesties (scoreInsertionCandidates), zoals de Route Kaart. */}
+                  {replaceStopId === s.id && (
+                    <div className="ml-7 mb-1 border border-[#009FE3] rounded-sm p-2">
+                      <p className="text-[10px] text-slate-400 mb-1">Beste buurt-opties om "{s.bedrijf.naam}" te vervangen:</p>
+                      <div className="max-h-40 overflow-y-auto space-y-0.5">
+                        {replaceCandidatesFor(s.id).map((cand: any, ci: number) => (
+                          <button key={ci} onClick={() => replaceStopWith(s.id, cand)} className="w-full text-left px-2 py-1.5 text-xs rounded-sm hover:bg-slate-50 border border-slate-100 flex flex-col">
+                            <span className="font-semibold text-slate-700">{cand.naam}</span>
+                            <span className="text-slate-400 text-[10px]">{[cand.straat, cand.stad].filter(Boolean).join(', ')}</span>
+                          </button>
+                        ))}
+                        {replaceCandidatesFor(s.id).length === 0 && <p className="text-[10px] text-slate-400 py-1">Geen buurt-opties gevonden.</p>}
+                      </div>
+                    </div>
+                  )}
+                  </React.Fragment>
                 ))}
               </div>
               {chain.length > 1 && (
