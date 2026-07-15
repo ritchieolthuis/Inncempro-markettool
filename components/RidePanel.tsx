@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus, GripVertical, ChevronUp, ChevronDown, Maximize2, Minimize2, Wand2, Trash2, Repeat } from 'lucide-react';
+import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus, GripVertical, ChevronUp, ChevronDown, Maximize2, Minimize2, Wand2, Repeat } from 'lucide-react';
 import { haversineKm, detectType, optimizeRoute, scoreInsertionCandidates } from '../utils/dagbezoek';
 import { getDrivingDistancesKm } from '../services/routingService';
 import { getClusterData, makeId } from '../services/geoclusterService';
@@ -99,6 +99,40 @@ function coordsFor(b: any, cityCoords: Record<string, Coords>): Coords | null {
   return cityCoords[stad] || cityCoords[(b.stad || '').trim()] || null;
 }
 
+// Gedeelde adres-opzoek (gratis, geen key nodig) voor startpunt/tussenstop/adres-aanpassen —
+// vóórdien had elke plek zijn eigen los fetch-aanroepje, met elk net iets andere query-opbouw.
+// Herkent eerst "straat huisnummer, plaats" (bv. "Handelsweg 14, Wierden") en zoekt dan
+// GESTRUCTUREERD (straat- en plaatsveld apart) — betrouwbaarder voor een exact adres dan één
+// vrije zoekstring, die bij Nominatim regelmatig niks teruggeeft voor net dat soort input.
+// Valt daarna terug op een vrije zoekstring (voor plaatsnamen, bedrijfsnamen, etc.).
+async function geocodeAddress(query: string): Promise<Coords | null> {
+  const q = query.trim();
+  if (!q) return null;
+  const headers = { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' };
+
+  const commaIdx = q.indexOf(',');
+  if (commaIdx > 0 && /\d/.test(q.slice(0, commaIdx))) {
+    const street = q.slice(0, commaIdx).trim();
+    const city = q.slice(commaIdx + 1).trim();
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&street=${encodeURIComponent(street)}&city=${encodeURIComponent(city)}&country=Nederland&limit=1`, { headers });
+      const d = await r.json();
+      if (d?.[0]) return { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
+    } catch (e) {
+      console.error('[Onderweg] Gestructureerd adres zoeken mislukt:', e);
+    }
+  }
+
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q + ', Nederland')}&countrycodes=nl&limit=1`, { headers });
+    const d = await r.json();
+    if (d?.[0]) return { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
+  } catch (e) {
+    console.error('[Onderweg] Adres zoeken mislukt:', e);
+  }
+  return null;
+}
+
 const RidePanel: React.FC<RidePanelProps> = ({
   allData, cityCoords, isVisitedCompany, onSaveAsList, onLogVisits, onOpenInDatabase, onOpenInLiveZoeken,
   startCoords, setStartCoords, startLabel, setStartLabel, chain, setChain, liveLocationCoords, embedded,
@@ -129,8 +163,6 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  // Geselecteerde stops (voor bulk verwijderen/vervangen) — sleutel = stop-id.
-  const [selectedStops, setSelectedStops] = useState<Set<string>>(new Set());
   // Welke stop wordt nu vervangen (toont buurt-suggesties); null = geen.
   const [replaceStopId, setReplaceStopId] = useState<string | null>(null);
 
@@ -425,19 +457,12 @@ const RidePanel: React.FC<RidePanelProps> = ({
         return;
       }
     }
-    try {
-      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q + ' Nederland')}&countrycodes=nl&limit=1`, {
-        headers: { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' },
-      });
-      const d = await r.json();
-      if (d?.[0]) {
-        setStartCoords({ lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) });
-        setStartLabel(q);
-      } else {
-        setStartError(`"${q}" niet gevonden.`);
-      }
-    } catch {
-      setStartError('Zoeken mislukt, probeer opnieuw.');
+    const coords = await geocodeAddress(q);
+    if (coords) {
+      setStartCoords(coords);
+      setStartLabel(q);
+    } else {
+      setStartError(`"${q}" niet gevonden.`);
     }
     setStartLoading(false);
   };
@@ -497,23 +522,15 @@ const RidePanel: React.FC<RidePanelProps> = ({
     if (!query) return;
     setManualError(null);
     setManualLoading(true);
-    try {
-      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ' Nederland')}&countrycodes=nl&limit=1`, {
-        headers: { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' },
-      });
-      const d = await r.json();
-      if (d?.[0]) {
-        const coords = { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
-        const from = currentPosition();
-        const km = from ? haversineKm(from.lat, from.lng, coords.lat, coords.lng) : 0;
-        const waypointBedrijf = { naam: query, stad: '', straat: '', postcode: '', isWaypoint: true };
-        setChain(prev => [...prev, { id: `${query}_${Date.now()}`, bedrijf: waypointBedrijf, coords, km }]);
-        setManualQuery('');
-      } else {
-        setManualError(`"${query}" niet gevonden als bedrijf of plaats.`);
-      }
-    } catch {
-      setManualError('Zoeken mislukt, probeer opnieuw.');
+    const coords = await geocodeAddress(query);
+    if (coords) {
+      const from = currentPosition();
+      const km = from ? haversineKm(from.lat, from.lng, coords.lat, coords.lng) : 0;
+      const waypointBedrijf = { naam: query, stad: '', straat: '', postcode: '', isWaypoint: true };
+      setChain(prev => [...prev, { id: `${query}_${Date.now()}`, bedrijf: waypointBedrijf, coords, km }]);
+      setManualQuery('');
+    } else {
+      setManualError(`"${query}" niet gevonden als bedrijf of plaats.`);
     }
     setManualLoading(false);
   };
@@ -523,8 +540,11 @@ const RidePanel: React.FC<RidePanelProps> = ({
   // vanaf het startpunt door de hele keten, anders kloppen de getoonde afstanden niet meer.
   // Herberekent de km-per-stop (hemelsbreed) vanaf het startpunt door de hele keten. Gedeeld
   // door herordenen/optimaliseren/vervangen zodat de getoonde afstanden altijd blijven kloppen.
-  const recomputeKm = (stops: RideStop[]): RideStop[] => {
-    let from: Coords | null = startCoords;
+  // `fromOverride` is nodig zodra het startpunt zelf net in dezelfde actie is gewijzigd (bv.
+  // updateStartAddress): setStartCoords is dan nog niet verwerkt in een nieuwe render, dus
+  // `startCoords` hier zou anders nog de OUDE waarde uit de sluiting zijn.
+  const recomputeKm = (stops: RideStop[], fromOverride?: Coords | null): RideStop[] => {
+    let from: Coords | null = fromOverride !== undefined ? fromOverride : startCoords;
     return stops.map(s => {
       const km = from ? haversineKm(from.lat, from.lng, s.coords.lat, s.coords.lng) : s.km;
       from = s.coords;
@@ -569,42 +589,21 @@ const RidePanel: React.FC<RidePanelProps> = ({
     if (!query) return;
     setStartError(null);
     setStartLoading(true);
-    try {
-      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ' Nederland')}&countrycodes=nl&limit=1&addressdetails=1`, {
-        headers: { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' },
-      });
-      const d = await r.json();
-      if (d?.[0]) {
-        setStartCoords({ lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) });
-        setStartLabel(query);
-        setChain(prev => recomputeKm(prev));
-        setEditStart(false);
-        setEditStartQuery('');
-      } else {
-        setStartError(`"${query}" niet gevonden.`);
-      }
-    } catch {
-      setStartError('Zoeken mislukt, probeer opnieuw.');
+    const coords = await geocodeAddress(query);
+    if (coords) {
+      setStartCoords(coords);
+      setStartLabel(query);
+      setChain(prev => recomputeKm(prev, coords));
+      setEditStart(false);
+      setEditStartQuery('');
+    } else {
+      setStartError(`"${query}" niet gevonden.`);
     }
     setStartLoading(false);
   };
 
-  // Selectie voor bulk-acties.
-  const toggleSelectStop = (id: string) => {
-    setSelectedStops(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
-  const clearSelection = () => setSelectedStops(new Set());
-  const removeSelected = () => {
-    setChain(prev => recomputeKm(prev.filter(s => !selectedStops.has(s.id))));
-    clearSelection();
-  };
   const removeStop = (id: string) => {
     setChain(prev => recomputeKm(prev.filter(s => s.id !== id)));
-    setSelectedStops(prev => { const n = new Set(prev); n.delete(id); return n; });
   };
 
   // Buurt-suggesties om een stop te vervangen: bedrijven dicht bij de vorige én volgende stop,
@@ -628,16 +627,27 @@ const RidePanel: React.FC<RidePanelProps> = ({
 
   // Google Maps-route in de juiste, betrouwbare volgorde: startpunt -> stop 1 -> stop 2 -> ...
   // met naam + adres per stop (niet alleen coördinaten), in het officiële ?api=1-formaat.
-  const mapsUrl = (() => {
-    if (chain.length === 0 || !startCoords) return null;
+  // Google Maps laat maar ~10 punten toe in één route (origin + max 9 stops). Bij een langere
+  // route splitsen we 'm daarom in opeenvolgende blokken van elk max 10 punten: blok 2 begint
+  // bij de laatste stop van blok 1, enzovoort — zo blijft de hele rit dekkend, alleen in
+  // meerdere te-openen Google Maps-links i.p.v. één die stops laat vallen.
+  const MAPS_CHUNK = 9; // + startpunt = 10 punten per link
+  const mapsUrls: string[] = (() => {
+    if (chain.length === 0 || !startCoords) return [];
     const encBedrijf = (b: any) => encodeURIComponent([b.naam, b.straat, b.postcode, b.stad].filter(Boolean).join(', '));
-    const origin = startLabel ? encodeURIComponent(startLabel) : `${startCoords.lat},${startCoords.lng}`;
-    const last = chain[chain.length - 1];
-    const destination = encBedrijf(last.bedrijf);
-    const waypoints = chain.slice(0, -1).map(s => encBedrijf(s.bedrijf)).join('|');
-    let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving`;
-    if (waypoints) url += `&waypoints=${waypoints}`;
-    return url;
+    const urls: string[] = [];
+    for (let i = 0; i < chain.length; i += MAPS_CHUNK) {
+      const group = chain.slice(i, i + MAPS_CHUNK);
+      const origin = i === 0
+        ? (startLabel ? encodeURIComponent(startLabel) : `${startCoords.lat},${startCoords.lng}`)
+        : encBedrijf(chain[i - 1].bedrijf);
+      const destination = encBedrijf(group[group.length - 1].bedrijf);
+      const waypoints = group.slice(0, -1).map(s => encBedrijf(s.bedrijf)).join('|');
+      let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving`;
+      if (waypoints) url += `&waypoints=${waypoints}`;
+      urls.push(url);
+    }
+    return urls;
   })();
 
   const finishRide = () => {
@@ -760,21 +770,10 @@ const RidePanel: React.FC<RidePanelProps> = ({
                 </div>
               </div>
 
-              {/* Bulk-actiebalk: verschijnt zodra er stops geselecteerd zijn (selectievakjes). */}
-              {selectedStops.size > 0 && (
-                <div className="mb-2 flex items-center justify-between gap-2 bg-[#009FE3]/5 border border-[#009FE3]/30 rounded-sm px-3 py-2">
-                  <span className="text-[11px] font-bold text-[#009FE3]">{selectedStops.size} geselecteerd</span>
-                  <div className="flex items-center gap-3">
-                    <button onClick={removeSelected} className="text-[10px] font-bold uppercase tracking-wider text-red-600 hover:underline flex items-center gap-1"><Trash2 className="w-3 h-3" /> Verwijder</button>
-                    <button onClick={clearSelection} className="text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:underline">Deselecteer</button>
-                  </div>
-                </div>
-              )}
-
               <div className="space-y-1.5">
-                {/* Startpunt (0) — aanpasbaar naar een exact adres. */}
+                {/* Startpunt (S) — aanpasbaar naar een exact adres. */}
                 <div className="flex items-center gap-2 text-sm">
-                  <span className="w-5 h-5 rounded-full bg-slate-800 text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">0</span>
+                  <span className="w-5 h-5 rounded-full bg-slate-800 text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">S</span>
                   {editStart ? (
                     <div className="flex-1 flex gap-1.5">
                       <input
@@ -815,7 +814,6 @@ const RidePanel: React.FC<RidePanelProps> = ({
                     onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); }}
                     className={`flex items-center gap-1.5 text-sm rounded-sm transition-colors ${dragOverIndex === i && dragIndex !== null && dragIndex !== i ? 'bg-[#009FE3]/10' : ''} ${dragIndex === i ? 'opacity-40' : ''}`}
                   >
-                    <input type="checkbox" checked={selectedStops.has(s.id)} onChange={() => toggleSelectStop(s.id)} className="accent-[#009FE3] flex-shrink-0" title="Selecteer voor bulk-actie" />
                     <GripVertical className="hidden sm:block w-3.5 h-3.5 text-slate-300 cursor-grab active:cursor-grabbing flex-shrink-0" />
                     <span className="w-5 h-5 rounded-full bg-[#E85E26] text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
                     <span className="text-slate-800 font-medium truncate flex-1">{s.bedrijf.naam}</span>
@@ -862,10 +860,20 @@ const RidePanel: React.FC<RidePanelProps> = ({
               {chain.length > 1 && (
                 <p className="mt-1.5 text-[10px] text-slate-400">Gebruik <ChevronUp className="w-2.5 h-2.5 inline -mt-0.5" /><ChevronDown className="w-2.5 h-2.5 inline -mt-0.5" /> (of sleep op desktop) om de volgorde te wijzigen.</p>
               )}
-              {chain.length > 0 && mapsUrl && (
-                <a href={mapsUrl} target="_blank" rel="noreferrer" className="mt-3 w-full inline-flex items-center justify-center gap-2 py-2 bg-white border border-[#009FE3] text-[#009FE3] text-xs font-bold uppercase tracking-wider rounded-sm hover:bg-[#009FE3]/5">
+              {mapsUrls.length === 1 && (
+                <a href={mapsUrls[0]} target="_blank" rel="noreferrer" className="mt-3 w-full inline-flex items-center justify-center gap-2 py-2 bg-white border border-[#009FE3] text-[#009FE3] text-xs font-bold uppercase tracking-wider rounded-sm hover:bg-[#009FE3]/5">
                   <MapPin className="w-3.5 h-3.5" /> Open route in Google Maps
                 </a>
+              )}
+              {mapsUrls.length > 1 && (
+                <div className="mt-3 space-y-1.5">
+                  <p className="text-[10px] text-slate-400">Google Maps kan max. 10 punten per route aan — deze rit is daarom gesplitst in {mapsUrls.length} delen, elk aansluitend op het vorige:</p>
+                  {mapsUrls.map((url, i) => (
+                    <a key={i} href={url} target="_blank" rel="noreferrer" className="w-full inline-flex items-center justify-center gap-2 py-2 bg-white border border-[#009FE3] text-[#009FE3] text-xs font-bold uppercase tracking-wider rounded-sm hover:bg-[#009FE3]/5">
+                      <MapPin className="w-3.5 h-3.5" /> Deel {i + 1} van {mapsUrls.length} in Google Maps
+                    </a>
+                  ))}
+                </div>
               )}
             </div>
 
