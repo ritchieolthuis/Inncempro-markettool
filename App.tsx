@@ -5089,7 +5089,7 @@ const App: React.FC = () => {
                  <button
                    type="button"
                    onClick={() => setShowSearchOptions(v => !v)}
-                   className="md:hidden mt-3 w-full flex items-center justify-center gap-2 bg-white border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-600 shadow-sm"
+                   className="mt-3 w-full flex items-center justify-center gap-2 bg-white border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-600 shadow-sm hover:border-[#009FE3] hover:text-[#009FE3] transition-colors"
                  >
                    <Filter className="w-3.5 h-3.5 text-[#009FE3]" />
                    Zoekopties
@@ -5097,7 +5097,7 @@ const App: React.FC = () => {
                    {showSearchOptions ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
                  </button>
                  {/* Straal filter — sleepbare slider */}
-                 <div className={`${showSearchOptions ? 'flex' : 'hidden'} md:flex items-center gap-3 sm:gap-4 mt-3 flex-wrap bg-slate-50 border border-slate-200 rounded-xl px-3 sm:px-4 py-3`}>
+                 <div className={`${showSearchOptions ? 'flex' : 'hidden'} items-center gap-3 sm:gap-4 mt-3 flex-wrap bg-slate-50 border border-slate-200 rounded-xl px-3 sm:px-4 py-3`}>
                    <div className="flex items-center gap-2 flex-shrink-0">
                      <span className="text-xs font-semibold text-slate-600">Straal</span>
                      <button
@@ -5204,9 +5204,52 @@ const App: React.FC = () => {
                      </div>
                    )}
                    {advancedSearch && (
-                     <span className="text-xs text-slate-500 basis-full">
-                       Bijv: <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600">architect OR bouwbedrijf</code>, <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600">rotterdam NOT bv</code>, <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600">"van der"</code>. AND vereist beide termen, OR één van beide, NOT sluit uit.
-                     </span>
+                     <div className="basis-full bg-white border border-[#009FE3]/20 rounded-xl p-3 sm:p-4 space-y-3">
+                       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                         <div>
+                           <p className="text-xs font-bold uppercase tracking-wider text-slate-700">Geavanceerd zoeken</p>
+                           <p className="text-xs text-slate-500 mt-1">Combineer bedrijfsnaam, stad, discipline, bron, specialisatie en uitsluitingen in één zoekregel.</p>
+                         </div>
+                         <button
+                           type="button"
+                           onClick={() => setCity('architect OR aannemer NOT interieur')}
+                           className="self-start px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider border border-[#E85E26]/30 text-[#E85E26] rounded-lg hover:bg-[#E85E26]/5"
+                         >
+                           Voorbeeld invullen
+                         </button>
+                       </div>
+                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                         {[
+                           { label: 'Exacte naam', value: '"van der"', hint: 'woorden blijven bij elkaar' },
+                           { label: 'Of zoeken', value: 'architect OR aannemer', hint: 'een van beide termen' },
+                           { label: 'Uitsluiten', value: 'rotterdam NOT interieur', hint: 'wel Rotterdam, geen interieur' },
+                           { label: 'Minuswoord', value: 'bouwbedrijf -bv', hint: 'kort voor NOT bv' },
+                         ].map(example => (
+                           <button
+                             key={example.value}
+                             type="button"
+                             onClick={() => setCity(example.value)}
+                             className="text-left bg-slate-50 hover:bg-[#009FE3]/5 border border-slate-200 hover:border-[#009FE3]/40 rounded-lg px-3 py-2 transition-colors"
+                           >
+                             <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">{example.label}</span>
+                             <code className="block text-xs font-semibold text-slate-800 mt-0.5">{example.value}</code>
+                             <span className="block text-[10px] text-slate-400 mt-0.5">{example.hint}</span>
+                           </button>
+                         ))}
+                       </div>
+                       <div className="flex flex-wrap gap-1.5">
+                         {['architect', 'aannemer', 'bouwbedrijf', 'bouwmaterialen', 'renovatie', 'nieuwbouw', 'verduurzaming', 'BNA', 'Bouwgarant'].map(term => (
+                           <button
+                             key={term}
+                             type="button"
+                             onClick={() => setCity(prev => prev.trim() ? `${prev.trim()} ${term}` : term)}
+                             className="px-2 py-1 bg-white border border-slate-200 rounded text-[10px] font-bold text-slate-500 hover:border-[#009FE3] hover:text-[#009FE3]"
+                           >
+                             + {term}
+                           </button>
+                         ))}
+                       </div>
+                     </div>
                    )}
                  </div>
                  {/* Autocomplete: bedrijfsnamen én straatadressen door elkaar, zodra je 2+
@@ -7663,16 +7706,20 @@ const parseAdvancedQuery = (query: string, bedrijven: any[]) => {
 
   tokens.forEach((token) => {
     const isPhrase = token.startsWith('"');
-    const searchTerm = isPhrase ? token.slice(1, -1) : token;
+    const isMinusTerm = !isPhrase && token.startsWith('-') && token.length > 1;
+    const searchTerm = isPhrase ? token.slice(1, -1) : isMinusTerm ? token.slice(1) : token;
 
+    if (isMinusTerm) currentOp = 'NOT';
     if (!isPhrase && (searchTerm === 'not' || searchTerm === '-')) { currentOp = 'NOT'; return; }
     if (!isPhrase && searchTerm === 'or')  { currentOp = 'OR';  return; }
     if (!isPhrase && searchTerm === 'and') { currentOp = 'AND'; return; }
     if (!searchTerm) return;
 
     const matches = bedrijven.filter(b => {
-      const searchStr = [b.naam, b.stad, b.straat, b.postcode, b.email, b.telefoon, b.spec1, b.spec2, b.spec3, b.website, b.source].join(' ').toLowerCase();
-      return searchStr.includes(searchTerm);
+      const searchStr = [b.naam, b.stad, b.straat, b.postcode, b.email, b.telefoon, b.spec1, b.spec2, b.spec3, b.website, b.source, b.rechtsvorm].join(' ').toLowerCase();
+      const normalizedSearchStr = searchStr.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[&]/g, ' en ').replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ');
+      const normalizedTerm = searchTerm.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[&]/g, ' en ').replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      return searchStr.includes(searchTerm) || (!!normalizedTerm && normalizedSearchStr.includes(normalizedTerm));
     });
     const matchKeys = new Set(matches.map(advancedQueryKey));
 
