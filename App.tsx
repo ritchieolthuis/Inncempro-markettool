@@ -5298,16 +5298,22 @@ const App: React.FC = () => {
                 <div className="w-full flex flex-col relative" style={{ height: 'calc(100vh - 120px)' }}>
                   {/* Selecteren-knop: expliciete opt-in, staat los van het bestaande hover/tik-
                       gedrag op de bolletjes (dat blijft precies zoals het was). Alleen als deze
-                      aan staat, selecteert een klik op een bolletje het bedrijf i.p.v. niets. */}
-                  <div className="absolute top-3 left-16 z-[1000] flex items-center gap-2">
+                      aan staat, selecteert een klik op een bolletje het bedrijf i.p.v. niets.
+                      top-16/left-3 op mobiel, top-3/left-16 vanaf md: op mobiel toont
+                      ClusterMapView zelf een volle-breedte "Regio & Locatie"-knop VÓÓR de kaart
+                      (op desktop md:hidden, dus daar begint de kaart wél meteen bovenaan) — zonder
+                      de mobiele top-offset kwam deze knop daar bovenop te overlappen i.p.v. op de
+                      kaart zelf. left-16 (i.p.v. left-3) blijft nodig zodra de kaart wél meteen
+                      bovenaan begint, om Leaflet's eigen zoom-knoppen (+/-) linksboven te ontwijken. */}
+                  <div className="absolute top-16 left-3 md:top-3 md:left-16 z-[1000] flex items-center gap-2 max-w-[calc(100%-1.5rem)]">
                     <button
                       onClick={() => { setMapSelectionMode(v => !v); if (mapSelectionMode) clearSelection(); }}
-                      className={`flex items-center gap-1.5 px-3 py-2 rounded-sm text-xs font-bold uppercase tracking-wider shadow-sm border transition-colors ${mapSelectionMode ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'bg-white text-slate-600 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]'}`}
+                      className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-sm text-xs font-bold uppercase tracking-wider shadow-sm border transition-colors ${mapSelectionMode ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'bg-white text-slate-600 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]'}`}
                     >
                       <Check className="w-3.5 h-3.5" /> {mapSelectionMode ? 'Selecteren aan' : 'Selecteren'}
                     </button>
                     {mapSelectionMode && (
-                      <span className="text-[10px] text-slate-500 bg-white/90 px-2 py-1 rounded-sm shadow-sm">Tik bolletjes aan om te selecteren</span>
+                      <span className="text-[10px] text-slate-500 bg-white/90 px-2 py-1 rounded-sm shadow-sm truncate">Tik bolletjes aan om te selecteren</span>
                     )}
                   </div>
 
