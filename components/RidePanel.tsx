@@ -214,10 +214,12 @@ const RidePanel: React.FC<RidePanelProps> = ({
   // paginering) terechtkomen. Wordt genegeerd zodra er een bestemming (routemodus) is gekozen.
   const [radiusKm, setRadiusKm] = useState(75);
   // Hoe ver een bedrijf van de gereden route mag liggen om nog "op de route" te heten (km,
-  // hemelsbreed loodrecht op de lijn). Bewust een vaste, ruime waarde i.p.v. een slider: de
-  // gebruiker wil geen knoppen, gewoon "de architecten die op mijn route liggen". 12 km vangt
-  // bedrijven net naast de snelweg/doorgaande weg zonder de hele provincie mee te nemen.
-  const ROUTE_CORRIDOR_KM = 12;
+  // hemelsbreed loodrecht op de lijn). Bewust een vaste waarde i.p.v. een slider: de gebruiker
+  // wil geen knoppen, gewoon "de architecten die op mijn route liggen". Strak gehouden (8 km):
+  // een bedrijf dat verder van de lijn ligt betekent echt omrijden, en dat wil je juist NIET
+  // meepakken als je op de doorreis/terugweg bent — beter een bedrijf iets verderop dat wél
+  // op de route ligt dan eentje vlakbij waarvoor je van de weg af moet.
+  const ROUTE_CORRIDOR_KM = 8;
   // Aantal per pagina (10 of 20) — beperkt hoeveel er tegelijk op de kaart/lijst komt, maar
   // niet meer het totaal: alle bedrijven binnen bereik zijn bereikbaar via de paginering
   // hieronder, net als bij Live Zoeken.
@@ -289,7 +291,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
       routeBox = { minLat: minLat - mLat, maxLat: maxLat + mLat, minLng: minLng - mLng, maxLng: maxLng + mLng };
     }
 
-    const candidates: Array<{ bedrijf: any; coords: Coords; haversine: number; progress: number }> = [];
+    const candidates: Array<{ bedrijf: any; coords: Coords; haversine: number; progress: number; detour: number }> = [];
     for (const b of allData) {
       const naam = (b.naam || '').toLowerCase().trim();
       if (!naam || inChain.has(naam)) continue;
@@ -303,22 +305,25 @@ const RidePanel: React.FC<RidePanelProps> = ({
         if (routeBox && (coords.lat < routeBox.minLat || coords.lat > routeBox.maxLat || coords.lng < routeBox.minLng || coords.lng > routeBox.maxLng)) continue;
         const pos = nearestPointOnRoute(coords.lat, coords.lng, routeLine!);
         if (pos.distKm > ROUTE_CORRIDOR_KM) continue; // ligt niet op de gereden route
-        candidates.push({ bedrijf: b, coords, haversine: hv, progress: pos.progressKm });
+        candidates.push({ bedrijf: b, coords, haversine: hv, progress: pos.progressKm, detour: pos.distKm });
       } else {
         if (hv > radiusKm) continue;
-        candidates.push({ bedrijf: b, coords, haversine: hv, progress: 0 });
+        candidates.push({ bedrijf: b, coords, haversine: hv, progress: 0, detour: 0 });
       }
     }
     // Sorteervolgorde:
     //  • routemodus  → op rijvolgorde langs de route (progress oplopend), zodat je ze precies
-    //    tegenkomt in de volgorde waarin je rijdt. Omdraaien (Van↔Naar) keert de route zelf om,
-    //    dus dan telt de progress vanaf de andere kant — precies het "heen vs terug"-gedrag.
+    //    tegenkomt in de volgorde waarin je rijdt. Bij (vrijwel) gelijke voortgang komt het
+    //    bedrijf dat het strakst óp de route ligt eerst (kleinste omweg) — precies wat je wilt:
+    //    liever eentje in lijn met de route dan eentje waarvoor je de weg af moet. Omdraaien
+    //    (Van↔Naar) keert de route zelf om, dus dan telt de voortgang vanaf de andere kant
+    //    (heen ↔ terug).
     //  • A-Z          → alfabetisch.
     //  • anders       → dichtstbij eerst.
     if (sortMode === 'az') {
       candidates.sort((a, b) => (a.bedrijf.naam || '').localeCompare(b.bedrijf.naam || '', 'nl'));
     } else if (inRouteMode) {
-      candidates.sort((a, b) => a.progress - b.progress);
+      candidates.sort((a, b) => (a.progress - b.progress) || (a.detour - b.detour));
     } else {
       candidates.sort((a, b) => a.haversine - b.haversine);
     }
