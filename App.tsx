@@ -1739,52 +1739,30 @@ const App: React.FC = () => {
   // achtergrond, zodat "waar ben ik nu" nooit blijft hangen op waar je was toen je voor het
   // Real-time geolocatie: watchPosition volgt je locatie continu (niet eenmalig zoals
   // getCurrentPosition deed). Bij elke update wordt reverse geocoding via Nominatim gedaan
-  // om van lat/lng naar volledig adres (straat + huisnummer) te gaan. Dit adres wordt als
-  // prefAddress gesteld, zodat je zoekopdrachten altijd van je huidige locatie starten, en
-  // dit automatisch bijgewerkt wordt als je beweegt.
+  // om van lat/lng naar volledig adres (straat + huisnummer) te gaan. Dit adres wordt ALLEEN
+  // gebruikt om zoekopdrachten vanaf je huidige locatie te laten starten (searchOriginCoords/
+  // activeSearchOriginLabel) — NIET om prefAddress ("Mijn adres" in Instellingen) te overschrijven.
+  // Deed dat eerder wél: elke GPS-update overschreef stilzwijgend het handmatig ingestelde adres
+  // met je live locatietekst, zonder prefAddressCoords/prefAddressCoordsFor mee te updaten — het
+  // adresveld en zijn "gevonden"-status raakten daardoor blijvend uit sync (toonde "Adres niet
+  // gevonden" voor een adres dat prima bestaat, puur omdat de tekst inmiddels iets anders was dan
+  // waarvoor ooit coördinaten waren opgehaald). "Mijn adres" is een per-account instelling ("Per
+  // account aan te passen" staat er letterlijk) en hoort dus stabiel te blijven tot de gebruiker
+  // 'm zelf wijzigt, niet ambient met GPS mee te bewegen.
   useEffect(() => {
     if (!navigator.geolocation) return;
-    let watchId: number | null = null;
-    const reverseGeocode = async (lat: number, lng: number) => {
-      try {
-        const r = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=18&addressdetails=1`,
-          { headers: { 'User-Agent': 'inncempro-markettool/1.0' } }
-        );
-        if (!r.ok) return;
-        const data = await r.json();
-        if (data.address) {
-          // Bouw het adres op als "Straatnaam huisnummer, postcode plaats" — Nominatim's
-          // forward-search (gebruikt later om dit adres weer te geocoden) verwacht die volgorde;
-          // "huisnummer, straat" (het huisnummer los vóóraan met een komma) liet zoekopdrachten
-          // stelselmatig mislukken met "Adres niet gevonden", ook voor adressen die prima bestaan.
-          const houseNum = (data.address.house_number || '') as string;
-          const street = (data.address.road || data.address.street || data.address.name || '') as string;
-          const city = (data.address.city || data.address.town || data.address.village || '') as string;
-          const postcode = (data.address.postcode || '') as string;
-          const streetLine = [street, houseNum].filter(x => x?.trim()).join(' ');
-          const cityLine = [postcode, city].filter(x => x?.trim()).join(' ');
-          const addrParts = [streetLine, cityLine].filter(x => x?.trim());
-          const fullAddr = addrParts.join(', ');
-          if (fullAddr.trim()) {
-            setPrefAddressState(fullAddr);
-            localStorage.setItem('inncempro_pref_address', fullAddr);
-            setSearchOriginCoords({ lat, lng });
-            setActiveSearchOriginLabel('mijn locatie');
-          }
-        }
-      } catch (e) {
-        // Reverse geocoding mislukt: blijf gewoon op hudig adres hangen.
-      }
-    };
-    watchId = navigator.geolocation.watchPosition(
-      (pos) => reverseGeocode(pos.coords.latitude, pos.coords.longitude),
+    // Geen reverse-geocode (Nominatim-call) meer nodig — die diende alleen om prefAddress te
+    // vullen, en dat gebeurt hier bewust niet meer (zie toelichting hierboven). searchOriginCoords
+    // heeft alleen lat/lng nodig, dus rechtstreeks vanaf de GPS-positie zetten.
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        setSearchOriginCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setActiveSearchOriginLabel('mijn locatie');
+      },
       () => { /* geweigerd/fout: geen actie */ },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
-    return () => {
-      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-    };
+    return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
   // Eerste keer laden zonder gecachete coördinaten (bv. na een update van de app): geocode
@@ -1805,10 +1783,14 @@ const App: React.FC = () => {
   // omdat 'ie op dit apparaat simpelweg NOOIT is uitgevoerd (de effects hierboven slaan 'm
   // over bij een fris toestel, ten gunste van GPS-detectie; als die GPS-vraag genegeerd/
   // geweigerd wordt, blijft prefAddressCoords voorgoed null en toont de UI "niet gevonden"
-  // terwijl het adres zelf nooit is opgezocht). Zodra je Instellingen opent en er nog geen
-  // coördinaten zijn, alsnog gewoon proberen — dan klopt de status altijd met een ECHTE poging.
+  // terwijl het adres zelf nooit is opgezocht). Ook `prefAddressCoordsFor !== prefAddress`
+  // (bv. nog een restant van de inmiddels verwijderde live-GPS-overschrijving hierboven, of
+  // een adreswijziging van vóórdat Instellingen ooit geopend werd) hoort hier thuis: de
+  // coördinaten horen dan niet meer bij de GETOONDE tekst, dus dat is feitelijk ook "nog niet
+  // (opnieuw) opgezocht". Zodra je Instellingen opent en dat zich voordoet, alsnog gewoon
+  // proberen — dan klopt de status altijd met een ECHTE, verse poging.
   useEffect(() => {
-    if (showSettings && !prefAddressCoords && !prefAddressGeocoding && prefAddress.trim()) {
+    if (showSettings && !prefAddressGeocoding && prefAddress.trim() && (!prefAddressCoords || prefAddressCoordsFor !== prefAddress)) {
       geocodeAddress(prefAddress.trim());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4229,7 +4211,10 @@ const App: React.FC = () => {
       {/* SETTINGS MODAL */}
       {showSettings && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowSettings(false)}>
-              <div className="bg-white w-full max-w-lg rounded-sm shadow-xl animate-fade-in relative overflow-hidden" onClick={e => e.stopPropagation()}>
+              {/* min-w-0: zonder dit kan een flex-kind nooit smaller worden dan de intrinsieke
+                  breedte van zijn inhoud (hier de Audit Log-tabel) — extra vangnet bovenop de
+                  overflow-x-auto op de tabel zelf, zodat de modal sowieso binnen het scherm blijft. */}
+              <div className="bg-white w-full max-w-lg min-w-0 rounded-sm shadow-xl animate-fade-in relative overflow-hidden" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-between px-6 pt-5 pb-0 border-b border-slate-100">
                       <h2 className="text-base font-black text-slate-900 uppercase font-condensed tracking-wider">Instellingen</h2>
                       <button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-slate-800 pb-4"><X className="w-5 h-5"/></button>
@@ -4239,7 +4224,7 @@ const App: React.FC = () => {
                       {(['profiel', 'voorkeuren', 'audit', 'prullenbak'] as const).map(tab => (
                           <button key={tab} onClick={() => setSettingsTab(tab)}
                               className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${settingsTab === tab ? 'border-b-2 border-[#E85E26] text-[#E85E26]' : 'text-slate-400 hover:text-slate-700'}`}>
-                              {tab === 'profiel' ? 'Profiel' : tab === 'voorkeuren' ? 'Voorkeuren' : tab === 'audit' ? 'Audit Log' : `Prullenbak${deletedEntries.size > 0 ? ` (${deletedEntries.size})` : ''}`}
+                              {tab === 'profiel' ? 'Profiel' : tab === 'voorkeuren' ? 'Voorkeuren' : tab === 'audit' ? 'Logboek' : `Prullenbak${deletedEntries.size > 0 ? ` (${deletedEntries.size})` : ''}`}
                           </button>
                       ))}
                   </div>
@@ -4492,7 +4477,14 @@ const App: React.FC = () => {
                                       <option value={999}>Alle</option>
                                   </select>
                               </div>
-                              <div className="border border-slate-200 rounded-sm overflow-hidden max-h-96 overflow-y-auto">
+                              {/* overflow-x-auto: de tabel (4 kolommen, Timestamp niet-wrappend) is op
+                                  telefoon breder dan het scherm — zonder dit duwde hij de HELE
+                                  instellingen-modal breder dan de viewport uit (klassiek flexbox-
+                                  gotcha: een flex-kind groeit anders mee met de intrinsieke breedte
+                                  van zijn inhoud), waardoor je de rechterkant (bv. het Prullenbak-
+                                  tabblad) niet meer kon zien/bereiken. Nu scrolt alleen de tabel zelf
+                                  horizontaal, de modal blijft binnen het scherm. */}
+                              <div className="border border-slate-200 rounded-sm max-h-96 overflow-y-auto overflow-x-auto">
                                   <table className="w-full text-xs">
                                       <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
                                           <tr>
