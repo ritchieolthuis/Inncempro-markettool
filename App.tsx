@@ -5616,21 +5616,9 @@ const App: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Zwevende knop: verschijnt zodra je op de kaart iets hebt geselecteerd. Alleen
-                      de kaart-specifieke "Maak route"-actie (handleCreateSmartRoute) — kopiëren,
-                      wissen en de namenlijst zelf staan al in de persistente SelectionBar hieronder
-                      (zelfde selectedIds/selectedRaws state), dus die niet dubbel tonen. Boven de
-                      SelectionBar (bottom-20 i.p.v. bottom-4) zodat ze niet over elkaar heen vallen. */}
-                  {mapSelectionMode && selectedIds.size > 0 && (
-                    <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-[1000] w-[calc(100%-2rem)] max-w-lg">
-                      <button
-                        onClick={handleCreateSmartRoute}
-                        className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-[#009FE3] hover:bg-[#008ac5] text-white text-xs font-bold uppercase tracking-wider rounded-sm shadow-lg border border-[#009FE3] transition-colors"
-                      >
-                        <MapPin className="w-3.5 h-3.5" /> Maak route in Google Maps ({selectedIds.size})
-                      </button>
-                    </div>
-                  )}
+                  {/* De kaart-specifieke "Maak route"-actie zit niet meer los zwevend óver de kaart
+                      (overlapte de bolletjes eronder) — staat nu als knop in de witte/oranje
+                      persistente SelectionBar zelf, vlak onder de kaart (zie onCreateRoute-prop). */}
 
                   <ClusterMapView
                     onOpenInDatabase={(naam) => { setDbSearch(naam); setDbPage(1); setViewMode('database'); }}
@@ -7064,6 +7052,7 @@ const App: React.FC = () => {
           allFavorite={Array.from(selectedRaws.values()).every((b: any) => favorites.some(f => f.name === b.naam && f.city === (b.stad || '')))}
           onToggleFavorites={() => toggleSelectionFavorites(Array.from(selectedRaws.values()))}
           onOpenInMaps={() => openSelectionInMaps(Array.from(selectedRaws.values()))}
+          onCreateRoute={viewMode === 'map' && mapSelectionMode ? handleCreateSmartRoute : undefined}
           sidebarWidthPx={viewMode !== 'map' && viewMode !== 'lists' ? (sidebarCollapsed ? 48 : 320) : 0}
         />
       )}
@@ -7189,8 +7178,9 @@ const SelectionBar: React.FC<{
   allFavorite: boolean;
   onToggleFavorites: () => void;
   onOpenInMaps: () => void;
+  onCreateRoute?: () => void;
   sidebarWidthPx: number;
-}> = ({ selected, onRemove, onClear, lists, onAddToList, onCreateAndAddToList, allFavorite, onToggleFavorites, onOpenInMaps, sidebarWidthPx }) => {
+}> = ({ selected, onRemove, onClear, lists, onAddToList, onCreateAndAddToList, allFavorite, onToggleFavorites, onOpenInMaps, onCreateRoute, sidebarWidthPx }) => {
   const [open, setOpen] = useState(false);
   const [showListPicker, setShowListPicker] = useState(false);
   const [newName, setNewName] = useState('');
@@ -7319,6 +7309,17 @@ const SelectionBar: React.FC<{
                 ))}
               </div>
             </div>
+          )}
+          {/* Kaart-specifieke "Maak route"-actie (alleen doorgegeven vanuit de Kaart-tab, zie
+              onCreateRoute-prop) — vlak boven de oranje balk, in dezelfde witte/vaste
+              container i.p.v. los zwevend óver de kaart zelf (overlapte eerder de bolletjes). */}
+          {onCreateRoute && (
+            <button
+              onClick={onCreateRoute}
+              className="w-full mb-1.5 flex items-center justify-center gap-2 py-2.5 px-4 bg-[#009FE3] hover:bg-[#008ac5] text-white text-xs font-bold uppercase tracking-wider rounded-sm shadow-2xl transition-colors"
+            >
+              <MapPin className="w-3.5 h-3.5" /> Maak route in Google Maps ({selected.length})
+            </button>
           )}
           <div className="flex items-stretch gap-1">
             <button
