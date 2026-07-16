@@ -122,6 +122,15 @@ interface RidePanelProps {
   setDestLabel: (s: string) => void;
   // Thuisadres uit instellingen (Lansinksweg 4, Hengelo standaard) — als 1-klik "naar huis".
   homeAddress?: string;
+  // Al-gecodeerde coördinaten van hetzelfde adres (Instellingen > Mijn adres) — gebruikt als
+  // DEFAULT startpunt (zie init-effect hieronder), zodat we niet nog een keer hoeven te
+  // geocoden. null/undefined zolang Instellingen dat adres zelf nog aan het opzoeken is.
+  homeCoords?: Coords | null;
+  // Instellingen > Voorkeuren > "Resultaten per pagina (bezoeken)" — default voor suggestCount/
+  // showAllSuggestions bij het openen. Blijven daarna gewoon lokaal aanpasbaar via de knoppen
+  // hieronder, net zoals de databank-paginering.
+  defaultSuggestCount?: number;
+  defaultShowAllSuggestions?: boolean;
   // Als Live Zoeken al een locatie heeft bepaald, bieden we die als 1-klik startpunt aan
   // (exact dezelfde coördinaat die Live Zoeken gebruikt — die werkt bij de gebruiker altijd).
   liveLocationCoords?: Coords | null;
@@ -185,7 +194,8 @@ async function geocodeAddress(query: string): Promise<Coords | null> {
 const RidePanel: React.FC<RidePanelProps> = ({
   allData, cityCoords, isVisitedCompany, onSaveAsList, onLogVisits, onOpenInDatabase, onOpenInLiveZoeken,
   startCoords, setStartCoords, startLabel, setStartLabel, chain, setChain,
-  destCoords, setDestCoords, destLabel, setDestLabel, homeAddress, liveLocationCoords, embedded,
+  destCoords, setDestCoords, destLabel, setDestLabel, homeAddress, homeCoords,
+  defaultSuggestCount, defaultShowAllSuggestions, liveLocationCoords, embedded,
 }) => {
   const mapDivRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -224,7 +234,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
   // Aantal per pagina (10 of 20) — beperkt hoeveel er tegelijk op de kaart/lijst komt, maar
   // niet meer het totaal: alle bedrijven binnen bereik zijn bereikbaar via de paginering
   // hieronder, net als bij Live Zoeken.
-  const [suggestCount, setSuggestCount] = useState(10);
+  const [suggestCount, setSuggestCount] = useState(defaultSuggestCount || 10);
   const [suggestPage, setSuggestPage] = useState(1);
   const [suggestTotal, setSuggestTotal] = useState(0);
   // "Toon alles": laat de paginering achterwege en toont in één keer alle bedrijven binnen
@@ -232,7 +242,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
   // verfijning (stap 2, OSRM) over — die is bedoeld voor een kleine zichtbare pagina, niet voor
   // mogelijk honderden bedrijven tegelijk (zou de gratis routing-server overbelasten). Je ziet
   // dan de hemelsbrede/route-afstand, wat voor "alles in één keer overzien" ruim genoeg is.
-  const [showAllSuggestions, setShowAllSuggestions] = useState(false);
+  const [showAllSuggestions, setShowAllSuggestions] = useState(!!defaultShowAllSuggestions);
   const [filterTypes, setFilterTypes] = useState<Set<'architect' | 'bouwbedrijf' | 'aannemer' | 'materialen'>>(new Set());
   const [filterSources, setFilterSources] = useState<Set<string>>(new Set());
   // Discipline- en bronfilters staan standaard ingeklapt (net als "Regio & Locatie" elders) —
@@ -389,6 +399,24 @@ const RidePanel: React.FC<RidePanelProps> = ({
     setSuggestions(withDistance);
     setLoadingSuggestions(false);
   };
+
+  // Startpunt default op Instellingen > Mijn adres i.p.v. GPS/IP-locatie te vragen — "via IP"
+  // is vaak stad-niveau en kan flink afwijken (bv. Oldenzaal i.p.v. het echte kantooradres in
+  // Hengelo), terwijl Mijn adres nu net bedoeld is als uitgangspunt voor afstandsberekening op
+  // ALLE kaarten (zie Instellingen > Voorkeuren). Alleen bij het EERST openen (startCoords nog
+  // null, dus geen eigen keuze al gemaakt); GPS/"Zoek startpunt" blijven gewoon beschikbaar om
+  // het te overschrijven. Herhaalt zich niet als homeCoords later verandert (geen homeCoords in
+  // de dependency-array) — anders zou een latere adreswijziging in Instellingen een al bewust
+  // gekozen ander startpunt hier stilzwijgend overschrijven.
+  const homeInitRef = useRef(false);
+  useEffect(() => {
+    if (homeInitRef.current || startCoords) return;
+    if (!homeCoords) return;
+    homeInitRef.current = true;
+    setStartCoords(homeCoords);
+    setStartLabel(homeAddress || 'Mijn adres');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [homeCoords]);
 
   useEffect(() => {
     const pos = currentPosition();
@@ -1319,6 +1347,10 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   })}
                 </div>
               )}
+              {/* Ook "Alleen nog niet bezocht", Sorteer, Per pagina en Toon alles zijn filter-/
+                  weergave-instellingen — vallen daarom onder dezelfde inklapbare Filters-knop
+                  i.p.v. altijd zichtbaar te zijn, voor minder ruis op telefoon. */}
+              {showTypeSourceFilters && (
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <label className="flex items-center gap-2 text-xs text-slate-600">
                   <input type="checkbox" checked={onlyUnvisited} onChange={e => setOnlyUnvisited(e.target.checked)} className="accent-[#E85E26]" />
@@ -1365,6 +1397,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   </button>
                 </div>
               </div>
+              )}
             </div>
 
             {/* Voorstellen: gepagineerd door ALLE bedrijven binnen bereik (net als Live Zoeken),

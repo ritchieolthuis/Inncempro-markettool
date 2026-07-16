@@ -1645,6 +1645,8 @@ const App: React.FC = () => {
     Number(localStorage.getItem(uKey('inncempro_pref_rpp'))) || 10);
   const [prefDbResultsPerPage, setPrefDbResultsPerPage] = useState<number>(() =>
     Number(localStorage.getItem(uKey('inncempro_pref_db_rpp'))) || 50);
+  const [prefRideResultsPerPage, setPrefRideResultsPerPage] = useState<number>(() =>
+    Number(localStorage.getItem(uKey('inncempro_pref_ride_rpp'))) || 10);
   const [prefCardFields, setPrefCardFields] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem(uKey('inncempro_pref_card')) || '{}'); } catch { return {}; }
   });
@@ -1664,6 +1666,7 @@ const App: React.FC = () => {
   const savePrefSort = (v: 'relevant' | 'az') => { setPrefSort(v); setSortMode(v); localStorage.setItem(uKey('inncempro_pref_sort'), v); };
   const savePrefRpp = (v: number) => { setPrefResultsPerPage(v); localStorage.setItem(uKey('inncempro_pref_rpp'), String(v)); };
   const savePrefDbRpp = (v: number) => { setPrefDbResultsPerPage(v); setDbPage(1); localStorage.setItem(uKey('inncempro_pref_db_rpp'), String(v)); };
+  const savePrefRideRpp = (v: number) => { setPrefRideResultsPerPage(v); localStorage.setItem(uKey('inncempro_pref_ride_rpp'), String(v)); };
   const toggleCardField = (key: string) => {
     const next = { ...cardFieldDefault, ...prefCardFields, [key]: !showField(key) };
     setPrefCardFields(next);
@@ -4427,6 +4430,23 @@ const App: React.FC = () => {
                                   </div>
                               </div>
 
+                              {/* Resultaten per pagina — Bezoeken (Onderweg-voorstellen) */}
+                              <div>
+                                  <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Resultaten per pagina <span className="text-slate-400 normal-case font-normal">(bezoeken)</span></label>
+                                  <div className="flex gap-2 flex-wrap">
+                                      {[10, 20, 50, 100].map(n => (
+                                          <button key={n} onClick={() => savePrefRideRpp(n)}
+                                              className={`flex-1 py-2.5 text-xs font-bold border rounded-sm transition-colors ${prefRideResultsPerPage === n ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}>
+                                              {n}
+                                          </button>
+                                      ))}
+                                      <button onClick={() => savePrefRideRpp(RESULTS_PER_PAGE_ALL)}
+                                          className={`flex-1 py-2.5 text-xs font-bold border rounded-sm transition-colors ${prefRideResultsPerPage === RESULTS_PER_PAGE_ALL ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}>
+                                          Alle
+                                      </button>
+                                  </div>
+                              </div>
+
                               {/* Kaartinformatie */}
                               <div>
                                   <label className="text-xs font-bold text-slate-700 uppercase mb-2 block">Informatie per kaart</label>
@@ -5432,6 +5452,9 @@ const App: React.FC = () => {
                         destLabel={rideDestLabel}
                         setDestLabel={setRideDestLabel}
                         homeAddress={prefAddress || DEFAULT_ORIGIN}
+                        homeCoords={prefAddressCoords}
+                        defaultSuggestCount={prefRideResultsPerPage === RESULTS_PER_PAGE_ALL ? 10 : prefRideResultsPerPage}
+                        defaultShowAllSuggestions={prefRideResultsPerPage === RESULTS_PER_PAGE_ALL}
                         liveLocationCoords={searchOriginCoords}
                         onOpenInDatabase={(naam) => { setDbSearch(naam); setDbPage(1); setViewMode('database'); }}
                         onOpenInLiveZoeken={(naam) => { setSelectedRegions([]); setSelectedTypes([]); setSelectedWerksoort([]); setSelectedContact([]); setRadiusKm(null); setCity(naam); setViewMode('search'); executeSearch(undefined, undefined, naam, null, null); }}
