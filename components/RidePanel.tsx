@@ -287,6 +287,12 @@ const RidePanel: React.FC<RidePanelProps> = ({
     return startCoords;
   };
 
+  const currentRouteProgressKm = (): number => {
+    if (!routeLine || routeLine.length < 2 || chain.length === 0) return 0;
+    const pos = nearestPointOnRoute(chain[chain.length - 1].coords.lat, chain[chain.length - 1].coords.lng, routeLine);
+    return pos.progressKm;
+  };
+
   // Zoekt ALLE nog-niet-in-de-rit-zittende bedrijven binnen bereik vanaf de huidige positie
   // (niet meer alleen de eerste N) en toont die gepagineerd — net als Live Zoeken, maar dan op
   // afstand gesorteerd. `page` kiest welk blok van `suggestCount` (10/20) je ziet; de kaart/
@@ -301,6 +307,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
     // we alleen bedrijven die ECHT op die weg liggen (corridor), gesorteerd op rijvolgorde —
     // en negeren we de straal volledig.
     const inRouteMode = !!(routeLine && routeLine.length >= 2);
+    const minRouteProgress = inRouteMode ? currentRouteProgressKm() : 0;
 
     // Goedkope bounding-box om de route (+ corridor-marge) zodat we de dure per-segment-meting
     // alleen doen voor bedrijven die überhaupt in de buurt van de route kunnen liggen — scheelt
@@ -331,6 +338,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
         if (routeBox && (coords.lat < routeBox.minLat || coords.lat > routeBox.maxLat || coords.lng < routeBox.minLng || coords.lng > routeBox.maxLng)) continue;
         const pos = nearestPointOnRoute(coords.lat, coords.lng, routeLine!);
         if (pos.distKm > ROUTE_CORRIDOR_KM) continue; // ligt niet op de gereden route
+        if (pos.progressKm <= minRouteProgress + 0.2) continue; // niet terug langs al gereden/geplande stuk
         candidates.push({ bedrijf: b, coords, haversine: hv, progress: pos.progressKm, detour: pos.distKm });
       } else {
         if (hv > radiusKm) continue;
@@ -431,14 +439,15 @@ const RidePanel: React.FC<RidePanelProps> = ({
   useEffect(() => {
     let cancelled = false;
     if (!startCoords || !destCoords) { setRouteLine(null); return; }
-    getRoutePolyline([startCoords, destCoords]).then(line => {
+    const routePoints = [startCoords, ...chain.map(s => s.coords), destCoords];
+    getRoutePolyline(routePoints).then(line => {
       if (cancelled) return;
       // Fallback op een rechte lijn tussen de twee punten als OSRM niet bereikbaar is — dan
       // klopt de corridor iets grover, maar de richtingmodus blijft werken.
-      setRouteLine(line && line.length >= 2 ? line : [startCoords, destCoords]);
+      setRouteLine(line && line.length >= 2 ? line : routePoints);
     });
     return () => { cancelled = true; };
-  }, [startCoords, destCoords]);
+  }, [startCoords, destCoords, chain]);
 
   const goToSuggestPage = (page: number) => {
     const pos = currentPosition();
@@ -1010,7 +1019,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
     setReplaceStopId(null);
   };
 
-  // Google Maps-route in de juiste, betrouwbare volgorde: startpunt -> stop 1 -> stop 2 -> ...
+  // Google Maps-route in de juiste, betrouwbare volgorde: startpunt -> tussenstops -> eindadres.
   // met naam + adres per stop (niet alleen coördinaten), in het officiële ?api=1-formaat.
   // Google Maps laat maar ~10 punten toe in één route (origin + max 9 stops). Bij een langere
   // route splitsen we 'm daarom in opeenvolgende blokken van elk max 10 punten: blok 2 begint
@@ -1018,16 +1027,25 @@ const RidePanel: React.FC<RidePanelProps> = ({
   // meerdere te-openen Google Maps-links i.p.v. één die stops laat vallen.
   const MAPS_CHUNK = 9; // + startpunt = 10 punten per link
   const mapsUrls: string[] = (() => {
-    if (chain.length === 0 || !startCoords) return [];
-    const encBedrijf = (b: any) => encodeURIComponent([b.naam, b.straat, b.postcode, b.stad].filter(Boolean).join(', '));
+    if (!startCoords || (chain.length === 0 && !destCoords)) return [];
+    const encBedrijf = (b: any, coords?: Coords) => {
+      const label = [b.naam, b.straat, b.postcode, b.stad].filter(Boolean).join(', ').trim();
+      if (label) return encodeURIComponent(label);
+      return coords ? `${coords.lat},${coords.lng}` : '';
+    };
+    const finalStop = destCoords
+      ? { id: 'bestemming', bedrijf: { naam: destLabel || 'Bestemming', isWaypoint: true }, coords: destCoords, km: 0 }
+      : null;
+    const routeStops = finalStop ? [...chain, finalStop] : chain;
     const urls: string[] = [];
-    for (let i = 0; i < chain.length; i += MAPS_CHUNK) {
-      const group = chain.slice(i, i + MAPS_CHUNK);
+    for (let i = 0; i < routeStops.length; i += MAPS_CHUNK) {
+      const group = routeStops.slice(i, i + MAPS_CHUNK);
       const origin = i === 0
         ? (startLabel ? encodeURIComponent(startLabel) : `${startCoords.lat},${startCoords.lng}`)
-        : encBedrijf(chain[i - 1].bedrijf);
-      const destination = encBedrijf(group[group.length - 1].bedrijf);
-      const waypoints = group.slice(0, -1).map(s => encBedrijf(s.bedrijf)).join('|');
+        : encBedrijf(routeStops[i - 1].bedrijf, routeStops[i - 1].coords);
+      const destinationStop = group[group.length - 1];
+      const destination = encBedrijf(destinationStop.bedrijf, destinationStop.coords);
+      const waypoints = group.slice(0, -1).map(s => encBedrijf(s.bedrijf, s.coords)).join('|');
       let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving`;
       if (waypoints) url += `&waypoints=${waypoints}`;
       urls.push(url);
@@ -1084,6 +1102,17 @@ const RidePanel: React.FC<RidePanelProps> = ({
       </div>
     );
   };
+
+  const destinationRow = destCoords ? (
+    <div className="flex items-center gap-2 text-sm">
+      <span className="w-5 h-5 rounded-full bg-[#16A34A] text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">B</span>
+      <span className="text-slate-700 font-medium truncate flex-1">
+        <span className="text-[10px] text-slate-400 mr-1">eindadres</span>{destLabel || 'Bestemming'}
+      </span>
+      <button onClick={swapVanNaar} disabled={chain.length > 0} title={chain.length > 0 ? 'Omdraaien kan alleen vóór je stops toevoegt' : 'Van ↔ Naar omdraaien (heen ↔ terug)'} className="text-slate-400 hover:text-[#009FE3] disabled:opacity-30 flex-shrink-0"><ArrowLeftRight className="w-3.5 h-3.5" /></button>
+      <button onClick={clearDestination} title="Bestemming wissen" className="text-slate-400 hover:text-red-500 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+    </div>
+  ) : null;
 
   // BELANGRIJK: geen wrapper-COMPONENT die binnen deze functie gedefinieerd wordt. Dat gaf een
   // nieuwe component-identiteit bij elke render, waardoor React de héle subtree (inclusief de
@@ -1242,24 +1271,15 @@ const RidePanel: React.FC<RidePanelProps> = ({
                     onClick={() => { setInsertAfterIndex(insertAfterIndex === 'start' ? null : 'start'); setInsertQuery(''); setInsertError(null); }}
                     className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[#E85E26] border border-[#E85E26]/30 rounded-sm hover:bg-[#E85E26]/5"
                   >
-                    <Plus className="w-3 h-3" /> Tussenstop na start
+                    <Plus className="w-3 h-3" /> {destCoords ? `Tussenstop richting ${destLabel || 'eindadres'}` : 'Tussenstop na start'}
                   </button>
                 </div>
-                {renderInsertPanel('start', 'na start')}
+                {renderInsertPanel('start', destCoords ? `richting ${destLabel || 'eindadres'}` : 'na start')}
 
                 {/* Naar (bestemming) — zet de Van→Naar-richtingmodus aan: dan tonen we alleen
                     bedrijven die op de gereden route liggen, in rijvolgorde. Geen straal, geen
                     sliders — gewoon "waar rij ik naartoe". */}
-                {destCoords ? (
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="w-5 h-5 rounded-full bg-[#16A34A] text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">B</span>
-                    <span className="text-slate-700 font-medium truncate flex-1">
-                      <span className="text-[10px] text-slate-400 mr-1">naar</span>{destLabel || 'Bestemming'}
-                    </span>
-                    <button onClick={swapVanNaar} disabled={chain.length > 0} title={chain.length > 0 ? 'Omdraaien kan alleen vóór je stops toevoegt' : 'Van ↔ Naar omdraaien (heen ↔ terug)'} className="text-slate-400 hover:text-[#009FE3] disabled:opacity-30 flex-shrink-0"><ArrowLeftRight className="w-3.5 h-3.5" /></button>
-                    <button onClick={clearDestination} title="Bestemming wissen" className="text-slate-400 hover:text-red-500 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
-                  </div>
-                ) : (
+                {!destCoords && (
                   <div className="flex items-center gap-2">
                     <ArrowRight className="w-5 h-5 text-slate-300 flex-shrink-0" />
                     <input
@@ -1356,6 +1376,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   {renderInsertPanel(i, `na "${s.bedrijf.naam}"`)}
                   </React.Fragment>
                 ))}
+                {destinationRow}
               </div>
               {chain.length > 1 && (
                 <p className="mt-1.5 text-[10px] text-slate-400">Gebruik <ChevronUp className="w-2.5 h-2.5 inline -mt-0.5" /><ChevronDown className="w-2.5 h-2.5 inline -mt-0.5" /> (of sleep op desktop) om de volgorde te wijzigen.</p>
