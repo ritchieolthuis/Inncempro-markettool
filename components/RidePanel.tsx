@@ -215,11 +215,12 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const [radiusKm, setRadiusKm] = useState(75);
   // Hoe ver een bedrijf van de gereden route mag liggen om nog "op de route" te heten (km,
   // hemelsbreed loodrecht op de lijn). Bewust een vaste waarde i.p.v. een slider: de gebruiker
-  // wil geen knoppen, gewoon "de architecten die op mijn route liggen". Strak gehouden (8 km):
-  // een bedrijf dat verder van de lijn ligt betekent echt omrijden, en dat wil je juist NIET
-  // meepakken als je op de doorreis/terugweg bent — beter een bedrijf iets verderop dat wél
-  // op de route ligt dan eentje vlakbij waarvoor je van de weg af moet.
-  const ROUTE_CORRIDOR_KM = 8;
+  // wil geen knoppen, gewoon "de architecten die op mijn route liggen". Strak gehouden (6 km ≈
+  // even van de snelwegafslag af en weer terug): een bedrijf dat verder van de lijn ligt is een
+  // echte omweg de verkeerde kant op (bv. Oirschot ten westen van Eindhoven terwijl je noord
+  // rijdt), en dat wil je juist NIET meepakken — beter eentje iets verderop dat wél op de route
+  // ligt dan eentje "vlakbij" waarvoor je van de weg af moet.
+  const ROUTE_CORRIDOR_KM = 6;
   // Aantal per pagina (10 of 20) — beperkt hoeveel er tegelijk op de kaart/lijst komt, maar
   // niet meer het totaal: alle bedrijven binnen bereik zijn bereikbaar via de paginering
   // hieronder, net als bij Live Zoeken.
@@ -1238,7 +1239,9 @@ const RidePanel: React.FC<RidePanelProps> = ({
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] text-slate-400">Sorteer:</span>
-                    {([['afstand', 'Dichtstbij'], ['az', 'A-Z']] as const).map(([mode, label]) => (
+                    {/* In routemodus betekent "Dichtstbij" → op de route (minimale omweg, in
+                        rijrichting); daarom tonen we dan het duidelijkere label "Op route". */}
+                    {([['afstand', destCoords ? 'Op route' : 'Dichtstbij'], ['az', 'A-Z']] as const).map(([mode, label]) => (
                       <button
                         key={mode}
                         onClick={() => setSortMode(mode)}
