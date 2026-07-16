@@ -2757,6 +2757,7 @@ const App: React.FC = () => {
   const [locationError, setLocationError] = useState<string | null>(null);
   const [locationNote, setLocationNote] = useState<string | null>(null);
   const [advancedSearch, setAdvancedSearch] = useState(false);
+  const [showSearchOptions, setShowSearchOptions] = useState(false);
   // Zoek-vanaf-adres: apart van "mijn locatie" (dat is je eigen, vaste adres/live GPS) — dit
   // is een eenmalig, los adres dat je intypt om VANAF DAAR te zoeken, ongeacht waar je zelf
   // bent. Herkent eerst een bedrijf dat al in het systeem staat (gratis, instant); anders
@@ -4221,14 +4222,14 @@ const App: React.FC = () => {
               {/* min-w-0: zonder dit kan een flex-kind nooit smaller worden dan de intrinsieke
                   breedte van zijn inhoud (hier de Audit Log-tabel) — extra vangnet bovenop de
                   overflow-x-auto op de tabel zelf, zodat de modal sowieso binnen het scherm blijft. */}
-              <div className="bg-white w-full max-w-lg min-w-0 rounded-sm shadow-xl animate-fade-in relative overflow-hidden" onClick={e => e.stopPropagation()}>
-                  <div className="flex items-center justify-between px-6 pt-5 pb-0 border-b border-slate-100">
+              <div className="bg-white w-full max-w-lg min-w-0 max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] rounded-t-xl sm:rounded-sm shadow-xl animate-fade-in relative overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-center justify-between px-4 sm:px-6 pt-4 sm:pt-5 pb-0 border-b border-slate-100 flex-shrink-0">
                       <h2 className="text-base font-black text-slate-900 uppercase font-condensed tracking-wider">Instellingen</h2>
                       <button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-slate-800 pb-4"><X className="w-5 h-5"/></button>
                   </div>
                   {/* Tabs. min-w-0 + compacte tekst/tracking op telefoon zodat alle vier de tabbladen
                       binnen de schermbreedte passen. */}
-                  <div className="flex border-b border-slate-100">
+                  <div className="flex border-b border-slate-100 flex-shrink-0">
                       {(['profiel', 'voorkeuren', 'audit', 'prullenbak'] as const).map(tab => (
                           <button key={tab} onClick={() => setSettingsTab(tab)}
                               className={`flex-1 min-w-0 py-3 px-1 text-[11px] sm:text-xs font-bold uppercase tracking-tight sm:tracking-wider transition-colors ${settingsTab === tab ? 'border-b-2 border-[#E85E26] text-[#E85E26]' : 'text-slate-400 hover:text-slate-700'}`}>
@@ -4237,7 +4238,7 @@ const App: React.FC = () => {
                       ))}
                   </div>
 
-                  <div className="p-6 max-h-[70vh] overflow-y-auto">
+                  <div className="p-4 sm:p-6 overflow-y-auto min-h-0">
                       {settingsTab === 'profiel' && currentUser?.role && (
                           <div className="flex items-center gap-3 mb-5 pb-5 border-b border-slate-100">
                               <div className="w-14 h-14 rounded-full bg-slate-100 overflow-hidden border border-slate-200 flex-shrink-0">
@@ -4651,7 +4652,7 @@ const App: React.FC = () => {
                      onDragEnd: () => { setTabDragIndex(null); setTabDragOverIndex(null); },
                    };
                    const dragClass = `${tabDragOverIndex === i && tabDragIndex !== null && tabDragIndex !== i ? 'bg-[#009FE3]/10' : ''} ${tabDragIndex === i ? 'opacity-40' : ''}`;
-                   const cls = (active: boolean) => `flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 cursor-grab active:cursor-grabbing ${active ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'} ${dragClass}`;
+                   const cls = (active: boolean) => `flex-shrink-0 py-2 sm:py-3 border-b-2 font-bold uppercase tracking-normal sm:tracking-wider text-[9px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1 sm:gap-2 px-1.5 sm:px-3 cursor-grab active:cursor-grabbing ${active ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'} ${dragClass}`;
 
                    if (key === 'search') return (
                      <button key={key} {...dragProps} data-active={viewMode === 'search'} onClick={() => { if (viewMode !== 'search') clearSidebarFilters(); setViewMode('search'); }} className={cls(viewMode === 'search')}>
@@ -5050,7 +5051,7 @@ const App: React.FC = () => {
                <div className="max-w-4xl mx-auto w-full mb-8">
                  <div className="bg-white shadow-md border border-slate-200 rounded-xl p-2 flex flex-col sm:flex-row gap-0 items-center w-full overflow-hidden">
                     <div className="relative flex-grow w-full sm:border-r border-slate-100">
-                        <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+                        <Search className="absolute left-4 sm:left-5 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 sm:w-5 sm:h-5" />
                         <input
                           type="text"
                           value={city}
@@ -5058,8 +5059,8 @@ const App: React.FC = () => {
                           onFocus={() => setShowHistory(true)}
                           onBlur={() => setTimeout(() => setShowHistory(false), 150)}
                           onKeyDown={(e) => e.key === 'Enter' && handleManualSearch()}
-                          placeholder="Architect, aannemer of bouwbedrijf (bijv. OMA)"
-                          className="w-full pl-14 pr-20 py-4 bg-transparent text-slate-900 font-medium placeholder-slate-400 focus:outline-none text-base"
+                          placeholder="Architect, aannemer of bouwbedrijf"
+                          className="w-full pl-11 sm:pl-14 pr-20 py-3.5 sm:py-4 bg-transparent text-slate-900 font-medium placeholder-slate-400 focus:outline-none text-sm sm:text-base"
                         />
                         <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
                           <VoiceInputButton onResult={(text) => { setCity(text); setLocationNote(null); setLocationError(null); if (manualSearchOrigin) clearRadiusAddress(); }} />
@@ -5074,7 +5075,7 @@ const App: React.FC = () => {
                           </button>
                         </div>
                     </div>
-                    <button onClick={() => handleManualSearch()} disabled={searchState.isLoading} className="w-full sm:w-auto bg-[#E85E26] hover:bg-[#d14d1b] disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold py-4 px-8 transition-all flex items-center justify-center gap-3 text-sm uppercase tracking-wider min-w-[160px] rounded-lg sm:rounded-lg">
+                    <button onClick={() => handleManualSearch()} disabled={searchState.isLoading} className="w-full sm:w-auto bg-[#E85E26] hover:bg-[#d14d1b] disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold py-3.5 sm:py-4 px-8 transition-all flex items-center justify-center gap-3 text-sm uppercase tracking-wider min-w-[160px] rounded-lg sm:rounded-lg">
                         {searchState.isLoading ? <Loader2 className="animate-spin w-4 h-4"/> : <ArrowRight className="w-4 h-4" />}
                         <span>Zoeken</span>
                     </button>
@@ -5085,8 +5086,18 @@ const App: React.FC = () => {
                      {locationError || locationNote}
                    </p>
                  )}
+                 <button
+                   type="button"
+                   onClick={() => setShowSearchOptions(v => !v)}
+                   className="md:hidden mt-3 w-full flex items-center justify-center gap-2 bg-white border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-600 shadow-sm"
+                 >
+                   <Filter className="w-3.5 h-3.5 text-[#009FE3]" />
+                   Zoekopties
+                   {(radiusKm !== null || advancedSearch || onlyUnvisited) && <span className="w-2 h-2 rounded-full bg-[#E85E26]" />}
+                   {showSearchOptions ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+                 </button>
                  {/* Straal filter — sleepbare slider */}
-                 <div className="flex items-center gap-4 mt-3 flex-wrap bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+                 <div className={`${showSearchOptions ? 'flex' : 'hidden'} md:flex items-center gap-3 sm:gap-4 mt-3 flex-wrap bg-slate-50 border border-slate-200 rounded-xl px-3 sm:px-4 py-3`}>
                    <div className="flex items-center gap-2 flex-shrink-0">
                      <span className="text-xs font-semibold text-slate-600">Straal</span>
                      <button
@@ -5111,7 +5122,7 @@ const App: React.FC = () => {
                          className="flex-1 min-w-[120px] max-w-[240px] accent-[#009FE3] h-1.5"
                        />
                        <span className="text-xs font-bold text-[#009FE3] w-14 flex-shrink-0">{radiusKm} km</span>
-                       <span className="text-xs text-slate-500">
+                       <span className="hidden sm:inline text-xs text-slate-500">
                          Zoek bedrijven binnen <strong>{radiusKm} km</strong> van de ingevoerde locatie - hoe dichterbij, hoe hoger de match
                        </span>
                        <div className="basis-full flex items-center gap-2 flex-wrap">
@@ -5123,7 +5134,7 @@ const App: React.FC = () => {
                            </div>
                          ) : (
                            <>
-                             <div className="relative flex-1 min-w-[200px]">
+                             <div className="relative flex-1 min-w-full sm:min-w-[200px]">
                                <input
                                  type="text"
                                  value={radiusAddressQuery}
@@ -5165,7 +5176,7 @@ const App: React.FC = () => {
                    </div>
                    <div className="w-px self-stretch bg-slate-200 hidden sm:block" />
                    <div className="flex items-center gap-2 flex-shrink-0">
-                     <span className="text-xs font-semibold text-slate-600">Alleen nog te bezoeken</span>
+                     <span className="text-xs font-semibold text-slate-600">Nog te bezoeken</span>
                      <button
                        type="button"
                        role="switch"
@@ -6136,7 +6147,7 @@ const App: React.FC = () => {
                 {showRouteMap && viewMode === 'search' && (
                   <div className={routeMapFullscreen
                     ? 'fixed inset-0 z-[70] bg-[#F8FAFC]'
-                    : 'md:flex-1 min-w-0 h-[55vh] min-h-[360px] md:h-full md:min-h-0 overflow-hidden border-l-0'}>
+                    : 'route-panel-shell md:flex-1 min-w-0 h-[min(72dvh,620px)] min-h-[420px] md:h-full md:min-h-0 overflow-hidden border-l-0'}>
                     <RouteMapPanel
                       companies={(Array.from(selectedRaws.values()) as any[]).map(r => ({ id: r.naam, name: r.naam, city: r.stad || '', _raw: r }))}
                       allData={activeData}

@@ -71,3 +71,46 @@ h1, h2, h3, h4, h5, h6, .font-condensed { font-family: 'Oswald', sans-serif; }
   bottom: 20px !important;
   right: 20px !important;
 }
+
+html, body, #root {
+  min-height: 100%;
+}
+
+@media (max-width: 767px) {
+  .leaflet-control-attribution {
+    font-size: 9px !important;
+    max-width: calc(100vw - 96px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .route-map-panel .leaflet-control-zoom {
+    margin-bottom: 8px !important;
+  }
+}
+
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 520px) {
+  .app-header {
+    height: 56px !important;
+  }
+
+  .app-header img {
+    width: 40px !important;
+    height: 40px !important;
+  }
+
+  .route-panel-shell {
+    height: calc(100dvh - 72px) !important;
+    min-height: 300px !important;
+  }
+
+  .route-map-panel > div:first-child {
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+  }
+
+  .route-map-panel .route-map-canvas {
+    min-height: 210px;
+  }
+}

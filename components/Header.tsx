@@ -28,7 +28,7 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, user, onLogout, onOpenSett
           ></div>
         </div>
       )}
-      <header className="bg-white border-b-2 border-[#009FE3] sticky top-0 z-30 h-16 sm:h-24 flex items-center shadow-md" style={{ top: isLoading ? '4px' : '0' }}>
+      <header className="app-header bg-white border-b-2 border-[#009FE3] sticky top-0 z-30 h-16 sm:h-24 flex items-center shadow-md" style={{ top: isLoading ? '4px' : '0' }}>
       <div className="max-w-[1400px] w-full mx-auto px-4 sm:px-6 lg:px-10 flex justify-between items-center h-full">
 
         {/* Brand Logo */}

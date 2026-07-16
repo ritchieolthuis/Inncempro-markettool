@@ -3,7 +3,7 @@ import {
   Loader2, Navigation, ListOrdered, RotateCcw, X,
   Trash2, Save, Check, MapPin, GripVertical, Globe, Search,
   ShieldCheck, AlertTriangle, RefreshCw, ChevronDown, ChevronUp,
-  CalendarDays, Plus, Repeat,
+  CalendarDays, Plus, Repeat, Maximize2, Minimize2,
 } from 'lucide-react';
 import { scoreBedrijven, scoreInsertionCandidates, detectType, BezoekType } from '../utils/dagbezoek';
 import { getClusterData, makeId as clusterMakeId } from '../services/geoclusterService';
@@ -171,11 +171,14 @@ interface Props {
   onDeleteEntry?: (naam: string, straat?: string) => void;
   onNavigate?: (target: 'database' | 'search', naam: string) => void;
   onAddCompany?: () => void;
+  autoOptimize?: boolean;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 const DEFAULT_START = 'Lansinkesweg 4, 7553 AE Hengelo';
 
-const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAddressCorrection, onDeleteEntry, onNavigate, onAddCompany }) => {
+const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAddressCorrection, onDeleteEntry, onNavigate, onAddCompany, autoOptimize, isFullscreen, onToggleFullscreen }) => {
   const mapDiv   = useRef<HTMLDivElement>(null);
   const mapRef   = useRef<L.Map | null>(null);
   const stopsRef = useRef<Stop[]>([]);
@@ -196,6 +199,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
   const [insertAfterId,   setInsertAfterId]     = useState<string | 'start' | null>(null);
   const [insertQuery,     setInsertQuery]       = useState('');
   const dragIdx = useRef<number | null>(null);
+  const autoOptimizedKey = useRef('');
 
   // Address verification
   const [verifications, setVerifications] = useState<Record<string, Verification>>({});
@@ -410,6 +414,16 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
     setRouteMode(true);
     setIsOptimising(false);
   };
+
+  useEffect(() => {
+    const ready = stopsRef.current.filter(s => s.coords).length;
+    if (!autoOptimize || routeMode || isOptimising || ready === 0 || stops.length === 0) return;
+    const key = stopsRef.current.map(s => `${s.id}:${s.coords ? '1' : '0'}`).join('|');
+    if (!key || autoOptimizedKey.current === key) return;
+    autoOptimizedKey.current = key;
+    handleOptimise();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOptimize, stops, routeMode, isOptimising]);
 
   const cancelRoute = () => {
     setRouteMode(false); setOrderedStops([]);
@@ -775,7 +789,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
   })();
 
   return (
-    <div className="flex flex-col h-full bg-[#F8FAFC]">
+    <div className="route-map-panel flex flex-col h-full bg-[#F8FAFC]">
       {/* ── Header ── */}
       <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200 flex-shrink-0">
         <div className="flex items-center gap-2.5">
@@ -797,6 +811,11 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
               <Plus className="w-4 h-4" />
             </button>
           )}
+          {onToggleFullscreen && (
+            <button onClick={onToggleFullscreen} title={isFullscreen ? 'Kleiner maken' : 'Volledig scherm'} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-[#009FE3] transition-colors">
+              {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+          )}
           <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
             <X className="w-4 h-4" />
           </button>
@@ -806,7 +825,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
       {/* ── Map ── */}
       {/* `isolate` containt Leaflet's eigen panes (interne z-index tot 700) binnen deze wrapper,
           zodat ze nooit door een modal (bijv. Instellingen, z-50) heen kunnen "lekken". */}
-      <div className="relative isolate flex-1 min-h-0">
+      <div className="route-map-canvas relative isolate flex-1 min-h-0">
         <div
           ref={mapDiv}
           className="absolute inset-0"
@@ -980,6 +999,20 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
                   </span>
                   <span className="text-slate-400 flex-shrink-0 text-[10px] truncate max-w-[60px] hidden sm:block">{raw.stad || s.company.city || ''}</span>
                   <div className="flex items-center gap-1 flex-shrink-0">
+                    <button
+                      onClick={e => { e.stopPropagation(); reorderStops(i, Math.max(0, i - 1)); }}
+                      disabled={i === 0}
+                      className="p-0.5 text-slate-300 hover:text-[#009FE3] disabled:opacity-20 disabled:hover:text-slate-300 transition-colors"
+                      title="Omhoog">
+                      <ChevronUp className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={e => { e.stopPropagation(); reorderStops(i, Math.min(displayStops.length - 1, i + 1)); }}
+                      disabled={i === displayStops.length - 1}
+                      className="p-0.5 text-slate-300 hover:text-[#009FE3] disabled:opacity-20 disabled:hover:text-slate-300 transition-colors"
+                      title="Omlaag">
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
                     {website && (
                       <a href={toUrl(website)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
                         className="opacity-0 group-hover:opacity-100 p-0.5 text-[#009FE3] hover:text-[#007bbf] transition-opacity" title="Website">
