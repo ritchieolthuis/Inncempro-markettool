@@ -3549,7 +3549,26 @@ const App: React.FC = () => {
 
               const contactFields = isKnownAlias ? '' : [b.email, b.email_sales, b.email_overig, b.website].filter(Boolean).join(' ').toLowerCase();
               const matchFields = matchLocation || (!isKnownAlias && contactFields.includes(qEffective));
-              if (!matchNaam && !matchFields) return false;
+
+              // Database-achtige velden ook laten meetellen in Live Zoeken. Zonder dit vond
+              // "Bouwgarant" niets, terwijl honderden bedrijven die bron wél in de database
+              // hebben. Zelfde geldt voor specialisaties, rechtsvorm en samengestelde _sources.
+              const searchableMeta = [
+                b.source,
+                ...(Array.isArray(b._sources) ? b._sources : []),
+                b.rechtsvorm,
+                b.spec1,
+                b.spec2,
+                b.spec3,
+                b.kvk,
+              ].filter(Boolean).join(' ');
+              const searchableMetaNorm = normalizeText(searchableMeta);
+              const matchMeta = searchWordList.length > 0 && searchWordList.every(searchTerm => {
+                const termNorm = normalizeText(searchTerm);
+                return !!termNorm && searchableMetaNorm.includes(termNorm);
+              });
+
+              if (!matchNaam && !matchFields && !matchMeta) return false;
           }
 
           return true;
@@ -5297,12 +5316,55 @@ const App: React.FC = () => {
                 </div>
             )}
 
+            {viewMode === 'search' && searchState.isLoading && (
+                <div className="max-w-4xl mx-auto w-full mb-6 bg-white border border-slate-200 rounded-xl shadow-sm p-4">
+                  <div className="flex items-center gap-3">
+                    <Loader2 className="w-4 h-4 text-[#009FE3] animate-spin flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold uppercase tracking-wider text-slate-700">Live resultaten ophalen</p>
+                      <p className="text-xs text-slate-400 mt-0.5 truncate">Zoekt in naam, stad, bron, specialisaties en databasevelden.</p>
+                    </div>
+                  </div>
+                </div>
+            )}
+
             {viewMode === 'search' && !foundCompanies.length && !searchState.isLoading && !searchState.error && (() => {
                 const totalRecentPages = Math.max(1, Math.ceil(recentViewed.length / RECENT_VIEWED_PAGE_SIZE));
                 const recentPage = Math.min(recentViewedPage, totalRecentPages);
+                const hasSearchInput = !!(
+                  city.trim() ||
+                  radiusKm ||
+                  selectedRegions.length ||
+                  selectedTypes.length ||
+                  selectedWerksoort.length ||
+                  selectedContact.length ||
+                  selectedLijsten.length ||
+                  selectedBron.length ||
+                  selectedRechtsvorm.length ||
+                  searchState.data
+                );
                 return (
-                <div className="py-16 max-w-4xl mx-auto px-4">
-                    {AI_FEATURES_ENABLED ? (
+                <div className={`${hasSearchInput ? 'py-6' : 'py-16'} max-w-4xl mx-auto px-4`}>
+                    {hasSearchInput ? (
+                    <div className="mb-8 bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          <Search className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide">Geen live resultaten</h3>
+                            <p className="text-xs text-slate-500 mt-1">Controleer actieve filters of open dezelfde zoekterm in de database.</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => { setDbSearch(city.trim()); setDbPage(1); setViewMode('database'); }}
+                          className="px-3 py-2 bg-white border border-[#009FE3]/40 text-[#009FE3] hover:bg-[#009FE3]/5 rounded-lg text-[10px] font-bold uppercase tracking-wider"
+                        >
+                          Zoek in database
+                        </button>
+                      </div>
+                    </div>
+                    ) : null}
+                    {!hasSearchInput && AI_FEATURES_ENABLED ? (
                     <div className="mb-12 text-center">
                       <div className="mx-auto mb-4 relative" style={{ width: 64, height: 64 }}>
                         <span className="absolute inset-0 rounded-full animate-orb-glow blur-lg opacity-50" style={{ background: 'linear-gradient(135deg, #009FE3, #16a34a, #E85E26)' }} />
@@ -5323,7 +5385,7 @@ const App: React.FC = () => {
                         ))}
                       </div>
                     </div>
-                    ) : (
+                    ) : !hasSearchInput ? (
                     <div className="mb-12 text-center">
                       <div className="mx-auto mb-4 w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center">
                         <Search className="w-7 h-7 text-slate-400" />
@@ -5332,7 +5394,7 @@ const App: React.FC = () => {
                       <p className="text-sm text-slate-400 mt-1 max-w-md mx-auto">Zoek op bedrijfsnaam, stad, straat of postcode.</p>
                       <p className="text-slate-400 text-xs mt-1">Alle {activeData.length.toLocaleString('nl-NL')} bedrijven staan in de <button onClick={() => { setViewMode('database'); setDbPage(1); }} className="underline hover:text-[#009FE3]">Bedrijvendatabase</button>.</p>
                     </div>
-                    )}
+                    ) : null}
 
                     {(recentViewed.length > 0 || savedFilters.length > 0) && (
                       <div className="mb-12">

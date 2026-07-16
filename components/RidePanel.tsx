@@ -256,6 +256,10 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const [manualQuery, setManualQuery] = useState('');
   const [manualLoading, setManualLoading] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
+  const [insertAfterIndex, setInsertAfterIndex] = useState<number | 'start' | null>(null);
+  const [insertQuery, setInsertQuery] = useState('');
+  const [insertLoading, setInsertLoading] = useState(false);
+  const [insertError, setInsertError] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
   const [saveListName, setSaveListName] = useState('');
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -868,6 +872,54 @@ const RidePanel: React.FC<RidePanelProps> = ({
     setManualLoading(false);
   };
 
+  const insertCandidates = insertQuery.trim().length >= 2
+    ? allData
+        .filter((b: any) => {
+          const naam = (b.naam || '').toLowerCase();
+          if (!naam || chain.some(s => s.bedrijf.naam === b.naam)) return false;
+          return `${naam} ${(b.stad || '').toLowerCase()}`.includes(insertQuery.toLowerCase());
+        })
+        .slice(0, 8)
+    : [];
+
+  const insertPosition = (after: number | 'start') => after === 'start' ? 0 : after + 1;
+
+  const closeInsertPanel = () => {
+    setInsertAfterIndex(null);
+    setInsertQuery('');
+    setInsertError(null);
+  };
+
+  const insertStopAt = (after: number | 'start', bedrijf: any, coords: Coords) => {
+    const pos = insertPosition(after);
+    const id = `${bedrijf.naam || 'tussenstop'}_${Date.now()}_${Math.random()}`;
+    setChain(prev => {
+      const next = [...prev.slice(0, pos), { id, bedrijf, coords, km: 0 }, ...prev.slice(pos)];
+      return recomputeKm(next);
+    });
+    closeInsertPanel();
+  };
+
+  const insertManualAt = (after: number | 'start', b: any) => {
+    const coords = coordsFor(b, cityCoords);
+    if (!coords) return;
+    insertStopAt(after, b, coords);
+  };
+
+  const insertPlaceWaypointAt = async (after: number | 'start', q: string) => {
+    const query = q.trim();
+    if (!query) return;
+    setInsertError(null);
+    setInsertLoading(true);
+    const coords = await geocodeAddress(query);
+    setInsertLoading(false);
+    if (!coords) {
+      setInsertError(`"${query}" niet gevonden als bedrijf of plaats.`);
+      return;
+    }
+    insertStopAt(after, { naam: query, stad: '', straat: '', postcode: '', isWaypoint: true }, coords);
+  };
+
   // Route-volgorde slepen: km per stop is berekend t.o.v. de vorige stop op het moment van
   // toevoegen, dus na het verwisselen van volgorde herberekenen we die (hemelsbreed) opnieuw
   // vanaf het startpunt door de hele keten, anders kloppen de getoonde afstanden niet meer.
@@ -987,6 +1039,50 @@ const RidePanel: React.FC<RidePanelProps> = ({
     onLogVisits(chain.map(s => s.bedrijf));
     if (saveListName.trim()) onSaveAsList(saveListName.trim(), chain.map(s => s.bedrijf));
     setFinished(true);
+  };
+
+  const renderInsertPanel = (after: number | 'start', label: string) => {
+    if (insertAfterIndex !== after) return null;
+    return (
+      <div className="ml-7 my-1.5 border border-[#E85E26]/40 bg-orange-50/40 rounded-sm p-2">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Tussenstop invoegen {label}</span>
+          <button onClick={closeInsertPanel} className="text-slate-400 hover:text-slate-700"><X className="w-3.5 h-3.5" /></button>
+        </div>
+        <input
+          type="text"
+          value={insertQuery}
+          onChange={e => { setInsertQuery(e.target.value); setInsertError(null); }}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && insertQuery.trim().length >= 2) {
+              insertCandidates.length > 0 ? insertManualAt(after, insertCandidates[0]) : insertPlaceWaypointAt(after, insertQuery);
+            }
+          }}
+          autoFocus
+          placeholder="Bedrijf of plaatsnaam..."
+          className="w-full border border-slate-200 rounded-sm px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#E85E26] bg-white"
+        />
+        {insertError && <p className="mt-1 text-[10px] text-red-500">{insertError}</p>}
+        {insertQuery.trim().length >= 2 && (
+          <div className="mt-1 border border-slate-200 rounded-sm divide-y divide-slate-100 max-h-44 overflow-y-auto bg-white">
+            <button
+              onClick={() => insertPlaceWaypointAt(after, insertQuery)}
+              disabled={insertLoading}
+              className="w-full text-left px-3 py-2 text-xs font-semibold text-[#E85E26] hover:bg-[#E85E26]/5 flex items-center gap-2 disabled:opacity-50"
+            >
+              {insertLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" /> : <MapPin className="w-3.5 h-3.5 flex-shrink-0" />}
+              "{insertQuery.trim()}" als tussenstop (plaats)
+            </button>
+            {insertCandidates.map((b: any, i: number) => (
+              <button key={i} onClick={() => insertManualAt(after, b)} className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-[#009FE3]/5 flex items-center gap-2">
+                <Plus className="w-3 h-3 text-slate-400 flex-shrink-0" />
+                {b.naam}{b.stad ? `, ${b.stad}` : ''}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   // BELANGRIJK: geen wrapper-COMPONENT die binnen deze functie gedefinieerd wordt. Dat gaf een
@@ -1141,6 +1237,15 @@ const RidePanel: React.FC<RidePanelProps> = ({
                     </>
                   )}
                 </div>
+                <div className="ml-7 flex items-center">
+                  <button
+                    onClick={() => { setInsertAfterIndex(insertAfterIndex === 'start' ? null : 'start'); setInsertQuery(''); setInsertError(null); }}
+                    className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[#E85E26] border border-[#E85E26]/30 rounded-sm hover:bg-[#E85E26]/5"
+                  >
+                    <Plus className="w-3 h-3" /> Tussenstop na start
+                  </button>
+                </div>
+                {renderInsertPanel('start', 'na start')}
 
                 {/* Naar (bestemming) — zet de Van→Naar-richtingmodus aan: dan tonen we alleen
                     bedrijven die op de gereden route liggen, in rijvolgorde. Geen straal, geen
@@ -1200,7 +1305,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                     onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); }}
                     className={`flex items-center gap-1.5 text-sm rounded-sm transition-colors ${dragOverIndex === i && dragIndex !== null && dragIndex !== i ? 'bg-[#009FE3]/10' : ''} ${dragIndex === i ? 'opacity-40' : ''}`}
                   >
-                    <GripVertical className="hidden sm:block w-3.5 h-3.5 text-slate-300 cursor-grab active:cursor-grabbing flex-shrink-0" />
+                    <GripVertical className="w-3.5 h-3.5 text-slate-300 cursor-grab active:cursor-grabbing flex-shrink-0" />
                     <span className="w-5 h-5 rounded-full bg-[#E85E26] text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
                     <span className="text-slate-800 font-medium truncate flex-1">{s.bedrijf.naam}</span>
                     <span className="text-[10px] text-slate-400 flex-shrink-0 hidden sm:inline">{s.km.toFixed(1)} km</span>
@@ -1240,6 +1345,15 @@ const RidePanel: React.FC<RidePanelProps> = ({
                       </div>
                     </div>
                   )}
+                  <div className="ml-7 flex items-center">
+                    <button
+                      onClick={() => { setInsertAfterIndex(insertAfterIndex === i ? null : i); setInsertQuery(''); setInsertError(null); }}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[#E85E26] border border-[#E85E26]/30 rounded-sm hover:bg-[#E85E26]/5"
+                    >
+                      <Plus className="w-3 h-3" /> Tussenstop na deze stop
+                    </button>
+                  </div>
+                  {renderInsertPanel(i, `na "${s.bedrijf.naam}"`)}
                   </React.Fragment>
                 ))}
               </div>
