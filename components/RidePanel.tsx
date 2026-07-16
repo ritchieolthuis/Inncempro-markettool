@@ -227,6 +227,12 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const [suggestCount, setSuggestCount] = useState(10);
   const [suggestPage, setSuggestPage] = useState(1);
   const [suggestTotal, setSuggestTotal] = useState(0);
+  // "Toon alles": laat de paginering achterwege en toont in één keer alle bedrijven binnen
+  // bereik/route, i.p.v. 10/20 per keer moeten doorklikken. Slaat daarom ook de rijafstand-
+  // verfijning (stap 2, OSRM) over — die is bedoeld voor een kleine zichtbare pagina, niet voor
+  // mogelijk honderden bedrijven tegelijk (zou de gratis routing-server overbelasten). Je ziet
+  // dan de hemelsbrede/route-afstand, wat voor "alles in één keer overzien" ruim genoeg is.
+  const [showAllSuggestions, setShowAllSuggestions] = useState(false);
   const [filterTypes, setFilterTypes] = useState<Set<'architect' | 'bouwbedrijf' | 'aannemer' | 'materialen'>>(new Set());
   const [filterSources, setFilterSources] = useState<Set<string>>(new Set());
   const [sortMode, setSortMode] = useState<'afstand' | 'az'>('afstand');
@@ -329,11 +335,22 @@ const RidePanel: React.FC<RidePanelProps> = ({
       candidates.sort((a, b) => a.haversine - b.haversine);
     }
 
+    setSuggestTotal(candidates.length);
+
+    if (showAllSuggestions) {
+      // Alles in één keer, geen paginering en geen OSRM-verfijning (zie toelichting bij de
+      // state hierboven) — hemelsbrede/route-afstand is voor "alles overzien" ruim genoeg, en
+      // honderden losse rijafstand-aanvragen zou de gratis routing-server overbelasten.
+      setSuggestPage(1);
+      setSuggestions(candidates.map(c => ({ bedrijf: c.bedrijf, coords: c.coords, km: c.haversine, driving: false })));
+      setLoadingSuggestions(false);
+      return;
+    }
+
     const totalPages = Math.max(1, Math.ceil(candidates.length / suggestCount));
     const clampedPage = Math.min(Math.max(1, page), totalPages);
     const pageItems = candidates.slice((clampedPage - 1) * suggestCount, clampedPage * suggestCount);
 
-    setSuggestTotal(candidates.length);
     setSuggestPage(clampedPage);
 
     // Stap 1 — meteen tonen op hemelsbrede afstand, geen wachttijd.
@@ -368,7 +385,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
     const pos = currentPosition();
     if (pos) computeSuggestions(pos, 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chain, filterTypes, filterSources, sortMode, onlyUnvisited, suggestCount, radiusKm, startCoords, routeLine]);
+  }, [chain, filterTypes, filterSources, sortMode, onlyUnvisited, suggestCount, radiusKm, startCoords, routeLine, showAllSuggestions]);
 
   // Haalt de echte rijroute (weggeometrie) op zodra er zowel een startpunt als een bestemming
   // is — dát maakt de richtingmodus actief. Zonder bestemming (of bij een netwerkfout) blijft
@@ -566,7 +583,12 @@ const RidePanel: React.FC<RidePanelProps> = ({
     // een bolletje van een paar pixels is op een telefoon vrijwel onmogelijk precies te raken.
     const suggestionRadius = isTouchDevice ? 11 : 6;
 
-    suggestions.forEach(s => {
+    // Bij "Toon alles" kan dit oplopen tot honderden bedrijven — de LIJST toont ze allemaal
+    // (goedkoop, gewoon tekst), maar de kaart cappen we op 300 markers. Meer dan dat gaf precies
+    // de traagheid waar deze sessie mee begon (elke marker krijgt eigen hover/popup-bindings,
+    // ook met canvas-rendering). Ruim boven wat je op een schermpje toch kunt onderscheiden.
+    const MAX_SUGGESTION_MARKERS = 300;
+    suggestions.slice(0, MAX_SUGGESTION_MARKERS).forEach(s => {
       const bolletje = L.circleMarker([s.coords.lat, s.coords.lng], {
         radius: suggestionRadius, color: '#fff', weight: 1.5, fillColor: '#94a3b8', fillOpacity: 0.9, interactive: true,
       })
@@ -1251,18 +1273,30 @@ const RidePanel: React.FC<RidePanelProps> = ({
                       </button>
                     ))}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-slate-400">Per pagina:</span>
-                    {[10, 20].map(n => (
-                      <button
-                        key={n}
-                        onClick={() => setSuggestCount(n)}
-                        className={`px-2 py-1 text-[10px] font-bold rounded-sm border ${suggestCount === n ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}
-                      >
-                        {n}
-                      </button>
-                    ))}
-                  </div>
+                  {/* "Toon alles": overslaat de paginering (10/20-per-keer doorklikken) en toont
+                      in één keer alle bedrijven binnen bereik/route. Verbergt daarom de "Per
+                      pagina"-keuze, want die is dan niet relevant. */}
+                  {!showAllSuggestions && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-400">Per pagina:</span>
+                      {[10, 20].map(n => (
+                        <button
+                          key={n}
+                          onClick={() => setSuggestCount(n)}
+                          className={`px-2 py-1 text-[10px] font-bold rounded-sm border ${suggestCount === n ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => setShowAllSuggestions(v => !v)}
+                    title={showAllSuggestions ? 'Terug naar per pagina bekijken' : `Alle ${suggestTotal || ''} bedrijven in één keer tonen (geen doorklikken)`}
+                    className={`px-2 py-1 text-[10px] font-bold rounded-sm border ${showAllSuggestions ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#E85E26]'}`}
+                  >
+                    {showAllSuggestions ? `Toon alles aan (${suggestTotal})` : 'Toon alles'}
+                  </button>
                 </div>
               </div>
             </div>
@@ -1280,16 +1314,19 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   {suggestions.length > 0 && (
                     <button
                       onClick={advanceAll}
-                      title="Alle voorstellen op deze pagina toevoegen aan de route"
+                      title={showAllSuggestions ? 'Alle getoonde bedrijven toevoegen aan de route' : 'Alle voorstellen op deze pagina toevoegen aan de route'}
                       className="text-[10px] font-bold uppercase tracking-wider text-green-600 hover:text-green-700 hover:underline flex items-center gap-1"
                     >
-                      <Check className="w-3 h-3" /> Accepteer pagina ({suggestions.length})
+                      <Check className="w-3 h-3" /> {showAllSuggestions ? 'Accepteer alles' : 'Accepteer pagina'} ({suggestions.length})
                     </button>
                   )}
                 </div>
               </div>
               {suggestions.length === 0 && !loadingSuggestions && (
                 <p className="text-xs text-slate-400 py-4 text-center">Geen bedrijven gevonden binnen bereik met deze filters.</p>
+              )}
+              {showAllSuggestions && suggestions.length > 300 && (
+                <p className="text-[10px] text-slate-400 mb-1.5">Lijst toont alles ({suggestions.length}); op de kaart staan de eerste 300 (anders wordt de kaart traag).</p>
               )}
               <div className="space-y-1.5 max-h-80 overflow-y-auto">
                 {suggestions.map((s, i) => (
@@ -1308,7 +1345,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   </div>
                 ))}
               </div>
-              {suggestTotal > suggestCount && (() => {
+              {!showAllSuggestions && suggestTotal > suggestCount && (() => {
                 const totalSuggestPages = Math.max(1, Math.ceil(suggestTotal / suggestCount));
                 return (
                   <div className="flex items-center justify-center gap-3 mt-2 pt-2 border-t border-slate-100">

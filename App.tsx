@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Loader2, ArrowRight, X, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send, Clock, Eye, List, Linkedin, Navigation } from 'lucide-react';
+import { Search, Loader2, ArrowRight, X, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send, Clock, Eye, List, Linkedin, Navigation, GripVertical } from 'lucide-react';
 import Papa from 'papaparse';
 import bouwgarantData from './bouwgarant_data.json';
 import cityCoords from './city_coords.json';
@@ -1063,6 +1063,16 @@ function overlapScore(qWords: string[], bWords: string[]): number {
 
 const DEFAULT_ORIGIN = "Lansinkesweg 4, 7553 AE Hengelo";
 
+// Hoofdtabbladen (Live Zoeken, Favorieten, Lijsten, Database, Kaart, Bezoeken) — versleepbaar
+// in zowel de tabbalk zelf als bij Instellingen > Voorkeuren. Statische labels hier (geen
+// live tellers) zodat de Instellingen-lijst niet afhankelijk is van waar in App.tsx die tellers
+// berekend worden; de tabbalk zelf toont wél de live tellers (badges), zie renderTab hieronder.
+type ViewModeKey = 'search' | 'favorites' | 'database' | 'map' | 'lists' | 'visits';
+const DEFAULT_TAB_ORDER: ViewModeKey[] = ['search', 'favorites', 'lists', 'database', 'map', 'visits'];
+const TAB_LABELS: Record<ViewModeKey, string> = {
+  search: 'Live Zoeken', favorites: 'Mijn Favorieten', lists: 'Lijsten', database: 'Bedrijvendatabase', map: 'Kaart', visits: 'Mijn bezoeken',
+};
+
 // Fallback als de browser's eigen Geolocation API faalt (geweigerde toestemming, geen WiFi-
 // scan mogelijk, een VM/netwerk waar de browser geen positie kan bepalen, etc.) — een gratis,
 // geen-sleutel-nodig IP-locatiedienst. Minder precies dan GPS/WiFi (meestal stad-niveau i.p.v.
@@ -1838,7 +1848,30 @@ const App: React.FC = () => {
   // APP STATE
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const [viewMode, setViewMode] = useState<'search' | 'favorites' | 'database' | 'map' | 'lists' | 'visits'>('search');
+  const [viewMode, setViewMode] = useState<ViewModeKey>('search');
+  // Volgorde van de hoofdtabbladen — versleepbaar (tabbalk zelf én Instellingen > Voorkeuren),
+  // per apparaat onthouden. Bij een corrupte/verouderde opslag (bv. na een appversie met een
+  // extra tab) valt 'ie terug op de standaardvolgorde i.p.v. half-kapot te blijven.
+  const [tabOrder, setTabOrderState] = useState<ViewModeKey[]>(() => {
+    try {
+      const raw = localStorage.getItem('inncempro_tab_order');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length === DEFAULT_TAB_ORDER.length && DEFAULT_TAB_ORDER.every(k => parsed.includes(k))) {
+          return parsed;
+        }
+      }
+    } catch { /* corrupte opslag — standaardvolgorde gebruiken */ }
+    return DEFAULT_TAB_ORDER;
+  });
+  const setTabOrder = (order: ViewModeKey[]) => {
+    setTabOrderState(order);
+    localStorage.setItem('inncempro_tab_order', JSON.stringify(order));
+  };
+  // Eén gedeeld sleep-statuspaar voor zowel de tabbalk als de Instellingen-lijst — er kan nooit
+  // in beide tegelijk gesleept worden, dus scheelt dit dubbele state.
+  const [tabDragIndex, setTabDragIndex] = useState<number | null>(null);
+  const [tabDragOverIndex, setTabDragOverIndex] = useState<number | null>(null);
   const [showRidePanel, setShowRidePanel] = useState(false);
   // Onderweg-route hier opgetild i.p.v. in RidePanel zelf, zodat de opgebouwde route blijft
   // staan als je naar een ander tabblad gaat en terugkomt (RidePanel unmount dan wél, maar
@@ -4151,6 +4184,56 @@ const App: React.FC = () => {
                                   </p>
                               </div>
 
+                              {/* Volgorde tabbladen — zelfde versleep-patroon als bedrijven herordenen
+                                  (bv. Onderweg): sleep op de rij, of gebruik de pijltjes (nodig op
+                                  telefoon, waar slepen niet altijd betrouwbaar vuurt via touch). */}
+                              <div>
+                                  <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Volgorde tabbladen</label>
+                                  <p className="text-[10px] text-slate-400 mb-2">Sleep om te bepalen in welke volgorde Zoeken, Favorieten, Lijsten, Database, Kaart en Bezoeken in de navigatiebalk staan.</p>
+                                  <div className="space-y-1">
+                                      {tabOrder.map((key, i) => (
+                                          <div
+                                              key={key}
+                                              draggable
+                                              onDragStart={() => setTabDragIndex(i)}
+                                              onDragOver={e => { e.preventDefault(); if (tabDragOverIndex !== i) setTabDragOverIndex(i); }}
+                                              onDragLeave={() => setTabDragOverIndex(prev => (prev === i ? null : prev))}
+                                              onDrop={e => {
+                                                  e.preventDefault();
+                                                  if (tabDragIndex !== null && tabDragIndex !== i) {
+                                                      const next = [...tabOrder];
+                                                      const [moved] = next.splice(tabDragIndex, 1);
+                                                      next.splice(i, 0, moved);
+                                                      setTabOrder(next);
+                                                  }
+                                                  setTabDragIndex(null);
+                                                  setTabDragOverIndex(null);
+                                              }}
+                                              onDragEnd={() => { setTabDragIndex(null); setTabDragOverIndex(null); }}
+                                              className={`flex items-center gap-2 px-3 py-2 border rounded-sm bg-white transition-colors ${tabDragOverIndex === i && tabDragIndex !== null && tabDragIndex !== i ? 'border-[#009FE3] bg-[#009FE3]/5' : 'border-slate-200'} ${tabDragIndex === i ? 'opacity-40' : ''}`}
+                                          >
+                                              <GripVertical className="w-3.5 h-3.5 text-slate-300 cursor-grab active:cursor-grabbing flex-shrink-0" />
+                                              <span className="text-sm text-slate-700 flex-1">{TAB_LABELS[key]}</span>
+                                              <div className="flex items-center gap-0.5 flex-shrink-0">
+                                                  <button
+                                                      disabled={i === 0}
+                                                      onClick={() => { const next = [...tabOrder]; [next[i - 1], next[i]] = [next[i], next[i - 1]]; setTabOrder(next); }}
+                                                      className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700 disabled:opacity-20 disabled:hover:bg-transparent"
+                                                  ><ChevronUp className="w-4 h-4" /></button>
+                                                  <button
+                                                      disabled={i === tabOrder.length - 1}
+                                                      onClick={() => { const next = [...tabOrder]; [next[i + 1], next[i]] = [next[i], next[i + 1]]; setTabOrder(next); }}
+                                                      className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700 disabled:opacity-20 disabled:hover:bg-transparent"
+                                                  ><ChevronDown className="w-4 h-4" /></button>
+                                              </div>
+                                          </div>
+                                      ))}
+                                  </div>
+                                  {JSON.stringify(tabOrder) !== JSON.stringify(DEFAULT_TAB_ORDER) && (
+                                      <button onClick={() => setTabOrder(DEFAULT_TAB_ORDER)} className="mt-2 text-[10px] text-slate-400 hover:text-[#E85E26] font-bold uppercase tracking-wider">Standaardvolgorde herstellen</button>
+                                  )}
+                              </div>
+
                               {/* Standaard sortering */}
                               <div>
                                   <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Standaard sortering</label>
@@ -4367,37 +4450,76 @@ const App: React.FC = () => {
           <main className="flex-grow p-3 pb-24 sm:p-6 sm:pb-6 lg:p-10 min-w-0 flex flex-col">
              <div className="relative max-w-4xl mx-auto w-full mb-4 sm:mb-6">
              <div ref={tabBarRef} className="flex gap-1 border-b border-slate-200 overflow-x-auto scroll-smooth">
-                 <button data-active={viewMode === 'search'} onClick={() => { if (viewMode !== 'search') clearSidebarFilters(); setViewMode('search'); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'search' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <LayoutGrid className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
-                     <span className="hidden sm:inline">Live Zoeken</span>
-                     <span className="sm:hidden">Zoeken</span>
-                 </button>
-                 <button data-active={viewMode === 'favorites'} onClick={() => { if (viewMode !== 'favorites') clearSidebarFilters(); setViewMode('favorites'); setCurrentPage(1); setShowRouteMap(false); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'favorites' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <Heart className={`hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0 ${viewMode === 'favorites' ? 'fill-current' : ''}`} />
-                     <span className="hidden sm:inline">Mijn Favorieten ({favorites.length})</span>
-                     <span className="sm:hidden">Favorieten ({favorites.length})</span>
-                 </button>
-                 <button data-active={viewMode === 'lists'} onClick={() => { setViewMode('lists'); setActiveListId(prev => prev ?? (lists[0]?.id ?? null)); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'lists' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <List className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
-                     <span className="hidden sm:inline">Lijsten ({lists.length})</span>
-                     <span className="sm:hidden">Lijsten ({lists.length})</span>
-                 </button>
-                 <button data-active={viewMode === 'database'} onClick={() => { if (viewMode !== 'database') clearSidebarFilters(); setViewMode('database'); setDbPage(1); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'database' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <Database className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
-                     <span className="hidden sm:inline">Bedrijvendatabase ({activeData.length})</span>
-                     <span className="sm:hidden">Database</span>
-                 </button>
-                 <button data-active={viewMode === 'map'} onClick={() => setViewMode('map')} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'map' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <MapPin className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" /> Kaart
-                     {mapMarkerCount > 0 && (
-                       <span className="ml-0.5 px-1.5 py-0.5 bg-[#E85E26] text-white rounded-full text-[9px] font-bold leading-none">{mapMarkerCount}</span>
-                     )}
-                 </button>
-                 <button data-active={viewMode === 'visits'} onClick={() => { setViewMode('visits'); }} className={`flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 ${viewMode === 'visits' ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                     <Clock className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
-                     <span className="hidden sm:inline">Mijn bezoeken ({visits.length})</span>
-                     <span className="sm:hidden">Bezoeken ({visits.length})</span>
-                 </button>
+                 {tabOrder.map((key, i) => {
+                   // Zelfde sleep-patroon als bedrijven/route-stops herordenen (bv. Onderweg):
+                   // native draggable + drag-over-highlight. Op touch (telefoon) vuurt dit niet
+                   // betrouwbaar — daarvoor staan de pijltjes bij Instellingen > Voorkeuren.
+                   const dragProps = {
+                     draggable: true,
+                     onDragStart: () => setTabDragIndex(i),
+                     onDragOver: (e: React.DragEvent) => { e.preventDefault(); if (tabDragOverIndex !== i) setTabDragOverIndex(i); },
+                     onDragLeave: () => setTabDragOverIndex(prev => (prev === i ? null : prev)),
+                     onDrop: (e: React.DragEvent) => {
+                       e.preventDefault();
+                       if (tabDragIndex !== null && tabDragIndex !== i) {
+                         const next = [...tabOrder];
+                         const [moved] = next.splice(tabDragIndex, 1);
+                         next.splice(i, 0, moved);
+                         setTabOrder(next);
+                       }
+                       setTabDragIndex(null);
+                       setTabDragOverIndex(null);
+                     },
+                     onDragEnd: () => { setTabDragIndex(null); setTabDragOverIndex(null); },
+                   };
+                   const dragClass = `${tabDragOverIndex === i && tabDragIndex !== null && tabDragIndex !== i ? 'bg-[#009FE3]/10' : ''} ${tabDragIndex === i ? 'opacity-40' : ''}`;
+                   const cls = (active: boolean) => `flex-shrink-0 py-2.5 sm:py-3 border-b-2 font-bold uppercase tracking-wider text-[10px] sm:text-xs whitespace-nowrap transition-colors flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 cursor-grab active:cursor-grabbing ${active ? 'border-[#E85E26] text-[#E85E26]' : 'border-transparent text-slate-500 hover:text-slate-700'} ${dragClass}`;
+
+                   if (key === 'search') return (
+                     <button key={key} {...dragProps} data-active={viewMode === 'search'} onClick={() => { if (viewMode !== 'search') clearSidebarFilters(); setViewMode('search'); }} className={cls(viewMode === 'search')}>
+                       <LayoutGrid className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                       <span className="hidden sm:inline">Live Zoeken</span>
+                       <span className="sm:hidden">Zoeken</span>
+                     </button>
+                   );
+                   if (key === 'favorites') return (
+                     <button key={key} {...dragProps} data-active={viewMode === 'favorites'} onClick={() => { if (viewMode !== 'favorites') clearSidebarFilters(); setViewMode('favorites'); setCurrentPage(1); setShowRouteMap(false); }} className={cls(viewMode === 'favorites')}>
+                       <Heart className={`hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0 ${viewMode === 'favorites' ? 'fill-current' : ''}`} />
+                       <span className="hidden sm:inline">Mijn Favorieten ({favorites.length})</span>
+                       <span className="sm:hidden">Favorieten ({favorites.length})</span>
+                     </button>
+                   );
+                   if (key === 'lists') return (
+                     <button key={key} {...dragProps} data-active={viewMode === 'lists'} onClick={() => { setViewMode('lists'); setActiveListId(prev => prev ?? (lists[0]?.id ?? null)); }} className={cls(viewMode === 'lists')}>
+                       <List className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                       <span className="hidden sm:inline">Lijsten ({lists.length})</span>
+                       <span className="sm:hidden">Lijsten ({lists.length})</span>
+                     </button>
+                   );
+                   if (key === 'database') return (
+                     <button key={key} {...dragProps} data-active={viewMode === 'database'} onClick={() => { if (viewMode !== 'database') clearSidebarFilters(); setViewMode('database'); setDbPage(1); }} className={cls(viewMode === 'database')}>
+                       <Database className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                       <span className="hidden sm:inline">Bedrijvendatabase ({activeData.length})</span>
+                       <span className="sm:hidden">Database</span>
+                     </button>
+                   );
+                   if (key === 'map') return (
+                     <button key={key} {...dragProps} data-active={viewMode === 'map'} onClick={() => setViewMode('map')} className={cls(viewMode === 'map')}>
+                       <MapPin className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" /> Kaart
+                       {mapMarkerCount > 0 && (
+                         <span className="ml-0.5 px-1.5 py-0.5 bg-[#E85E26] text-white rounded-full text-[9px] font-bold leading-none">{mapMarkerCount}</span>
+                       )}
+                     </button>
+                   );
+                   // visits
+                   return (
+                     <button key={key} {...dragProps} data-active={viewMode === 'visits'} onClick={() => { setViewMode('visits'); }} className={cls(viewMode === 'visits')}>
+                       <Clock className="hidden sm:block w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                       <span className="hidden sm:inline">Mijn bezoeken ({visits.length})</span>
+                       <span className="sm:hidden">Bezoeken ({visits.length})</span>
+                     </button>
+                   );
+                 })}
              </div>
              {/* Mobiel: fade-hint dat de tabbalk verder scrollt (6 tabs passen niet op smalle schermen) */}
              <div className="sm:hidden pointer-events-none absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent" />
