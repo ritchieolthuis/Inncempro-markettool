@@ -308,6 +308,9 @@ const RidePanel: React.FC<RidePanelProps> = ({
     // en negeren we de straal volledig.
     const inRouteMode = !!(routeLine && routeLine.length >= 2);
     const minRouteProgress = inRouteMode ? currentRouteProgressKm() : 0;
+    const directToDestinationKm = inRouteMode && destCoords
+      ? haversineKm(from.lat, from.lng, destCoords.lat, destCoords.lng)
+      : 0;
 
     // Goedkope bounding-box om de route (+ corridor-marge) zodat we de dure per-segment-meting
     // alleen doen voor bedrijven die überhaupt in de buurt van de route kunnen liggen — scheelt
@@ -324,7 +327,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
       routeBox = { minLat: minLat - mLat, maxLat: maxLat + mLat, minLng: minLng - mLng, maxLng: maxLng + mLng };
     }
 
-    const candidates: Array<{ bedrijf: any; coords: Coords; haversine: number; progress: number; detour: number }> = [];
+    const candidates: Array<{ bedrijf: any; coords: Coords; haversine: number; progress: number; detour: number; insertionDetour: number }> = [];
     for (const b of allData) {
       const naam = (b.naam || '').toLowerCase().trim();
       if (!naam || inChain.has(naam)) continue;
@@ -339,25 +342,34 @@ const RidePanel: React.FC<RidePanelProps> = ({
         const pos = nearestPointOnRoute(coords.lat, coords.lng, routeLine!);
         if (pos.distKm > ROUTE_CORRIDOR_KM) continue; // ligt niet op de gereden route
         if (pos.progressKm <= minRouteProgress + 0.2) continue; // niet terug langs al gereden/geplande stuk
-        candidates.push({ bedrijf: b, coords, haversine: hv, progress: pos.progressKm, detour: pos.distKm });
+        const insertionDetour = destCoords
+          ? Math.max(0, hv + haversineKm(coords.lat, coords.lng, destCoords.lat, destCoords.lng) - directToDestinationKm)
+          : pos.distKm;
+        candidates.push({ bedrijf: b, coords, haversine: hv, progress: pos.progressKm, detour: pos.distKm, insertionDetour });
       } else {
         if (hv > radiusKm) continue;
-        candidates.push({ bedrijf: b, coords, haversine: hv, progress: 0, detour: 0 });
+        candidates.push({ bedrijf: b, coords, haversine: hv, progress: 0, detour: 0, insertionDetour: 0 });
       }
     }
     // Sorteervolgorde:
-    //  • routemodus  → op rijvolgorde langs de route (progress oplopend), zodat je ze precies
-    //    tegenkomt in de volgorde waarin je rijdt. Bij (vrijwel) gelijke voortgang komt het
-    //    bedrijf dat het strakst óp de route ligt eerst (kleinste omweg) — precies wat je wilt:
-    //    liever eentje in lijn met de route dan eentje waarvoor je de weg af moet. Omdraaien
-    //    (Van↔Naar) keert de route zelf om, dus dan telt de voortgang vanaf de andere kant
-    //    (heen ↔ terug).
+    //  • routemodus  → in rijrichting, maar niet blind "eerste puntje op de lijn": binnen korte
+    //    stukken vooruit pakken we de kandidaat met de minste extra omweg richting eindadres.
+    //    Dat houdt de lijst logisch voor onderweg rijden: vooruit op de route, dicht bij de
+    //    rijlijn, en geen rare zijwaartse uitstap als er een betere snelweg-optie vlakbij ligt.
     //  • A-Z          → alfabetisch.
     //  • anders       → dichtstbij eerst.
     if (sortMode === 'az') {
       candidates.sort((a, b) => (a.bedrijf.naam || '').localeCompare(b.bedrijf.naam || '', 'nl'));
     } else if (inRouteMode) {
-      candidates.sort((a, b) => (a.progress - b.progress) || (a.detour - b.detour));
+      const ROUTE_PICK_WINDOW_KM = 12;
+      candidates.sort((a, b) => {
+        const aWindow = Math.floor((a.progress - minRouteProgress) / ROUTE_PICK_WINDOW_KM);
+        const bWindow = Math.floor((b.progress - minRouteProgress) / ROUTE_PICK_WINDOW_KM);
+        return (aWindow - bWindow)
+          || (a.insertionDetour - b.insertionDetour)
+          || (a.detour - b.detour)
+          || (a.progress - b.progress);
+      });
     } else {
       candidates.sort((a, b) => a.haversine - b.haversine);
     }
@@ -1532,7 +1544,9 @@ const RidePanel: React.FC<RidePanelProps> = ({
             <div className="px-6 py-4">
               <div className="flex items-center justify-between mb-2 gap-2">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Dichtstbijzijnde vanaf {chain.length > 0 ? chain[chain.length - 1].bedrijf.naam : (startLabel || 'startpunt')}
+                  {destCoords
+                    ? `Beste op route vanaf ${chain.length > 0 ? chain[chain.length - 1].bedrijf.naam : (startLabel || 'startpunt')} richting ${destLabel || 'eindadres'}`
+                    : `Dichtstbijzijnde vanaf ${chain.length > 0 ? chain[chain.length - 1].bedrijf.naam : (startLabel || 'startpunt')}`}
                   {suggestTotal > 0 && <span className="normal-case font-normal text-slate-400"> - {suggestTotal} binnen bereik</span>}
                 </span>
                 <div className="flex items-center gap-2 flex-shrink-0">
