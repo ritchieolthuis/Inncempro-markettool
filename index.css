@@ -74,9 +74,34 @@ h1, h2, h3, h4, h5, h6, .font-condensed { font-family: 'Oswald', sans-serif; }
 
 html, body, #root {
   min-height: 100%;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  position: relative;
+}
+
+.mobile-safe-text {
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 @media (max-width: 767px) {
+  body {
+    overscroll-behavior-x: none;
+  }
+
+  .mobile-no-x,
+  .mobile-no-x * {
+    max-width: 100%;
+  }
+
   .leaflet-control-attribution {
     font-size: 9px !important;
     max-width: calc(100vw - 96px);

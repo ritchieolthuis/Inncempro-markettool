@@ -5344,7 +5344,7 @@ const App: React.FC = () => {
                   searchState.data
                 );
                 return (
-                <div className={`${hasSearchInput ? 'py-6' : 'py-16'} max-w-4xl mx-auto px-4`}>
+                <div className={`${hasSearchInput ? 'py-6' : 'py-8 sm:py-16'} mobile-no-x max-w-4xl mx-auto w-full min-w-0 px-3 sm:px-4 overflow-hidden`}>
                     {hasSearchInput ? (
                     <div className="mb-8 bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -5386,28 +5386,28 @@ const App: React.FC = () => {
                       </div>
                     </div>
                     ) : !hasSearchInput ? (
-                    <div className="mb-12 text-center">
-                      <div className="mx-auto mb-4 w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center">
-                        <Search className="w-7 h-7 text-slate-400" />
+                    <div className="mb-8 sm:mb-12 text-center min-w-0">
+                      <div className="mx-auto mb-3 sm:mb-4 w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-slate-100 flex items-center justify-center">
+                        <Search className="w-6 h-6 sm:w-7 sm:h-7 text-slate-400" />
                       </div>
-                      <h3 className="text-lg font-bold text-slate-900">Begin met zoeken</h3>
-                      <p className="text-sm text-slate-400 mt-1 max-w-md mx-auto">Zoek op bedrijfsnaam, stad, straat of postcode.</p>
-                      <p className="text-slate-400 text-xs mt-1">Alle {activeData.length.toLocaleString('nl-NL')} bedrijven staan in de <button onClick={() => { setViewMode('database'); setDbPage(1); }} className="underline hover:text-[#009FE3]">Bedrijvendatabase</button>.</p>
+                      <h3 className="text-base sm:text-lg font-bold text-slate-900">Begin met zoeken</h3>
+                      <p className="mobile-safe-text text-xs sm:text-sm text-slate-400 mt-1 max-w-md mx-auto">Zoek op bedrijfsnaam, stad, straat of postcode.</p>
+                      <p className="mobile-safe-text text-slate-400 text-[11px] sm:text-xs mt-1 max-w-md mx-auto">Alle {activeData.length.toLocaleString('nl-NL')} bedrijven staan in de <button onClick={() => { setViewMode('database'); setDbPage(1); }} className="underline hover:text-[#009FE3]">Bedrijvendatabase</button>.</p>
                     </div>
                     ) : null}
 
                     {(recentViewed.length > 0 || savedFilters.length > 0) && (
-                      <div className="mb-12">
-                        <div className="inline-flex bg-white border border-slate-200 rounded-xl p-1 mb-5">
+                      <div className="mb-8 sm:mb-12 min-w-0 overflow-hidden">
+                        <div className="flex w-full bg-white border border-slate-200 rounded-xl p-1 mb-4 sm:mb-5 overflow-hidden">
                           <button
                             onClick={() => setSearchLandingTab('recent')}
-                            className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${searchLandingTab === 'recent' ? 'bg-[#009FE3]/10 text-[#009FE3]' : 'text-slate-500 hover:text-slate-700'}`}
+                            className={`flex-1 min-w-0 px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors truncate ${searchLandingTab === 'recent' ? 'bg-[#009FE3]/10 text-[#009FE3]' : 'text-slate-500 hover:text-slate-700'}`}
                           >
                             Recent bekeken
                           </button>
                           <button
                             onClick={() => setSearchLandingTab('saved')}
-                            className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${searchLandingTab === 'saved' ? 'bg-[#009FE3]/10 text-[#009FE3]' : 'text-slate-500 hover:text-slate-700'}`}
+                            className={`flex-1 min-w-0 px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors truncate ${searchLandingTab === 'saved' ? 'bg-[#009FE3]/10 text-[#009FE3]' : 'text-slate-500 hover:text-slate-700'}`}
                           >
                             Opgeslagen filters
                           </button>
@@ -5419,23 +5419,23 @@ const App: React.FC = () => {
                               <div className="flex items-center justify-end mb-3">
                                 <button onClick={() => { setRecentViewed([]); setRecentViewedPage(1); localStorage.removeItem(uKey('inncempro_recent_viewed')); }} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-wider">Wis alles</button>
                               </div>
-                              <div className="grid sm:grid-cols-2 gap-3">
+                              <div className="grid sm:grid-cols-2 gap-2.5 sm:gap-3 min-w-0">
                                 {recentViewed.slice((recentPage - 1) * RECENT_VIEWED_PAGE_SIZE, recentPage * RECENT_VIEWED_PAGE_SIZE).map((r, i) => {
                                   const match = activeData.find(b => b.naam === r.naam);
                                   return (
                                     <button
                                       key={i}
                                       onClick={() => { setCity(r.naam); executeSearch(undefined, undefined, r.naam); }}
-                                      className="group flex items-center gap-4 bg-white border border-slate-200 rounded-xl px-5 py-4 text-left hover:border-[#009FE3] hover:shadow-md transition-all"
+                                      className="group flex items-center gap-2.5 sm:gap-4 min-w-0 w-full bg-white border border-slate-200 rounded-xl px-3 sm:px-5 py-3 sm:py-4 text-left hover:border-[#009FE3] hover:shadow-md transition-all overflow-hidden"
                                     >
-                                      <div className="w-10 h-10 rounded-lg bg-slate-100 group-hover:bg-[#009FE3]/10 flex items-center justify-center flex-shrink-0 transition-colors">
+                                      <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-slate-100 group-hover:bg-[#009FE3]/10 flex items-center justify-center flex-shrink-0 transition-colors">
                                         <Search className="w-4 h-4 text-slate-400 group-hover:text-[#009FE3]" />
                                       </div>
                                       <div className="min-w-0 flex-1">
-                                        <p className="font-bold text-slate-900 truncate">{r.naam}</p>
-                                        <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
+                                        <p className="font-bold text-slate-900 truncate text-sm sm:text-base">{r.naam}</p>
+                                        <p className="text-[11px] sm:text-xs text-slate-400 flex items-center gap-1 sm:gap-1.5 mt-0.5 min-w-0 overflow-hidden">
                                           {match?.stad && (
-                                            <span className="flex items-center gap-1 truncate">
+                                            <span className="flex items-center gap-1 truncate min-w-0">
                                               <MapPin className="w-3 h-3 flex-shrink-0" />{match.stad}
                                             </span>
                                           )}
@@ -5443,7 +5443,7 @@ const App: React.FC = () => {
                                           <span className="whitespace-nowrap">{timeAgo(r.timestamp)}</span>
                                         </p>
                                       </div>
-                                      <span className="flex-shrink-0 px-3 py-1.5 rounded-full border border-slate-200 text-xs font-bold text-slate-600 group-hover:border-[#009FE3] group-hover:text-[#009FE3] transition-colors">
+                                      <span className="hidden sm:inline-flex flex-shrink-0 px-3 py-1.5 rounded-full border border-slate-200 text-xs font-bold text-slate-600 group-hover:border-[#009FE3] group-hover:text-[#009FE3] transition-colors">
                                         Open
                                       </span>
                                     </button>
@@ -5477,22 +5477,22 @@ const App: React.FC = () => {
 
                         {searchLandingTab === 'saved' && (
                           savedFilters.length > 0 ? (
-                            <div className="grid sm:grid-cols-2 gap-3">
+                            <div className="grid sm:grid-cols-2 gap-2.5 sm:gap-3 min-w-0">
                               {savedFilters.map(f => (
                                 <div
                                   key={f.name}
-                                  className="group flex items-center gap-4 bg-white border border-slate-200 rounded-xl px-5 py-4 hover:border-[#009FE3] hover:shadow-md transition-all"
+                                  className="group flex items-center gap-2.5 sm:gap-4 min-w-0 w-full bg-white border border-slate-200 rounded-xl px-3 sm:px-5 py-3 sm:py-4 hover:border-[#009FE3] hover:shadow-md transition-all overflow-hidden"
                                 >
-                                  <button onClick={() => applySavedFilter(f)} className="flex items-center gap-4 flex-1 min-w-0 text-left">
-                                    <div className="w-10 h-10 rounded-lg bg-slate-100 group-hover:bg-[#009FE3]/10 flex items-center justify-center flex-shrink-0 transition-colors">
+                                  <button onClick={() => applySavedFilter(f)} className="flex items-center gap-2.5 sm:gap-4 flex-1 min-w-0 text-left overflow-hidden">
+                                    <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-slate-100 group-hover:bg-[#009FE3]/10 flex items-center justify-center flex-shrink-0 transition-colors">
                                       <Bookmark className="w-4 h-4 text-slate-400 group-hover:text-[#009FE3]" />
                                     </div>
                                     <div className="min-w-0 flex-1">
-                                      <p className="font-bold text-slate-900 truncate">{f.name}</p>
+                                      <p className="font-bold text-slate-900 truncate text-sm sm:text-base">{f.name}</p>
                                       <p className="text-xs text-slate-400 truncate mt-0.5">{describeSavedFilter(f)}</p>
                                     </div>
                                   </button>
-                                  <button onClick={() => applySavedFilter(f)} className="flex-shrink-0 px-3 py-1.5 rounded-full border border-slate-200 text-xs font-bold text-slate-600 group-hover:border-[#009FE3] group-hover:text-[#009FE3] transition-colors">
+                                  <button onClick={() => applySavedFilter(f)} className="hidden sm:inline-flex flex-shrink-0 px-3 py-1.5 rounded-full border border-slate-200 text-xs font-bold text-slate-600 group-hover:border-[#009FE3] group-hover:text-[#009FE3] transition-colors">
                                     Open
                                   </button>
                                   <button onClick={() => deleteSavedFilter(f.name)} className="flex-shrink-0 text-slate-300 hover:text-red-400">
