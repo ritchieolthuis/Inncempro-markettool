@@ -394,21 +394,15 @@ const RidePanel: React.FC<RidePanelProps> = ({
       km: driving[i] ?? c.haversine,
       driving: driving[i] != null,
     }));
-    // In routemodus houden we de rijvolgorde (progress) aan; alleen bij "op afstand" zónder
-    // route herordenen we de zichtbare pagina op de nu bekende echte rijafstand.
+    // Sorteren op afstand alleen als geen route actief is.
     if (sortMode === 'afstand' && !inRouteMode) withDistance.sort((a, b) => a.km - b.km);
     setSuggestions(withDistance);
     setLoadingSuggestions(false);
   };
 
-  // Startpunt default op Instellingen > Mijn adres i.p.v. GPS/IP-locatie te vragen — "via IP"
-  // is vaak stad-niveau en kan flink afwijken (bv. Oldenzaal i.p.v. het echte kantooradres in
-  // Hengelo), terwijl Mijn adres nu net bedoeld is als uitgangspunt voor afstandsberekening op
-  // ALLE kaarten (zie Instellingen > Voorkeuren). Alleen bij het EERST openen (startCoords nog
-  // null, dus geen eigen keuze al gemaakt); GPS/"Zoek startpunt" blijven gewoon beschikbaar om
-  // het te overschrijven. Herhaalt zich niet als homeCoords later verandert (geen homeCoords in
-  // de dependency-array) — anders zou een latere adreswijziging in Instellingen een al bewust
-  // gekozen ander startpunt hier stilzwijgend overschrijven.
+  // Startpunt initialiseren op "Mijn adres" uit Instellingen (niet IP-locatie).
+  // Dit gebeurt slechts eenmaal bij eerste keer openen; GPS/handmatig zoeken blijven beschikbaar.
+  // homeCoords niet in dependency-array zodat latere adreswijzigingen geen bewuste keuze overschrijven.
   const homeInitRef = useRef(false);
   useEffect(() => {
     if (homeInitRef.current || startCoords) return;
@@ -621,17 +615,9 @@ const RidePanel: React.FC<RidePanelProps> = ({
     // een bolletje van een paar pixels is op een telefoon vrijwel onmogelijk precies te raken.
     const suggestionRadius = isTouchDevice ? 11 : 6;
 
-    // "Toon alles" moet ECHT alles plotten — anders is de knop zinloos zodra een corridor
-    // (route) of straal meer dan een paar honderd bedrijven bevat, precies de klacht die dit
-    // opnieuw invoerde. Elke marker als canvas-circleMarker tekenen is goedkoop; de eerder
-    // gevonden traagheid zat 'm in de per-marker hover/zoom-listener (attachHoverZoom hieronder),
-    // niet in het tekenen zelf. Die interactieve hover-zoom blijft daarom beperkt tot een
-    // ruime bovengrens, maar ELKE bedrijf krijgt gewoon zijn eigen zichtbare, klikbare punt
-    // (met popup) op de kaart, ook ver voorbij die grens.
+    // "Toon alles" toont alle bedrijven. Hover-zoom alleen voor eerste N bedrijven (performance).
     const MAX_HOVER_ZOOM_MARKERS = 300;
     suggestions.forEach((s, si) => {
-      // Bolletje in de bronkleur (zelfde tabel als de kaart-pins/legenda) i.p.v. één generiek grijs,
-      // zodat je in één oogopslag ziet uit welke bron elk voorstel komt.
       const bolletje = L.circleMarker([s.coords.lat, s.coords.lng], {
         radius: suggestionRadius, color: '#fff', weight: 1.5, fillColor: sourceColor(s.bedrijf.source), fillOpacity: 0.9, interactive: true,
       })
@@ -1339,8 +1325,6 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   {availableSources.map(src => {
                     const active = filterSources.has(src);
                     const clr = sourceColor(src);
-                    // Bolletje + rand in de bronkleur (zelfde kleur als de pins op de kaart), zodat
-                    // je meteen ziet welke bron welke kleur is. Actief = gevuld met die kleur.
                     return (
                       <button
                         key={src}

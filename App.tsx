@@ -2329,15 +2329,8 @@ const App: React.FC = () => {
     setPrefSort((localStorage.getItem(uKey('inncempro_pref_sort')) as 'relevant' | 'az') || 'relevant');
     setSortMode((localStorage.getItem(uKey('inncempro_pref_sort')) as 'relevant' | 'az') || 'relevant');
     setPrefResultsPerPage(Number(localStorage.getItem(uKey('inncempro_pref_rpp'))) || 10);
-    // db_rpp en ride_rpp werden bij een accountwissel NIET herladen (stonden niet in deze lijst),
-    // waardoor bv. "50 per pagina" van account A stilzwijgend meeging naar account B — precies de
-    // cross-account-lek die hier hoort te worden voorkomen. Nu per user teruggezet naar hun eigen
-    // opgeslagen waarde (of de standaard 50/10 als dit account het nog nooit instelde).
     setPrefDbResultsPerPage(Number(localStorage.getItem(uKey('inncempro_pref_db_rpp'))) || 50);
     setPrefRideResultsPerPage(Number(localStorage.getItem(uKey('inncempro_pref_ride_rpp'))) || 10);
-    // Selectie (op de kaart/in lijsten aangevinkte bedrijven) is per definitie sessiegebonden en
-    // hoort NOOIT van het ene account bij het andere zichtbaar te blijven — hard wissen bij elke
-    // account-wissel (incl. uitloggen → currentUser null).
     setSelectedIds(new Set());
     setSelectedRaws(new Map());
     try { setPrefCardFields(JSON.parse(localStorage.getItem(uKey('inncempro_pref_card')) || '{}')); } catch { setPrefCardFields({}); }
@@ -4320,7 +4313,7 @@ const App: React.FC = () => {
                               {/* Bedrijfsadres */}
                               <div>
                                   <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Mijn adres</label>
-                                  <p className="text-[10px] text-slate-400 mb-2">Uitgangspunt voor straal-zoeken (als er geen plaats is ingevuld) en voor afstandsberekening op alle kaarten. Per account aan te passen.</p>
+                                  <p className="text-[10px] text-slate-400 mb-2">Gebruikt voor afstandsberekening op alle kaarten.</p>
                                   <input
                                       type="text"
                                       defaultValue={prefAddress}
@@ -4475,29 +4468,23 @@ const App: React.FC = () => {
 
                       {settingsTab === 'audit' && (
                           <div className="space-y-3">
-                              <div className="flex gap-2 mb-4">
-                                  <input type="text" placeholder="Zoek op bedrijf..." value={auditFilter.search} onChange={e => setAuditFilter({...auditFilter, search: e.target.value})} className="flex-1 px-3 py-2 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none" />
-                                  <select value={auditFilter.action} onChange={e => setAuditFilter({...auditFilter, action: e.target.value})} className="px-3 py-2 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none bg-white">
+                              <div className="grid grid-cols-1 sm:flex sm:gap-2 gap-2 mb-4">
+                                  <input type="text" placeholder="Zoek bedrijf..." value={auditFilter.search} onChange={e => setAuditFilter({...auditFilter, search: e.target.value})} className="flex-1 px-3 py-2 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none" />
+                                  <select value={auditFilter.action} onChange={e => setAuditFilter({...auditFilter, action: e.target.value})} className="px-3 py-2 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none bg-white sm:w-auto">
                                       <option value="">Alle acties</option>
                                       <option value="Bedrijf geïmporteerd">Geïmporteerd</option>
                                       <option value="Bedrijf toegevoegd">Toegevoegd</option>
                                       <option value="Bedrijf bewerkt">Bewerkt</option>
                                       <option value="Bedrijf verwijderd">Verwijderd</option>
                                   </select>
-                                  <select value={auditFilter.days} onChange={e => setAuditFilter({...auditFilter, days: Number(e.target.value)})} className="px-3 py-2 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none bg-white">
+                                  <select value={auditFilter.days} onChange={e => setAuditFilter({...auditFilter, days: Number(e.target.value)})} className="px-3 py-2 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none bg-white sm:w-auto">
                                       <option value={7}>7 dagen</option>
                                       <option value={30}>30 dagen</option>
                                       <option value={90}>90 dagen</option>
                                       <option value={999}>Alle</option>
                                   </select>
                               </div>
-                              {/* overflow-x-auto: de tabel (4 kolommen, Timestamp niet-wrappend) is op
-                                  telefoon breder dan het scherm — zonder dit duwde hij de HELE
-                                  instellingen-modal breder dan de viewport uit (klassiek flexbox-
-                                  gotcha: een flex-kind groeit anders mee met de intrinsieke breedte
-                                  van zijn inhoud), waardoor je de rechterkant (bv. het Prullenbak-
-                                  tabblad) niet meer kon zien/bereiken. Nu scrolt alleen de tabel zelf
-                                  horizontaal, de modal blijft binnen het scherm. */}
+                              {/* Tabel scrolt horizontaal; modal blijft binnen viewport. */}
                               <div className="border border-slate-200 rounded-sm max-h-96 overflow-y-auto overflow-x-auto">
                                   <table className="w-full text-xs">
                                       <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">

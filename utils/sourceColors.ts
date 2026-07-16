@@ -1,9 +1,5 @@
-// Eén gedeelde bronkleur-tabel voor de HELE app (kaart-pins, kaart-legenda, de "Bron"-filter in
-// de sidebar, en de bron-pillen in Onderweg/Bezoeken). Voorheen had elke plek een eigen, deels
-// onvolledige kopie, waardoor sommige bronnen (Web, bouwnu, Archined, Bedrijvenoverzicht, Nijhuis)
-// nergens een kleur hadden en dus grijs bleven — precies de mismatch tussen kaart en filters die de
-// gebruiker zag. Alle bronnen krijgen hier een eigen, onderscheidbare kleur; deze module is de
-// enige bron van waarheid.
+// Gedeelde bronkleur-tabel voor kaart, filters en Onderweg.
+// Alle bronnen krijgen een onderscheidbare kleur; dit is de enige bron van waarheid.
 export const SOURCE_COLOR: Record<string, string> = {
   Bouwgarant:            '#009FE3', // Inncempro-blauw
   Architectenweb:        '#E85E26', // oranje
