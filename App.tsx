@@ -1846,6 +1846,10 @@ const App: React.FC = () => {
   const [rideStartCoords, setRideStartCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [rideStartLabel, setRideStartLabel] = useState('');
   const [rideChain, setRideChain] = useState<any[]>([]);
+  // Bestemming ("Naar") voor de Van→Naar-richtingmodus in Onderweg — ook hier opgetild zodat
+  // de gekozen richting/route blijft staan bij tabwissel.
+  const [rideDestCoords, setRideDestCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [rideDestLabel, setRideDestLabel] = useState('');
 
   // BATCH IMPORT
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -5124,6 +5128,11 @@ const App: React.FC = () => {
                         setStartLabel={setRideStartLabel}
                         chain={rideChain}
                         setChain={setRideChain}
+                        destCoords={rideDestCoords}
+                        setDestCoords={setRideDestCoords}
+                        destLabel={rideDestLabel}
+                        setDestLabel={setRideDestLabel}
+                        homeAddress={prefAddress || DEFAULT_ORIGIN}
                         liveLocationCoords={searchOriginCoords}
                         onOpenInDatabase={(naam) => { setDbSearch(naam); setDbPage(1); setViewMode('database'); }}
                         onOpenInLiveZoeken={(naam) => { setSelectedRegions([]); setSelectedTypes([]); setSelectedWerksoort([]); setSelectedContact([]); setRadiusKm(null); setCity(naam); setViewMode('search'); executeSearch(undefined, undefined, naam, null, null); }}

@@ -143,3 +143,81 @@ export async function getDrivingDistanceKm(origin: Coords, destination: Coords):
   const [km] = await getDrivingDistancesKm(origin, [destination]);
   return km;
 }
+
+// Cache voor opgehaalde route-geometrie (de lijn zelf), los van de afstand-cache hierboven.
+// Een route van A→B (evt. via tussenstops) verandert niet, dus één keer ophalen volstaat.
+const ROUTE_CACHE_KEY = 'inncempro_route_geometry_cache';
+let routeMemCache: Map<string, Coords[]> | null = null;
+
+function routeCacheKey(waypoints: Coords[]): string {
+  return waypoints.map(c => `${roundCoord(c.lat)},${roundCoord(c.lng)}`).join('|');
+}
+
+function loadRouteCache(): Map<string, Coords[]> {
+  if (routeMemCache) return routeMemCache;
+  routeMemCache = new Map();
+  try {
+    const raw = localStorage.getItem(ROUTE_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        for (const [k, v] of Object.entries(parsed as Record<string, Coords[]>)) routeMemCache.set(k, v);
+      }
+    }
+  } catch { /* corrupte cache — leeg beginnen */ }
+  return routeMemCache;
+}
+
+function saveRouteCache() {
+  try {
+    const cache = loadRouteCache();
+    // Simpele trim: maximaal 200 routes bewaren (geometrie is groter dan losse afstanden).
+    if (cache.size > 200) {
+      const keys = Array.from(cache.keys()).slice(0, cache.size - 200);
+      keys.forEach(k => cache.delete(k));
+    }
+    const obj: Record<string, Coords[]> = {};
+    cache.forEach((v, k) => { obj[k] = v; });
+    localStorage.setItem(ROUTE_CACHE_KEY, JSON.stringify(obj));
+  } catch { /* localStorage vol/onbeschikbaar — niet fataal */ }
+}
+
+/**
+ * Haalt de daadwerkelijke rijroute (de lijn over de weg) op van het eerste naar het laatste
+ * punt, via eventuele tussenstops. Retourneert de route als een reeks coördinaten (de "polyline")
+ * die je over de kaart kunt tekenen én waarlangs je bedrijven kunt filteren/sorteren. `null` bij
+ * een netwerkfout/timeout — de aanroeper valt dan terug op een rechte lijn tussen de punten.
+ *
+ * Gebruikt hetzelfde gratis publieke OSRM als de afstand-functie, maar de /route/-variant met
+ * `overview=full&geometries=geojson` zodat we de echte weggeometrie terugkrijgen (niet alleen een
+ * afstand). Zo laat de tool bedrijven zien die ECHT op de weg liggen die je rijdt, i.p.v. binnen
+ * een cirkel — precies wat een straal nooit betrouwbaar kon.
+ */
+export async function getRoutePolyline(waypoints: Coords[]): Promise<Coords[] | null> {
+  if (waypoints.length < 2) return null;
+  const cache = loadRouteCache();
+  const key = routeCacheKey(waypoints);
+  const cached = cache.get(key);
+  if (cached) return cached;
+
+  const coordStr = waypoints.map(c => `${c.lng},${c.lat}`).join(';');
+  const url = `${OSRM_BASE}/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const coords = data?.routes?.[0]?.geometry?.coordinates;
+    if (data.code !== 'Ok' || !Array.isArray(coords)) return null;
+    // GeoJSON is [lng, lat]; wij werken overal met {lat, lng}.
+    const line: Coords[] = coords.map((c: [number, number]) => ({ lat: c[1], lng: c[0] }));
+    cache.set(key, line);
+    saveRouteCache();
+    return line;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}

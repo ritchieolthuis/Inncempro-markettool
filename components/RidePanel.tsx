@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus, GripVertical, ChevronUp, ChevronDown, Maximize2, Minimize2, Wand2, Repeat } from 'lucide-react';
-import { haversineKm, detectType, optimizeRoute, scoreInsertionCandidates } from '../utils/dagbezoek';
-import { getDrivingDistancesKm } from '../services/routingService';
+import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus, GripVertical, ChevronUp, ChevronDown, Maximize2, Minimize2, Wand2, Repeat, ArrowRight, ArrowLeftRight, Home } from 'lucide-react';
+import { haversineKm, detectType, optimizeRoute, scoreInsertionCandidates, nearestPointOnRoute } from '../utils/dagbezoek';
+import { getDrivingDistancesKm, getRoutePolyline } from '../services/routingService';
 import { getClusterData, makeId } from '../services/geoclusterService';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -115,6 +115,13 @@ interface RidePanelProps {
   setStartLabel: (s: string) => void;
   chain: RideStop[];
   setChain: React.Dispatch<React.SetStateAction<RideStop[]>>;
+  // Bestemming ("Naar") voor de Van→Naar-richtingmodus — opgetild naar App voor persistentie.
+  destCoords: Coords | null;
+  setDestCoords: (c: Coords | null) => void;
+  destLabel: string;
+  setDestLabel: (s: string) => void;
+  // Thuisadres uit instellingen (Lansinksweg 4, Hengelo standaard) — als 1-klik "naar huis".
+  homeAddress?: string;
   // Als Live Zoeken al een locatie heeft bepaald, bieden we die als 1-klik startpunt aan
   // (exact dezelfde coördinaat die Live Zoeken gebruikt — die werkt bij de gebruiker altijd).
   liveLocationCoords?: Coords | null;
@@ -177,7 +184,8 @@ async function geocodeAddress(query: string): Promise<Coords | null> {
 
 const RidePanel: React.FC<RidePanelProps> = ({
   allData, cityCoords, isVisitedCompany, onSaveAsList, onLogVisits, onOpenInDatabase, onOpenInLiveZoeken,
-  startCoords, setStartCoords, startLabel, setStartLabel, chain, setChain, liveLocationCoords, embedded,
+  startCoords, setStartCoords, startLabel, setStartLabel, chain, setChain,
+  destCoords, setDestCoords, destLabel, setDestLabel, homeAddress, liveLocationCoords, embedded,
 }) => {
   const mapDivRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -192,11 +200,24 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const [editStart, setEditStart] = useState(false);
   const [editStartQuery, setEditStartQuery] = useState('');
 
+  // Bestemming ("Naar") invoer + status voor de Van→Naar-richtingmodus.
+  const [destQuery, setDestQuery] = useState('');
+  const [destLoading, setDestLoading] = useState(false);
+  const [destError, setDestError] = useState<string | null>(null);
+  // De echte rijroute (weggeometrie) van start → bestemming, opgehaald via OSRM. Bepaalt welke
+  // bedrijven "op de route" liggen en in welke volgorde. null = geen richtingmodus actief.
+  const [routeLine, setRouteLine] = useState<Coords[] | null>(null);
+
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   // Zoekstraal — zelfde sleepbare "Straal"-slider als Live Zoeken (0 tot max), i.p.v. een vaste
   // 75 km harde grens. Bepaalt hoeveel bedrijven er ÜBERHAUPT in de resultaten (en dus de
-  // paginering) terechtkomen.
+  // paginering) terechtkomen. Wordt genegeerd zodra er een bestemming (routemodus) is gekozen.
   const [radiusKm, setRadiusKm] = useState(75);
+  // Hoe ver een bedrijf van de gereden route mag liggen om nog "op de route" te heten (km,
+  // hemelsbreed loodrecht op de lijn). Bewust een vaste, ruime waarde i.p.v. een slider: de
+  // gebruiker wil geen knoppen, gewoon "de architecten die op mijn route liggen". 12 km vangt
+  // bedrijven net naast de snelweg/doorgaande weg zonder de hele provincie mee te nemen.
+  const ROUTE_CORRIDOR_KM = 12;
   // Aantal per pagina (10 of 20) — beperkt hoeveel er tegelijk op de kaart/lijst komt, maar
   // niet meer het totaal: alle bedrijven binnen bereik zijn bereikbaar via de paginering
   // hieronder, net als bij Live Zoeken.
@@ -248,8 +269,27 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const computeSuggestions = async (from: Coords, page: number) => {
     const myRequestId = ++requestIdRef.current;
     const inChain = new Set(chain.map(s => (s.bedrijf.naam || '').toLowerCase().trim()));
+    // Routemodus is actief zodra de echte routelijn (start→bestemming) is opgehaald: dan tonen
+    // we alleen bedrijven die ECHT op die weg liggen (corridor), gesorteerd op rijvolgorde —
+    // en negeren we de straal volledig.
+    const inRouteMode = !!(routeLine && routeLine.length >= 2);
 
-    const candidates: Array<{ bedrijf: any; coords: Coords; haversine: number }> = [];
+    // Goedkope bounding-box om de route (+ corridor-marge) zodat we de dure per-segment-meting
+    // alleen doen voor bedrijven die überhaupt in de buurt van de route kunnen liggen — scheelt
+    // bij duizenden bedrijven miljoenen berekeningen. Marge ~ corridor omgerekend naar graden.
+    let routeBox: { minLat: number; maxLat: number; minLng: number; maxLng: number } | null = null;
+    if (inRouteMode) {
+      const mLat = ROUTE_CORRIDOR_KM / 110.57;
+      const mLng = ROUTE_CORRIDOR_KM / (111.32 * Math.cos(52 * Math.PI / 180));
+      let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+      for (const c of routeLine!) {
+        if (c.lat < minLat) minLat = c.lat; if (c.lat > maxLat) maxLat = c.lat;
+        if (c.lng < minLng) minLng = c.lng; if (c.lng > maxLng) maxLng = c.lng;
+      }
+      routeBox = { minLat: minLat - mLat, maxLat: maxLat + mLat, minLng: minLng - mLng, maxLng: maxLng + mLng };
+    }
+
+    const candidates: Array<{ bedrijf: any; coords: Coords; haversine: number; progress: number }> = [];
     for (const b of allData) {
       const naam = (b.naam || '').toLowerCase().trim();
       if (!naam || inChain.has(naam)) continue;
@@ -259,13 +299,26 @@ const RidePanel: React.FC<RidePanelProps> = ({
       const coords = coordsFor(b, cityCoords);
       if (!coords) continue;
       const hv = haversineKm(from.lat, from.lng, coords.lat, coords.lng);
-      if (hv > radiusKm) continue;
-      candidates.push({ bedrijf: b, coords, haversine: hv });
+      if (inRouteMode) {
+        if (routeBox && (coords.lat < routeBox.minLat || coords.lat > routeBox.maxLat || coords.lng < routeBox.minLng || coords.lng > routeBox.maxLng)) continue;
+        const pos = nearestPointOnRoute(coords.lat, coords.lng, routeLine!);
+        if (pos.distKm > ROUTE_CORRIDOR_KM) continue; // ligt niet op de gereden route
+        candidates.push({ bedrijf: b, coords, haversine: hv, progress: pos.progressKm });
+      } else {
+        if (hv > radiusKm) continue;
+        candidates.push({ bedrijf: b, coords, haversine: hv, progress: 0 });
+      }
     }
-    // A-Z sorteert alfabetisch; "op afstand" (standaard) sorteert dichtstbij eerst. De
-    // pagina-indeling volgt altijd deze volgorde, ook al verfijnt stap 2 hieronder de km's.
+    // Sorteervolgorde:
+    //  • routemodus  → op rijvolgorde langs de route (progress oplopend), zodat je ze precies
+    //    tegenkomt in de volgorde waarin je rijdt. Omdraaien (Van↔Naar) keert de route zelf om,
+    //    dus dan telt de progress vanaf de andere kant — precies het "heen vs terug"-gedrag.
+    //  • A-Z          → alfabetisch.
+    //  • anders       → dichtstbij eerst.
     if (sortMode === 'az') {
       candidates.sort((a, b) => (a.bedrijf.naam || '').localeCompare(b.bedrijf.naam || '', 'nl'));
+    } else if (inRouteMode) {
+      candidates.sort((a, b) => a.progress - b.progress);
     } else {
       candidates.sort((a, b) => a.haversine - b.haversine);
     }
@@ -298,7 +351,9 @@ const RidePanel: React.FC<RidePanelProps> = ({
       km: driving[i] ?? c.haversine,
       driving: driving[i] != null,
     }));
-    if (sortMode === 'afstand') withDistance.sort((a, b) => a.km - b.km);
+    // In routemodus houden we de rijvolgorde (progress) aan; alleen bij "op afstand" zónder
+    // route herordenen we de zichtbare pagina op de nu bekende echte rijafstand.
+    if (sortMode === 'afstand' && !inRouteMode) withDistance.sort((a, b) => a.km - b.km);
     setSuggestions(withDistance);
     setLoadingSuggestions(false);
   };
@@ -307,11 +362,76 @@ const RidePanel: React.FC<RidePanelProps> = ({
     const pos = currentPosition();
     if (pos) computeSuggestions(pos, 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chain, filterTypes, filterSources, sortMode, onlyUnvisited, suggestCount, radiusKm, startCoords]);
+  }, [chain, filterTypes, filterSources, sortMode, onlyUnvisited, suggestCount, radiusKm, startCoords, routeLine]);
+
+  // Haalt de echte rijroute (weggeometrie) op zodra er zowel een startpunt als een bestemming
+  // is — dát maakt de richtingmodus actief. Zonder bestemming (of bij een netwerkfout) blijft
+  // routeLine leeg en werkt de gewone straal-modus. De route wordt vanaf het STARTPUNT (S)
+  // getekend, niet vanaf de huidige positie: zo zie je de hele route en de bedrijven erlangs,
+  // en pik je ze in volgorde weg terwijl je 'm opbouwt.
+  useEffect(() => {
+    let cancelled = false;
+    if (!startCoords || !destCoords) { setRouteLine(null); return; }
+    getRoutePolyline([startCoords, destCoords]).then(line => {
+      if (cancelled) return;
+      // Fallback op een rechte lijn tussen de twee punten als OSRM niet bereikbaar is — dan
+      // klopt de corridor iets grover, maar de richtingmodus blijft werken.
+      setRouteLine(line && line.length >= 2 ? line : [startCoords, destCoords]);
+    });
+    return () => { cancelled = true; };
+  }, [startCoords, destCoords]);
 
   const goToSuggestPage = (page: number) => {
     const pos = currentPosition();
     if (pos) computeSuggestions(pos, page);
+  };
+
+  // Bestemming instellen via een getypt adres/plaats (zelfde gratis geocoder als het startpunt).
+  const applyDestination = async (query: string) => {
+    const q = query.trim();
+    if (!q) return;
+    setDestError(null);
+    setDestLoading(true);
+    const coords = await geocodeAddress(q);
+    setDestLoading(false);
+    if (!coords) { setDestError('Bestemming niet gevonden. Probeer een plaats of exact adres.'); return; }
+    setDestCoords(coords);
+    setDestLabel(q);
+    setDestQuery('');
+  };
+
+  // "Naar huis" — 1 klik om het thuisadres uit instellingen als bestemming te zetten (de meest
+  // voorkomende terugweg-bestemming).
+  const setHomeAsDestination = async () => {
+    if (!homeAddress) return;
+    setDestError(null);
+    setDestLoading(true);
+    const coords = await geocodeAddress(homeAddress);
+    setDestLoading(false);
+    if (!coords) { setDestError('Thuisadres niet gevonden.'); return; }
+    setDestCoords(coords);
+    setDestLabel('Naar huis');
+  };
+
+  // Van ↔ Naar omdraaien = heenweg ↔ terugweg. Wisselt start- en bestemmingcoördinaat (+ labels)
+  // om; de route wordt daardoor omgekeerd opgehaald en de bedrijven in omgekeerde rijvolgorde
+  // getoond. Alleen mogelijk als er nog geen stops geaccepteerd zijn (anders zou de al
+  // opgebouwde route van richting rommelig worden) — zolang je puur aan het plannen bent.
+  const swapVanNaar = () => {
+    if (!startCoords || !destCoords) return;
+    const oldStart = startCoords, oldStartLabel = startLabel;
+    setStartCoords(destCoords);
+    setStartLabel(destLabel || 'Startpunt');
+    setDestCoords(oldStart);
+    setDestLabel(oldStartLabel || 'Bestemming');
+  };
+
+  const clearDestination = () => {
+    setDestCoords(null);
+    setDestLabel('');
+    setDestQuery('');
+    setDestError(null);
+    setRouteLine(null);
   };
 
   // "Open in database" + "Live Zoeken" vanuit een kaart-popup — zelfde patroon als de Kaart-tab
@@ -388,7 +508,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
     if (!mapRef.current || !markersLayerRef.current) return;
     markersLayerRef.current.clearLayers();
     const bounds: L.LatLngExpression[] = [];
-    const routeLine: L.LatLngExpression[] = [];
+    const chainLine: L.LatLngExpression[] = [];
 
     const map = mapRef.current;
     // Popup blijft binnen de (relatief smalle/korte) kaart, met genoeg marge tot de rand — zonder
@@ -396,9 +516,16 @@ const RidePanel: React.FC<RidePanelProps> = ({
     // tekst), vooral op telefoon waar de kaart maar een fractie van het scherm beslaat.
     const popupOpts: L.PopupOptions = { maxWidth: 240, autoPanPadding: [16, 16] };
 
+    // Blauwe lijn = de gereden route naar de bestemming (Van→Naar-richtingmodus), waarlangs de
+    // voorstellen liggen. Onder de oranje route-lijn/markers getekend zodat die er bovenop komen.
+    if (routeLine && routeLine.length >= 2) {
+      L.polyline(routeLine.map(c => [c.lat, c.lng]) as L.LatLngExpression[], { color: '#009FE3', weight: 4, opacity: 0.45 }).addTo(markersLayerRef.current!);
+      routeLine.forEach(c => bounds.push([c.lat, c.lng]));
+    }
+
     if (startCoords) {
       bounds.push([startCoords.lat, startCoords.lng]);
-      routeLine.push([startCoords.lat, startCoords.lng]);
+      chainLine.push([startCoords.lat, startCoords.lng]);
       const startMarker = L.marker([startCoords.lat, startCoords.lng], { icon: makePin('#1e293b', 'S') })
         .bindPopup(`<div style="font-family:system-ui;font-size:13px"><b>${startLabel || 'Startpunt'}</b></div>`, popupOpts)
         .addTo(markersLayerRef.current);
@@ -406,7 +533,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
     }
 
     chain.forEach((s, i) => {
-      routeLine.push([s.coords.lat, s.coords.lng]);
+      chainLine.push([s.coords.lat, s.coords.lng]);
       const stopMarker = L.marker([s.coords.lat, s.coords.lng], { icon: makePin('#E85E26', i + 1) })
         .bindPopup(popupHtml(s.bedrijf, `Stop ${i + 1} van de route`), popupOpts)
         .addTo(markersLayerRef.current!);
@@ -414,10 +541,19 @@ const RidePanel: React.FC<RidePanelProps> = ({
       bounds.push([s.coords.lat, s.coords.lng]);
     });
 
+    // Bestemmingsmarker ("Naar", groene B-pin) zodat je ziet waar de route naartoe loopt.
+    if (destCoords) {
+      bounds.push([destCoords.lat, destCoords.lng]);
+      const destMarker = L.marker([destCoords.lat, destCoords.lng], { icon: makePin('#16A34A', 'B') })
+        .bindPopup(`<div style="font-family:system-ui;font-size:13px"><b>${destLabel || 'Bestemming'}</b></div>`, popupOpts)
+        .addTo(markersLayerRef.current!);
+      attachHoverZoom(destMarker, map);
+    }
+
     // Route-lijn (zelfde idee als de Route Kaart bij Lijsten) zodat je de volgorde als een echte
     // route ziet i.p.v. losse punten.
-    if (routeLine.length >= 2) {
-      L.polyline(routeLine, { color: '#E85E26', weight: 3, opacity: 0.7 }).addTo(markersLayerRef.current!);
+    if (chainLine.length >= 2) {
+      L.polyline(chainLine, { color: '#E85E26', weight: 3, opacity: 0.7 }).addTo(markersLayerRef.current!);
     }
 
     // Zelfde tikstraal-verruiming voor aanraakschermen als de Kaart-tab (ClusterMapView) —
@@ -447,7 +583,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
       mapRef.current.invalidateSize();
       mapRef.current.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [40, 40], maxZoom: 14 });
     }
-  }, [startCoords, startLabel, chain, suggestions, mapGeneration]);
+  }, [startCoords, startLabel, chain, suggestions, destCoords, destLabel, routeLine, mapGeneration]);
 
   // Fullscreen togglet de containergrootte (klein <-> volledig scherm) in één keer, een veel
   // grotere sprong dan de geleidelijke resizes die de ResizeObserver hierboven normaal opvangt
@@ -600,6 +736,10 @@ const RidePanel: React.FC<RidePanelProps> = ({
     setStartQuery('');
     setSuggestions([]);
     setFinished(false);
+    setDestCoords(null);
+    setDestLabel('');
+    setDestQuery('');
+    setRouteLine(null);
   };
 
   const manualCandidates = manualQuery.trim().length >= 2
@@ -911,6 +1051,48 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   )}
                 </div>
 
+                {/* Naar (bestemming) — zet de Van→Naar-richtingmodus aan: dan tonen we alleen
+                    bedrijven die op de gereden route liggen, in rijvolgorde. Geen straal, geen
+                    sliders — gewoon "waar rij ik naartoe". */}
+                {destCoords ? (
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="w-5 h-5 rounded-full bg-[#16A34A] text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">B</span>
+                    <span className="text-slate-700 font-medium truncate flex-1">
+                      <span className="text-[10px] text-slate-400 mr-1">naar</span>{destLabel || 'Bestemming'}
+                    </span>
+                    <button onClick={swapVanNaar} disabled={chain.length > 0} title={chain.length > 0 ? 'Omdraaien kan alleen vóór je stops toevoegt' : 'Van ↔ Naar omdraaien (heen ↔ terug)'} className="text-slate-400 hover:text-[#009FE3] disabled:opacity-30 flex-shrink-0"><ArrowLeftRight className="w-3.5 h-3.5" /></button>
+                    <button onClick={clearDestination} title="Bestemming wissen" className="text-slate-400 hover:text-red-500 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <ArrowRight className="w-5 h-5 text-slate-300 flex-shrink-0" />
+                    <input
+                      type="text"
+                      value={destQuery}
+                      onChange={e => { setDestQuery(e.target.value); setDestError(null); }}
+                      onKeyDown={e => e.key === 'Enter' && applyDestination(destQuery)}
+                      placeholder="Naar… (plaats of adres, bv. Amsterdam)"
+                      className="flex-1 min-w-0 border border-slate-200 rounded-sm px-2 py-1 text-xs focus:outline-none focus:border-[#009FE3]"
+                    />
+                    {destQuery.trim() && (
+                      <button onClick={() => applyDestination(destQuery)} disabled={destLoading} className="px-2 py-1 bg-[#009FE3] disabled:opacity-50 text-white rounded-sm flex-shrink-0">
+                        {destLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                    {homeAddress && !destQuery.trim() && (
+                      <button onClick={setHomeAsDestination} disabled={destLoading} title="Naar huis (thuisadres uit instellingen)" className="flex items-center gap-1 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 border border-slate-200 rounded-sm hover:border-[#009FE3] disabled:opacity-50 flex-shrink-0">
+                        {destLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Home className="w-3 h-3" />} Huis
+                      </button>
+                    )}
+                  </div>
+                )}
+                {destError && <p className="text-[10px] text-red-500 pl-7">{destError}</p>}
+                {destCoords && (
+                  <p className="text-[10px] text-[#009FE3] pl-7">
+                    {routeLine ? 'Toont bedrijven op je route, in rijvolgorde.' : 'Route ophalen…'}
+                  </p>
+                )}
+
                 {chain.map((s, i) => (
                   <React.Fragment key={s.id}>
                   <div
@@ -1007,20 +1189,24 @@ const RidePanel: React.FC<RidePanelProps> = ({
                 })}
               </div>
               {/* Zoekstraal — zelfde sleepbare "Straal"-slider als Live Zoeken, van 1 tot 150 km.
-                  Bepaalt hoeveel bedrijven er in de resultaten/paginering hieronder komen. */}
-              <div className="flex items-center gap-3 flex-wrap bg-slate-50 border border-slate-200 rounded-sm px-3 py-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex-shrink-0">Straal</span>
-                <input
-                  type="range"
-                  min={5}
-                  max={150}
-                  step={5}
-                  value={radiusKm}
-                  onChange={e => setRadiusKm(Number(e.target.value))}
-                  className="flex-1 min-w-[100px] accent-[#009FE3] h-1.5"
-                />
-                <span className="text-xs font-bold text-[#009FE3] w-14 flex-shrink-0">{radiusKm} km</span>
-              </div>
+                  Bepaalt hoeveel bedrijven er in de resultaten/paginering hieronder komen. In de
+                  Van→Naar-richtingmodus is straal niet relevant (dan geldt de route zelf), dus
+                  verbergen we 'm dan volledig. */}
+              {!destCoords && (
+                <div className="flex items-center gap-3 flex-wrap bg-slate-50 border border-slate-200 rounded-sm px-3 py-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex-shrink-0">Straal</span>
+                  <input
+                    type="range"
+                    min={5}
+                    max={150}
+                    step={5}
+                    value={radiusKm}
+                    onChange={e => setRadiusKm(Number(e.target.value))}
+                    className="flex-1 min-w-[100px] accent-[#009FE3] h-1.5"
+                  />
+                  <span className="text-xs font-bold text-[#009FE3] w-14 flex-shrink-0">{radiusKm} km</span>
+                </div>
+              )}
               {/* Bronfilter (Bouwgarant, Architectenweb, BNA, ...) — alleen als er meer dan 1
                   bron in de data zit, anders heeft filteren geen zin. */}
               {availableSources.length > 1 && (

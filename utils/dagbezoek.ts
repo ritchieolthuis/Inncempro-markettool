@@ -110,6 +110,51 @@ export function haversineKm(lat1: number, lon1: number, lat2: number, lon2: numb
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
+// ─── Bedrijven langs een rijroute ─────────────────────────────────────────────
+// Voor de "Van → Naar"-modus: bepaal welke bedrijven ECHT op de gereden route liggen (i.p.v.
+// binnen een cirkel/straal, wat nooit klopte). We krijgen de route als een reeks punten (de
+// weggeometrie van OSRM) en meten per bedrijf twee dingen:
+//   • distKm     — hoe ver het bedrijf van de route af ligt (loodrecht op de dichtstbijzijnde
+//                  plek van de lijn). Klein = ligt op/vlak langs de route.
+//   • progressKm — hoe ver LANGS de route (vanaf het startpunt) die dichtstbijzijnde plek ligt.
+//                  Hiermee sorteer je op rijvolgorde: op de heenweg oplopend, op de terugweg
+//                  draai je simpelweg de route om (dan wordt begin↔eind gewisseld).
+// De projectie is een simpele equirectangular-benadering rond Nederland (ref-breedtegraad 52°);
+// ruim nauwkeurig genoeg op deze schaal om "ligt het op de route"-beslissingen te nemen.
+const NL_REF_LAT = 52;
+const KM_PER_DEG_LAT = 110.57;
+const KM_PER_DEG_LNG = 111.32 * Math.cos(NL_REF_LAT * Math.PI / 180);
+
+function toXY(lat: number, lng: number): { x: number; y: number } {
+  return { x: lng * KM_PER_DEG_LNG, y: lat * KM_PER_DEG_LAT };
+}
+
+export interface RoutePosition { distKm: number; progressKm: number; }
+
+export function nearestPointOnRoute(
+  lat: number, lng: number,
+  route: Array<{ lat: number; lng: number }>,
+): RoutePosition {
+  const p = toXY(lat, lng);
+  let best: RoutePosition = { distKm: Infinity, progressKm: 0 };
+  let cumulative = 0; // afgelegde route-lengte tot aan het begin van het huidige segment
+  for (let i = 0; i < route.length - 1; i++) {
+    const a = toXY(route[i].lat, route[i].lng);
+    const b = toXY(route[i + 1].lat, route[i + 1].lng);
+    const abx = b.x - a.x, aby = b.y - a.y;
+    const segLen = Math.hypot(abx, aby);
+    // Projecteer p op segment [a,b], geklemd tussen de eindpunten (t in [0,1]).
+    const t = segLen === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / (segLen * segLen)));
+    const projX = a.x + t * abx, projY = a.y + t * aby;
+    const dist = Math.hypot(p.x - projX, p.y - projY);
+    if (dist < best.distKm) {
+      best = { distKm: dist, progressKm: cumulative + t * segLen };
+    }
+    cumulative += segLen;
+  }
+  return best;
+}
+
 // Route-optimalisatie via de Nearest Neighbor-heuristiek: begint bij het startpunt en pakt
 // telkens de dichtstbijzijnde nog-niet-bezochte stop. Levert een korte, "logische" volgorde
 // i.p.v. kriskras. Gedeeld door RouteMapPanel (Lijsten-kaart) en RidePanel (Onderweg) zodat
