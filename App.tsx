@@ -1062,6 +1062,9 @@ function overlapScore(qWords: string[], bWords: string[]): number {
 }
 
 const DEFAULT_ORIGIN = "Lansinkesweg 4, 7553 AE Hengelo";
+// Sentinel voor "Alle" bij Resultaten per pagina — een groot eindig getal i.p.v. Infinity,
+// want de bedrijvendatabase telt nooit meer dan een paar duizend rijen tegelijk.
+const RESULTS_PER_PAGE_ALL = 100000;
 
 // Hoofdtabbladen (Live Zoeken, Favorieten, Lijsten, Database, Kaart, Bezoeken) — versleepbaar
 // in zowel de tabbalk zelf als bij Instellingen > Voorkeuren. Statische labels hier (geen
@@ -1598,6 +1601,7 @@ const App: React.FC = () => {
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editAvatar, setEditAvatar] = useState('');
+  const [avatarUploadError, setAvatarUploadError] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordChangeError, setPasswordChangeError] = useState<string | null>(null);
@@ -1665,19 +1669,19 @@ const App: React.FC = () => {
 
   // Geocodeert het bedrijfsadres via Nominatim en cachet het resultaat, zodat straal-zoeken
   // en de afstandsweergave een precies punt hebben in plaats van alleen een plaatsnaam.
+  // Gebruikt `queuedNominatim` (dezelfde gedeelde, getemporiseerde wachtrij als de Routekaart
+  // en de achtergrond-kaartgeocoder) i.p.v. een losse fetch — anders kon deze aanroep
+  // gelijktijdig met tientallen achtergrond-verzoeken vuren en door Nominatim's rate-limit
+  // (~1 verzoek/seconde) worden afgewezen, wat een perfect geldig adres (bv. het eigen
+  // kantooradres) ten onrechte als "niet gevonden" liet ogen.
   const geocodeAddress = async (address: string) => {
     setPrefAddressGeocoding(true);
     setPrefAddressGeocodeError(false);
     setPrefAddressApproximate(false);
     try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address + ', Nederland')}&countrycodes=nl&limit=1`,
-        { headers: { 'Accept-Language': 'nl' } },
-      );
-      const data = await res.json();
-      const hit = data?.[0];
+      const hit = await queuedNominatim(`${address}, Nederland`);
       if (hit) {
-        const coords = { lat: parseFloat(hit.lat), lng: parseFloat(hit.lon) };
+        const coords = { lat: hit[0], lng: hit[1] };
         setPrefAddressCoords(coords);
         setPrefAddressCoordsFor(address);
         localStorage.setItem(uKey('inncempro_pref_address_coords'), JSON.stringify(coords));
@@ -1783,6 +1787,20 @@ const App: React.FC = () => {
     if (freshDeviceRef.current) return;
     if (!prefAddressCoords && prefAddress.trim()) geocodeAddress(prefAddress.trim());
   }, []);
+
+  // Instellingen > Mijn adres toonde soms "Adres niet gevonden" voor een adres dat prima
+  // geocodeerbaar is (bv. het standaard kantooradres) — niet omdat de opzoek FAALDE, maar
+  // omdat 'ie op dit apparaat simpelweg NOOIT is uitgevoerd (de effects hierboven slaan 'm
+  // over bij een fris toestel, ten gunste van GPS-detectie; als die GPS-vraag genegeerd/
+  // geweigerd wordt, blijft prefAddressCoords voorgoed null en toont de UI "niet gevonden"
+  // terwijl het adres zelf nooit is opgezocht). Zodra je Instellingen opent en er nog geen
+  // coördinaten zijn, alsnog gewoon proberen — dan klopt de status altijd met een ECHTE poging.
+  useEffect(() => {
+    if (showSettings && !prefAddressCoords && !prefAddressGeocoding && prefAddress.trim()) {
+      geocodeAddress(prefAddress.trim());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSettings]);
 
   // Dit account wordt door meerdere collega's op verschillende apparaten gebruikt — iedereen
   // stilzwijgend het gedeelde Hengelo-kantooradres laten gebruiken voor afstanden/relevantie
@@ -2836,6 +2854,36 @@ const App: React.FC = () => {
       setCurrentUser(null);
       setFoundCompanies([]);
       setAuthMode('login');
+  };
+
+  // Avatar uploaden vanaf het toestel (telefoon-galerij of pc-bestandenkiezer) i.p.v. alleen
+  // een kant-en-klare afbeeldingslink plakken — een gewone <input type="file" accept="image/*">
+  // opent op mobiel automatisch de foto-galerij/camera-keuze en op desktop de bestandskiezer,
+  // dus geen aparte knoppen per platform nodig. Verkleint de foto eerst via canvas naar max
+  // 256x256 en zet 'm om naar een JPEG data-URL: zonder dit zou een rechtstreekse telefoonfoto
+  // (vaak enkele MB's) in zijn volledige formaat in het profiel worden opgeslagen.
+  const handleAvatarFile = (file: File) => {
+    setAvatarUploadError('');
+    if (!file.type.startsWith('image/')) { setAvatarUploadError('Kies een afbeeldingsbestand.'); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const maxSize = 256;
+        const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { setAvatarUploadError('Kon de afbeelding niet verwerken.'); return; }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        setEditAvatar(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => setAvatarUploadError('Kon de afbeelding niet lezen.');
+      img.src = reader.result as string;
+    };
+    reader.onerror = () => setAvatarUploadError('Kon het bestand niet lezen.');
+    reader.readAsDataURL(file);
   };
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
@@ -4213,9 +4261,24 @@ const App: React.FC = () => {
                                   <input type="email" value={editEmail} onChange={e => setEditEmail(e.target.value)} className="w-full p-2.5 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none" />
                               </div>
                               <div>
-                                  <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Avatar URL</label>
-                                  <input type="text" value={editAvatar} onChange={e => setEditAvatar(e.target.value)} className="w-full p-2.5 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none" placeholder="https://..." />
-                                  <p className="text-[10px] text-slate-400 mt-1">Plak een afbeeldingslink.</p>
+                                  <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Avatar</label>
+                                  <div className="flex items-center gap-3 mb-2">
+                                      {editAvatar && (
+                                          <img src={editAvatar} alt="Avatar voorbeeld" className="w-12 h-12 rounded-full object-cover border border-slate-200 flex-shrink-0" />
+                                      )}
+                                      <label className="flex-1 py-2.5 border border-slate-200 rounded-sm text-xs font-bold uppercase tracking-wider text-slate-600 text-center cursor-pointer hover:border-[#009FE3] hover:text-[#009FE3]">
+                                          Foto uploaden (galerij of bestand)
+                                          <input
+                                              type="file"
+                                              accept="image/*"
+                                              className="hidden"
+                                              onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarFile(f); e.target.value = ''; }}
+                                          />
+                                      </label>
+                                  </div>
+                                  {avatarUploadError && <p className="text-[10px] text-red-500 mb-1">{avatarUploadError}</p>}
+                                  <input type="text" value={editAvatar} onChange={e => setEditAvatar(e.target.value)} className="w-full p-2.5 border border-slate-200 rounded-sm text-sm focus:border-[#009FE3] focus:outline-none" placeholder="https://... (of upload hierboven een foto)" />
+                                  <p className="text-[10px] text-slate-400 mt-1">Upload een foto vanaf je telefoon/pc, of plak een afbeeldingslink.</p>
                               </div>
                               <button type="submit" className="w-full py-3 bg-[#009FE3] text-white font-bold uppercase rounded-sm flex items-center justify-center gap-2 hover:bg-[#008ac5] text-xs tracking-wider">
                                   <Save className="w-4 h-4" /> Opslaan
@@ -4338,13 +4401,21 @@ const App: React.FC = () => {
                               {/* Resultaten per pagina */}
                               <div>
                                   <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Resultaten per pagina <span className="text-slate-400 normal-case font-normal">(live zoeken)</span></label>
-                                  <div className="flex gap-2">
-                                      {[10, 25, 50].map(n => (
+                                  <div className="flex gap-2 flex-wrap">
+                                      {[10, 25, 50, 100].map(n => (
                                           <button key={n} onClick={() => savePrefRpp(n)}
                                               className={`flex-1 py-2.5 text-xs font-bold border rounded-sm transition-colors ${prefResultsPerPage === n ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}>
                                               {n}
                                           </button>
                                       ))}
+                                      {/* "Alle": geen paginering, alles op één pagina — RESULTS_PER_PAGE_ALL is
+                                          bewust een groot eindig getal (niet Infinity), want de databank telt
+                                          nooit meer dan een paar duizend bedrijven, en Infinity zou de
+                                          paginaberekeningen elders (Math.ceil, page-nummers) laten stranden. */}
+                                      <button onClick={() => savePrefRpp(RESULTS_PER_PAGE_ALL)}
+                                          className={`flex-1 py-2.5 text-xs font-bold border rounded-sm transition-colors ${prefResultsPerPage === RESULTS_PER_PAGE_ALL ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}>
+                                          Alle
+                                      </button>
                                   </div>
                               </div>
 
@@ -4998,7 +5069,7 @@ const App: React.FC = () => {
                        <input
                          type="range"
                          min={1}
-                         max={200}
+                         max={400}
                          step={1}
                          value={radiusKm}
                          onChange={e => setRadiusKm(Number(e.target.value))}

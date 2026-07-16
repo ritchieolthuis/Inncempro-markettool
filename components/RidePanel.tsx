@@ -1258,8 +1258,10 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   );
                 })}
               </div>
-              {/* Zoekstraal - zelfde sleepbare "Straal"-slider als Live Zoeken, van 5 tot 200 km
-                  (200 km dekt vanuit elk punt in Nederland zo goed als het hele land).
+              {/* Zoekstraal - zelfde sleepbare "Straal"-slider als Live Zoeken, van 5 tot 400 km
+                  (Nederland is hemelsbreed maximaal ~330 km van hoek tot hoek — bv. Zeeuws-
+                  Vlaanderen tot Groningen — dus 400 km dekt echt "heel Nederland", vanaf ELK
+                  startpunt, niet alleen vanuit het midden van het land).
                   Bepaalt hoeveel bedrijven er in de resultaten/paginering hieronder komen. In de
                   Van→Naar-richtingmodus is straal niet relevant (dan geldt de route zelf), dus
                   verbergen we 'm dan volledig. */}
@@ -1269,7 +1271,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   <input
                     type="range"
                     min={5}
-                    max={200}
+                    max={400}
                     step={5}
                     value={radiusKm}
                     onChange={e => setRadiusKm(Number(e.target.value))}
