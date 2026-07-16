@@ -702,10 +702,17 @@ const RidePanel: React.FC<RidePanelProps> = ({
       if (!naam) continue;
       const stad = (b.stad || '').toLowerCase();
       let score = 0;
+      let naamHits = 0;
       for (const w of qWords) {
-        if (naam.includes(w)) score += 2;
+        if (naam.includes(w)) { score += 2; naamHits++; }
         else if (stad.includes(w)) score += 1;
       }
+      // Een kale plaatsnaam (bv. "Eindhoven") mag nooit een bedrijf triggeren puur omdat het
+      // daar toevallig gevestigd is — dat pakte willekeurig het eerst gevonden bedrijf in die
+      // stad i.p.v. het centrum van de stad zelf. Vereist daarom minstens één woord dat ook
+      // echt in de BEDRIJFSNAAM matcht (zoals bij "OMA Rotterdam" — "OMA" raakt de naam,
+      // "Rotterdam" de plaats). Zonder naam-hit valt dit terug op geocoderen van de plaatsnaam.
+      if (naamHits === 0) continue;
       if (score > bestScore) { bestScore = score; best = b; }
     }
     return bestScore >= qWords.length ? best : null;
