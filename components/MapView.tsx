@@ -24,18 +24,18 @@ const ALL_SOURCES = ['Bouwgarant', 'Architectenweb', 'Stiho', 'Jongeneel', 'Bouw
 
 // ─── Vestigingen (branch locations van hetzelfde bedrijf) ─────────────────────
 // Bronnen die zelf één landelijke keten zijn (elke entry is een vestiging van dezelfde
-// onderneming) — de brand-naam alleen volstaat niet altijd (bv. "Stiho Amsterdam Amstel",
+// onderneming) — de brand-naam alleen volstaat niet altijd (bijv. "Stiho Amsterdam Amstel",
 // "PontMeyer Rotterdam Noord" hebben een extra locatie-detail na de stad), dus voor deze
 // bronnen groeperen we simpelweg op bron in plaats van op naam.
 const VESTIGING_CHAIN_SOURCES = new Set(['stiho', 'jongeneel', 'pontmeyer', 'van wijnen', 'plegt-vos']);
 
 // Regionale divisie-namen die bedrijven met meerdere vestigingen vaak achter hun naam
-// zetten (bv. "Plegt-Vos Oost", "Plegt-Vos Midden") — strippen zodat ze onder dezelfde
+// zetten (bijv. "Plegt-Vos Oost", "Plegt-Vos Midden") — strippen zodat ze onder dezelfde
 // kernnaam groeperen, net als de stad-suffix hieronder.
 const REGIO_SUFFIXES = /\b(noordoost|noordwest|zuidoost|zuidwest|noord|oost|zuid|west|midden)\b/g;
 
 // Herleidt de "kernnaam" van een bedrijf door rechtsvorm-suffixen en, als de
-// naam eindigt op de eigen plaatsnaam (bv. "INBO Amsterdam"), ook die plaats
+// naam eindigt op de eigen plaatsnaam (bijv. "INBO Amsterdam"), ook die plaats
 // te strippen — zo groeperen "INBO Amsterdam" en "INBO Rotterdam" onder "inbo".
 function coreCompanyName(naam: string, stad: string, source?: string): string {
   const src = (source || '').toLowerCase().trim();
@@ -180,7 +180,7 @@ function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 // ─── Icons ────────────────────────────────────────────────────────────────────
 // Hoe verder ingezoomd, hoe groter de pin — makkelijker te raken met een vinger op
 // mobiel — maar begrensd tussen 0.65x en 1.45x zodat bedrijven die dicht bij elkaar
-// zitten (bv. binnenstad Amsterdam) nooit onder elkaar verdwijnen. Zoom 13 (het
+// zitten (bijv. binnenstad Amsterdam) nooit onder elkaar verdwijnen. Zoom 13 (het
 // standaard stadsniveau) is de baseline 1x, dezelfde afmeting als voorheen vast stond.
 const PIN_BASE_ZOOM = 13;
 function pinScale(zoom?: number): number {
@@ -718,7 +718,7 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
     const ro = new ResizeObserver(() => mapRef.current?.invalidateSize());
     ro.observe(mapDiv.current);
     // Pins groeien iets mee met de zoom (makkelijker te raken op mobiel), begrensd via
-    // pinScale() zodat ze in dichtbevolkte gebieden (bv. binnenstad Amsterdam) nooit
+    // pinScale() zodat ze in dichtbevolkte gebieden (bijv. binnenstad Amsterdam) nooit
     // gaan overlappen. Elke marker draagt zijn eigen kleur/label via _pinColor/_pinLabel
     // (gezet bij aanmaak, zie makePin call-sites) zodat we hier zonder aparte registry
     // gewoon alle live pins op de kaart kunnen herschalen.
@@ -1787,7 +1787,7 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
             <div>
               <label className="text-xs text-slate-500 mb-1 block">Stad / postcode</label>
               <input type="text" value={city} onChange={e => setCity(e.target.value)}
-                placeholder="bv. Rotterdam of 3011"
+                placeholder="bijv. Rotterdam of 3011"
                 className="w-full border border-slate-200 rounded-sm px-2 py-1.5 text-sm focus:outline-none focus:border-[#009FE3]" />
             </div>
             {(province || city) && (

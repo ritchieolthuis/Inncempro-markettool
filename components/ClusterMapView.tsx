@@ -162,7 +162,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
   }, [allEntries]);
 
   // Hoe verder ingezoomd, hoe groter de bolletjes (makkelijker te raken op mobiel) — maar
-  // begrensd zodat bedrijven die dicht bij elkaar zitten (bv. binnenstad Amsterdam) nooit
+  // begrensd zodat bedrijven die dicht bij elkaar zitten (bijv. binnenstad Amsterdam) nooit
   // onder elkaar gaan overlappen. Zoom 13 blijft de baseline, dezelfde grootte die hiervoor
   // altijd vast stond.
   //
@@ -233,7 +233,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
       (marker as any)._cityKey = cityKey(prov, stad);
       (marker as any)._entry = entry;
       // Hover toont de info meteen (geen klik meer nodig) en maakt het bolletje eventjes
-      // groter zodat duidelijk is welke je aanwijst — bij drukke gebieden (bv. Amsterdam
+      // groter zodat duidelijk is welke je aanwijst — bij drukke gebieden (bijv. Amsterdam
       // binnenstad) is dat prettiger dan blind moeten klikken. Muis weg = terug naar normaal.
       // Alleen voor een echte muis: een telefoon heeft geen "hover", tikken vuurt mouseover
       // en click vlak na elkaar af, en dan zou de popup het tikken op selecteren in de weg

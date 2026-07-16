@@ -160,7 +160,7 @@ function coordsFor(b: any, cityCoords: Record<string, Coords>): Coords | null {
 
 // Gedeelde adres-opzoek (gratis, geen key nodig) voor startpunt/tussenstop/adres-aanpassen —
 // vóórdien had elke plek zijn eigen los fetch-aanroepje, met elk net iets andere query-opbouw.
-// Herkent eerst "straat huisnummer, plaats" (bv. "Handelsweg 14, Wierden") en zoekt dan
+// Herkent eerst "straat huisnummer, plaats" (bijv. "Handelsweg 14, Wierden") en zoekt dan
 // GESTRUCTUREERD (straat- en plaatsveld apart) — betrouwbaarder voor een exact adres dan één
 // vrije zoekstring, die bij Nominatim regelmatig niks teruggeeft voor net dat soort input.
 // Valt daarna terug op een vrije zoekstring (voor plaatsnamen, bedrijfsnamen, etc.).
@@ -228,7 +228,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
   // hemelsbreed loodrecht op de lijn). Bewust een vaste waarde i.p.v. een slider: de gebruiker
   // wil geen knoppen, gewoon "de architecten die op mijn route liggen". Strak gehouden (6 km ≈
   // even van de snelwegafslag af en weer terug): een bedrijf dat verder van de lijn ligt is een
-  // echte omweg de verkeerde kant op (bv. Oirschot ten westen van Eindhoven terwijl je noord
+  // echte omweg de verkeerde kant op (bijv. Oirschot ten westen van Eindhoven terwijl je noord
   // rijdt), en dat wil je juist NIET meepakken — beter eentje iets verderop dat wél op de route
   // ligt dan eentje "vlakbij" waarvoor je van de weg af moet.
   const ROUTE_CORRIDOR_KM = 6;
@@ -270,7 +270,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
 
   const requestIdRef = useRef(0);
 
-  // Beschikbare bronnen (bv. Bouwgarant, Architectenweb, BNA, ...) voor het bronfilter —
+  // Beschikbare bronnen (bijv. Bouwgarant, Architectenweb, BNA, ...) voor het bronfilter —
   // afgeleid uit de echte data i.p.v. hardgecodeerd, zodat 'm altijd klopt met wat er is.
   const availableSources = useMemo(() => {
     const set = new Set<string>();
@@ -354,7 +354,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
 
     // Alleen bij expliciete "Toon alles" alles in één keer tonen — ook in routemodus blijft de
     // normale paginering (10/20 per pagina) gewoon werken, dat is de bekende/gewenste bediening.
-    // "Toon alles" is de manier om écht alles te zien (incl. verderop op de route, bv. Utrecht/
+    // "Toon alles" is de manier om écht alles te zien (incl. verderop op de route, bijv. Utrecht/
     // Amersfoort/Apeldoorn) zonder te hoeven doorklikken — niet iets wat automatisch aan moet
     // staan zodra er een bestemming is gekozen.
     if (showAllSuggestions) {
@@ -664,7 +664,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
   // mislukken of hangen i.p.v. netjes terugvallen op WiFi/IP-positionering — enableHighAccuracy:
   // false gebruikt diezelfde snellere, breder beschikbare methode die bij Live Zoeken al werkt.
   // Kan ook aangeroepen worden als er al (een eerdere, evt. onnauwkeurige via-IP) startCoords
-  // staan — bv. via de "opnieuw via GPS"-knop hieronder, zodra het startpunt al gezet is. Reset
+  // staan — bijv. via de "opnieuw via GPS"-knop hieronder, zodra het startpunt al gezet is. Reset
   // daarom altijd expliciet, en herberekent de km's van een eventuele al opgebouwde route zodra
   // de nieuwe locatie binnenkomt (anders blijven de afstanden op de OUDE locatie gebaseerd).
   const useMyLocation = () => {
@@ -717,10 +717,10 @@ const RidePanel: React.FC<RidePanelProps> = ({
     );
   };
 
-  // Bekende plaatsnamen — een woord dat zelf een plaats is (bv. "Rotterdam", "Eindhoven") mag
+  // Bekende plaatsnamen — een woord dat zelf een plaats is (bijv. "Rotterdam", "Eindhoven") mag
   // NOOIT als bedrijfsnaam-treffer tellen. Zonder dit "won" een kale plaatsnaam-zoekopdracht
   // altijd van het echte stadscentrum zodra een willekeurig bedrijf toevallig op die plaats
-  // eindigt (heel gangbaar in deze data, bv. "BA Architecten Eindhoven"), en werd bv. "Eindhoven"
+  // eindigt (heel gangbaar in deze data, bijv. "BA Architecten Eindhoven"), en werd bijv. "Eindhoven"
   // intypen ineens "BA Architecten Eindhoven" als startpunt i.p.v. het centrum van Eindhoven
   // zoals Google Maps dat ook zou pakken.
   const knownCityWords = React.useMemo(() => {
@@ -758,7 +758,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
         if (naamWordMatch) { score += 2; naamHits++; }
         else if (stad.includes(w)) score += 1;
       }
-      // Een kale plaatsnaam (bv. "Eindhoven") mag nooit een bedrijf triggeren puur omdat het
+      // Een kale plaatsnaam (bijv. "Eindhoven") mag nooit een bedrijf triggeren puur omdat het
       // daar toevallig gevestigd is — dat pakte willekeurig het eerst gevonden bedrijf in die
       // stad i.p.v. het centrum van de stad zelf. Vereist daarom minstens één woord dat ook
       // echt in de BEDRIJFSNAAM matcht (zoals bij "OMA Rotterdam" — "OMA" raakt de naam,
@@ -774,7 +774,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
     if (!q) return;
     setStartError(null);
     setStartLoading(true);
-    // Eerst proberen als bedrijfsnaam (evt. met plaats erachter, bv. "OMA Rotterdam") in de
+    // Eerst proberen als bedrijfsnaam (evt. met plaats erachter, bijv. "OMA Rotterdam") in de
     // eigen database — anders als plaatsnaam via Nominatim (gratis, geen key nodig).
     const companyMatch = findCompanyForStart(q);
     if (companyMatch) {
@@ -847,7 +847,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
     setManualQuery('');
   };
 
-  // Tussenstop op plaatsnaam (bv. "Apeldoorn" tussen Nijmegen en Deventer) i.p.v. alleen een
+  // Tussenstop op plaatsnaam (bijv. "Apeldoorn" tussen Nijmegen en Deventer) i.p.v. alleen een
   // bedrijf uit de database — zelfde gratis Nominatim-opzoek als bij het zoeken van een
   // startpunt. Wordt geprobeerd als er geen bedrijf-match is voor de getypte tekst.
   const addPlaceWaypoint = async (q: string) => {
@@ -1003,7 +1003,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
           </div>
           <div>
             <h2 className="text-lg font-bold text-slate-900">Onderweg</h2>
-            <p className="text-xs text-slate-400">Rijd van bedrijf naar bedrijf, telkens de dichtstbijzijnde eerst</p>
+            <p className="text-xs text-slate-400">Stel een efficiënte bezoekroute samen</p>
           </div>
         </div>
         )}
@@ -1100,7 +1100,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Route tot nu toe</span>
                 <div className="flex items-center gap-2">
                   {chain.length >= 3 && (
-                    <button onClick={optimizeChain} title="Maak er een logische route van (dichtstbijzijnde eerst)" className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] hover:underline flex items-center gap-1">
+                    <button onClick={optimizeChain} title="Optimaliseer de route op kortste afstand" className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] hover:underline flex items-center gap-1">
                       <Wand2 className="w-3 h-3" /> Optimaliseer
                     </button>
                   )}
@@ -1119,7 +1119,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                         value={editStartQuery}
                         onChange={e => { setEditStartQuery(e.target.value); setStartError(null); }}
                         onKeyDown={e => e.key === 'Enter' && updateStartAddress(editStartQuery)}
-                        placeholder="Exact adres, bv. Lansinkesweg 4 Hengelo"
+                        placeholder="Exact adres, bijv. Lansinkesweg 4 Hengelo"
                         autoFocus
                         className="flex-1 border border-slate-200 rounded-sm px-2 py-1 text-xs focus:outline-none focus:border-[#009FE3]"
                       />
@@ -1131,7 +1131,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   ) : (
                     <>
                       <span className="text-slate-700 font-medium truncate flex-1">{startLabel || 'Startpunt'}</span>
-                      {/* Opnieuw via GPS: nodig zodra het startpunt al gezet is (bv. een minder
+                      {/* Opnieuw via GPS: nodig zodra het startpunt al gezet is (bijv. een minder
                           precieze via-IP locatie) — zonder deze knop was er geen manier meer om
                           een verse GPS-poging te doen, alleen handmatig een adres typen. */}
                       <button onClick={useMyLocation} disabled={startLoading} title="Opnieuw via GPS" className="text-slate-400 hover:text-[#E85E26] disabled:opacity-50 flex-shrink-0">
@@ -1162,7 +1162,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                       value={destQuery}
                       onChange={e => { setDestQuery(e.target.value); setDestError(null); }}
                       onKeyDown={e => e.key === 'Enter' && applyDestination(destQuery)}
-                      placeholder="Naar… (plaats of adres, bv. Amsterdam)"
+                      placeholder="Naar… (plaats of adres, bijv. Amsterdam)"
                       className="flex-1 min-w-0 border border-slate-200 rounded-sm px-2 py-1 text-xs focus:outline-none focus:border-[#009FE3]"
                     />
                     {destQuery.trim() && (
@@ -1297,7 +1297,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
               </div>
               )}
               {/* Zoekstraal - zelfde sleepbare "Straal"-slider als Live Zoeken, van 5 tot 400 km
-                  (Nederland is hemelsbreed maximaal ~330 km van hoek tot hoek — bv. Zeeuws-
+                  (Nederland is hemelsbreed maximaal ~330 km van hoek tot hoek — bijv. Zeeuws-
                   Vlaanderen tot Groningen — dus 400 km dekt echt "heel Nederland", vanaf ELK
                   startpunt, niet alleen vanuit het midden van het land).
                   Bepaalt hoeveel bedrijven er in de resultaten/paginering hieronder komen. In de
@@ -1440,7 +1440,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                     <button onClick={() => goToSuggestPage(suggestPage - 1)} disabled={suggestPage <= 1} className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] disabled:opacity-30 disabled:text-slate-400 hover:underline">← Vorige</button>
                     <span className="text-[10px] text-slate-400">Pagina {suggestPage} van {totalSuggestPages}</span>
                     <button onClick={() => goToSuggestPage(suggestPage + 1)} disabled={suggestPage >= totalSuggestPages} className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] disabled:opacity-30 disabled:text-slate-400 hover:underline">Volgende →</button>
-                    {/* Direct naar een paginanummer springen (bv. "12"), zelfde patroon als de
+                    {/* Direct naar een paginanummer springen (bijv. "12"), zelfde patroon als de
                         Bedrijvendatabase-paginering. */}
                     <form
                       onSubmit={e => {
@@ -1466,7 +1466,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
               })()}
 
               {/* Handmatig toevoegen: een bedrijf uit de database, OF een tussenstop op
-                  plaatsnaam (bv. "Apeldoorn" tussen Nijmegen en Deventer). De plaats-optie
+                  plaatsnaam (bijv. "Apeldoorn" tussen Nijmegen en Deventer). De plaats-optie
                   staat ALTIJD bovenaan zodra je iets typt — ook als er bedrijven in die plaats
                   bestaan — anders kon je een plaats waar toevallig bedrijven zitten nooit als
                   losse tussenstop kiezen. */}

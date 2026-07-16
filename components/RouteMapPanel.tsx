@@ -752,7 +752,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
   // Google Maps-URL: gebruikt de officieel gedocumenteerde ?api=1&origin=...&destination=...
   // &waypoints=...-vorm (dezelfde die elders in de app al betrouwbaar werkt), niet de oude
   // pad-stijl "/dir/A/B/C/D". Die oude vorm laat Google elk pad-segment apart als losse
-  // zoekopdracht interpreteren, wat bij naam+adres-combinaties (bv. "OMA, Rokin 99, 1012 KL,
+  // zoekopdracht interpreteren, wat bij naam+adres-combinaties (bijv. "OMA, Rokin 99, 1012 KL,
   // Amsterdam") regelmatig een segment niet herkent — de rit toont dan alleen punten zonder
   // berekende rijroute/duur, en een later geopende link kan zelfs een andere (of geen) route
   // opleveren dan toen hij werd aangemaakt. De ?api=1-vorm is stabiel en reproduceerbaar.
@@ -805,7 +805,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
 
       {/* ── Map ── */}
       {/* `isolate` containt Leaflet's eigen panes (interne z-index tot 700) binnen deze wrapper,
-          zodat ze nooit door een modal (bv. Instellingen, z-50) heen kunnen "lekken". */}
+          zodat ze nooit door een modal (bijv. Instellingen, z-50) heen kunnen "lekken". */}
       <div className="relative isolate flex-1 min-h-0">
         <div
           ref={mapDiv}

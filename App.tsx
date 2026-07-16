@@ -35,7 +35,7 @@ const DEMO_AUTO_LOGIN = false;
 
 // ── Plaatsnaam-normalisatie ──────────────────────────────────────────────────
 // Sommige bronnen leveren dezelfde plaats onder net iets andere spelling aan
-// (bv. "AMSTERDAM (NL)", "'s-Hertogenbosch" vs "Den Bosch", "ROTTERDAM" vs
+// (bijv. "AMSTERDAM (NL)", "'s-Hertogenbosch" vs "Den Bosch", "ROTTERDAM" vs
 // "Rotterdam"). Zonder correctie duiken die als aparte plaatsen op in
 // filters, kaartmarkers en het marktoverzicht. Dit wordt één keer bij het
 // laden van de data gecorrigeerd, zodat alles verder consistent is.
@@ -1016,7 +1016,7 @@ const DISCIPLINE_KEYWORDS: Record<string, 'architect' | 'bouwbedrijf' | 'aanneme
 };
 
 // Kleine, standaard Levenshtein-afstand voor het herkennen van bedrijfsnamen die één letter
-// verschillen door een tikfout (bv. "Kamphorst" vs "Kamphors"), zonder dat elk kort woord
+// verschillen door een tikfout (bijv. "Kamphorst" vs "Kamphors"), zonder dat elk kort woord
 // per ongeluk als "bijna gelijk" aan elk ander kort woord wordt gezien.
 function levenshteinDistance(a: string, b: string): number {
   if (a === b) return 0;
@@ -1038,7 +1038,7 @@ function levenshteinDistance(a: string, b: string): number {
 }
 // Twee woorden tellen als volledige match bij exact dezelfde spelling, en als gedeeltelijke
 // match (0.7) bij precies één letter verschil, maar alleen voor woorden van 4+ tekens zodat
-// korte woorden (bv. "de", "bv") niet lukraak op elkaar gaan lijken.
+// korte woorden (bijv. "de", "bv") niet lukraak op elkaar gaan lijken.
 function wordSimilarity(a: string, b: string): number {
   if (a === b) return 1;
   if (a.length >= 4 && b.length >= 4 && levenshteinDistance(a, b) <= 1) return 0.7;
@@ -1463,7 +1463,7 @@ const visibleSources = (b: any): string[] => {
 };
 
 // Bronnen die zelf één landelijke keten zijn (elke entry is een vestiging van dezelfde
-// onderneming) — hier volstaat de brand-naam soms niet (bv. "Stiho Amsterdam Amstel",
+// onderneming) — hier volstaat de brand-naam soms niet (bijv. "Stiho Amsterdam Amstel",
 // "PontMeyer Rotterdam Noord" hebben een extra locatie-detail na de stad), dus voor deze
 // bronnen groeperen we simpelweg op bron in plaats van op naam.
 const VESTIGING_CHAIN_SOURCES = new Set(['stiho', 'jongeneel', 'pontmeyer', 'van wijnen', 'plegt-vos']);
@@ -1472,7 +1472,7 @@ const VESTIGING_CHAIN_SOURCES = new Set(['stiho', 'jongeneel', 'pontmeyer', 'van
 // rechtsvorm-suffixen en, als de naam eindigt op de eigen plaatsnaam ("INBO Rotterdam"),
 // ook die plaats — zo groeperen "INBO Rotterdam" en "INBO Eindhoven" onder de kern "inbo".
 // Regionale divisie-namen die bedrijven met meerdere vestigingen vaak achter hun naam
-// zetten (bv. "Plegt-Vos Oost", "Plegt-Vos Midden") — strippen zodat ze onder dezelfde
+// zetten (bijv. "Plegt-Vos Oost", "Plegt-Vos Midden") — strippen zodat ze onder dezelfde
 // kernnaam groeperen, net als de stad-suffix hieronder.
 const REGIO_SUFFIXES = /\b(noordoost|noordwest|zuidoost|zuidwest|noord|oost|zuid|west|midden)\b/g;
 const vestigingCoreNaam = (naam: string, stad: string, source?: string): string => {
@@ -1486,7 +1486,7 @@ const vestigingCoreNaam = (naam: string, stad: string, source?: string): string 
     .replace(/\b(b\.?v\.?|nv|vof|cv|stichting|bna)\b/g, '')
     .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
   // Plaatsnaam door DEZELFDE normalisatie halen als de naam hierboven — anders faalt de
-  // vergelijking zodra de stad een koppelteken/apostrof bevat (bv. "Hardinxveld-Giessendam"
+  // vergelijking zodra de stad een koppelteken/apostrof bevat (bijv. "Hardinxveld-Giessendam"
   // wordt in n "hardinxveldgiessendam", maar bleef als los stuk "s" ongewijzigd staan met
   // koppelteken, dus matchte nooit en kreeg die vestiging een eigen, ongewenste groep).
   const s = (stad || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1514,14 +1514,14 @@ const getAndereVestigingen = (b: any, allData: any[]): any[] => {
   }
   return out.sort((a, b2) => (a.stad || '').localeCompare(b2.stad || '', 'nl'));
 };
-// Naam van de moedergroep/holding uit spec2, bv. "TBI – Bouw & Ontwikkeling" -> "TBI",
+// Naam van de moedergroep/holding uit spec2, bijv. "TBI – Bouw & Ontwikkeling" -> "TBI",
 // "Dura Vermeer – Divisie Bouw en Vastgoed" -> "Dura Vermeer". Alleen spec2-waardes met
 // een " – " scheidingsteken worden als groepsaanduiding beschouwd.
 const holdingGroepNaam = (spec2: string): string => {
   const m = (spec2 || '').split(' – ');
   return m.length > 1 ? m[0].trim() : '';
 };
-// Andere bedrijven die tot dezelfde holding/groep behoren (bv. alle TBI-ondernemingen),
+// Andere bedrijven die tot dezelfde holding/groep behoren (bijv. alle TBI-ondernemingen),
 // ook als het andere merknamen/vestigingen zijn — apart van getAndereVestigingen, die alleen
 // dezelfde bedrijfsnaam op een ander adres groepeert.
 const getGroepBedrijven = (b: any, allData: any[]): any[] => {
@@ -1567,7 +1567,7 @@ const App: React.FC = () => {
 
   // Per-account localStorage-sleutel — voorkomt dat persoonlijke instellingen (thuisadres,
   // weergavevoorkeuren, opgeslagen filters, recent bekeken, ...) worden gedeeld/overschreven
-  // tussen accounts op hetzelfde toestel (bv. inloggen als Ritchie, dan als Henry — Henry's
+  // tussen accounts op hetzelfde toestel (bijv. inloggen als Ritchie, dan als Henry — Henry's
   // eigen adres/instellingen mogen nooit Ritchie's overschrijven of andersom). Zelfde patroon
   // als het bestaande `inncempro_search_history_${currentUser.id}` verderop. Zolang er nog geen
   // ingelogde gebruiker bekend is (net na page-load, vóór de auth-check) valt dit terug op de
@@ -1619,7 +1619,7 @@ const App: React.FC = () => {
   });
   const [prefAddressGeocoding, setPrefAddressGeocoding] = useState(false);
   // Welk adres de HUIDIGE prefAddressCoords daadwerkelijk representeren. Zonder dit kon de UI
-  // "✓ Adres gevonden" tonen puur omdat er ÓÓIT coördinaten zijn opgeslagen (bv. van het vorige
+  // "✓ Adres gevonden" tonen puur omdat er ÓÓIT coördinaten zijn opgeslagen (bijv. van het vorige
   // adres), terwijl het zojuist ingevoerde adres in werkelijkheid niet gevonden werd (netwerkfout,
   // Nominatim rate-limit, etc.) — dan bleven de OUDE coördinaten stilzwijgend in gebruik en klopte
   // de getoonde afstand niet meer met het ingevulde adres, zonder dat de gebruiker dat kon zien.
@@ -1628,13 +1628,13 @@ const App: React.FC = () => {
   // mislukte adreswijziging bleef `prefAddress` (tekst) al wél bijgewerkt naar het NIEUWE adres
   // terwijl `prefAddressCoords` bewust op het OUDE adres bleef staan, en bij een page-refresh
   // "zag" de oude logica alleen "er staan coördinaten" en nam foutief aan dat die bij de NIEUWE
-  // (mislukte) adrestekst hoorden — met een compleet verkeerde afstand tot gevolg (bv. "1,7 km
+  // (mislukte) adrestekst hoorden — met een compleet verkeerde afstand tot gevolg (bijv. "1,7 km
   // van Wittenbrink, Den Ham" terwijl de coördinaten in werkelijkheid nog een heel ander,
   // eerder succesvol adres waren).
   const [prefAddressCoordsFor, setPrefAddressCoordsFor] = useState<string | null>(() =>
     localStorage.getItem(uKey('inncempro_pref_address_coords_for')));
   // ÉCHT niet gevonden (ook de plaatsnaam-fallback faalde) vs. WEL gevonden maar alleen op
-  // plaatsnaam-niveau (bv. je typte simpelweg "Hengelo" of "Rijssen" — dat IS gewoon gevonden,
+  // plaatsnaam-niveau (bijv. je typte simpelweg "Hengelo" of "Rijssen" — dat IS gewoon gevonden,
   // alleen niet preciezer dan het centrum van die plaats, want een los ingetypte plaatsnaam
   // heeft geen preciezer punt). Deze twee mogen nooit dezelfde (rode/oranje) styling krijgen —
   // dat las als "hij faked dit, Hengelo bestaat gewoon" terwijl de plaats gewoon wél klopte.
@@ -1659,7 +1659,7 @@ const App: React.FC = () => {
 
   // REAL-TIME SEARCH LOCATION (voor Live Zoeken sortering + rijafstand-weergave)
   // Dit is de daadwerkelijke oorsprong van de LAATSTE zoekopdracht: bij straal-zoeken op een
-  // ingevoerde plaats is dat die plaats (bv. Rotterdam), anders live GPS > ingesteld adres.
+  // ingevoerde plaats is dat die plaats (bijv. Rotterdam), anders live GPS > ingesteld adres.
   // ANDERS dan prefAddress (instellingen, altijd je vaste adres) — dit verandert per zoekopdracht.
   const [searchOriginCoords, setSearchOriginCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [activeSearchOriginLabel, setActiveSearchOriginLabel] = useState<string>('');
@@ -1766,7 +1766,7 @@ const App: React.FC = () => {
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
-  // Eerste keer laden zonder gecachete coördinaten (bv. na een update van de app): geocode
+  // Eerste keer laden zonder gecachete coördinaten (bijv. na een update van de app): geocode
   // het (eventueel standaard) adres één keer automatisch. Overgeslagen als de effect hieronder
   // toch al bezig is een fris-toestel-detectie te doen — anders kunnen beide tegelijk lopen en
   // elkaars foutstatus overschrijven (was de kern van de "stad i.p.v. exacte locatie"-bug:
@@ -1780,12 +1780,12 @@ const App: React.FC = () => {
   }, []);
 
   // Instellingen > Mijn adres toonde soms "Adres niet gevonden" voor een adres dat prima
-  // geocodeerbaar is (bv. het standaard kantooradres) — niet omdat de opzoek FAALDE, maar
+  // geocodeerbaar is (bijv. het standaard kantooradres) — niet omdat de opzoek FAALDE, maar
   // omdat 'ie op dit apparaat simpelweg NOOIT is uitgevoerd (de effects hierboven slaan 'm
   // over bij een fris toestel, ten gunste van GPS-detectie; als die GPS-vraag genegeerd/
   // geweigerd wordt, blijft prefAddressCoords voorgoed null en toont de UI "niet gevonden"
   // terwijl het adres zelf nooit is opgezocht). Ook `prefAddressCoordsFor !== prefAddress`
-  // (bv. nog een restant van de inmiddels verwijderde live-GPS-overschrijving hierboven, of
+  // (bijv. nog een restant van de inmiddels verwijderde live-GPS-overschrijving hierboven, of
   // een adreswijziging van vóórdat Instellingen ooit geopend werd) hoort hier thuis: de
   // coördinaten horen dan niet meer bij de GETOONDE tekst, dus dat is feitelijk ook "nog niet
   // (opnieuw) opgezocht". Zodra je Instellingen opent en dat zich voordoet, alsnog gewoon
@@ -1814,7 +1814,7 @@ const App: React.FC = () => {
         const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
 
         // Reverse-geocode naar het EXACTE straatadres (niet alleen de dichtstbijzijnde
-        // plaatsnaam) — anders toont Instellingen straks bv. "Amsterdam" terwijl de
+        // plaatsnaam) — anders toont Instellingen straks bijv. "Amsterdam" terwijl de
         // coördinaten (en dus de afstandsberekening) wél exact zijn, wat verwarrend
         // oogt alsof afstand alleen op stad/dorp-niveau zou werken.
         const reverse = await getAddressFromCoords(coords.lat, coords.lng);
@@ -1876,7 +1876,7 @@ const App: React.FC = () => {
   // Coördinaten van het bedrijfsadres — valt terug op Hengelo-centrum zolang het adres nog
   // niet (opnieuw) gegeocodeerd is.
   const hqCoords = prefAddressCoords || DUTCH_CITY_COORDS['hengelo'] || { lat: 52.2549, lng: 6.7782 };
-  // Korte label voor badges/teksten (bv. "Hengelo" i.p.v. het volledige adres) — pakt het
+  // Korte label voor badges/teksten (bijv. "Hengelo" i.p.v. het volledige adres) — pakt het
   // laatste kommadeel en strip een eventuele postcode.
   // BELANGRIJK: gebaseerd op `prefAddressCoordsFor` (het adres dat bij de HUIDIGE prefAddressCoords
   // hoort), niet op het rauwe `prefAddress`-tekstveld. Als een net getypt adres niet gegeocodeerd
@@ -1884,7 +1884,7 @@ const App: React.FC = () => {
   // prefAddress zelf is al wél bijgewerkt naar de nieuwe tekst. Zonder deze correctie toonden
   // alle "X km van ..."-badges door de hele app de NIEUWE (mislukte) adrestekst terwijl de
   // afstand in werkelijkheid nog vanaf het OUDE adres werd berekend — een misleidende mismatch
-  // (bv. "1,7 km van Wittenbrink, Den Ham" terwijl de rijafstand feitelijk nog vanaf het oude,
+  // (bijv. "1,7 km van Wittenbrink, Den Ham" terwijl de rijafstand feitelijk nog vanaf het oude,
   // heel andere adres kwam).
   const hqLabelSource = prefAddressCoordsFor || prefAddress;
   const hqShortLabel = hqLabelSource.split(',').pop()?.replace(/\b\d{4}\s?[A-Z]{2}\b/i, '').trim() || hqLabelSource;
@@ -1900,7 +1900,7 @@ const App: React.FC = () => {
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [viewMode, setViewMode] = useState<ViewModeKey>('search');
   // Volgorde van de hoofdtabbladen — versleepbaar (tabbalk zelf én Instellingen > Voorkeuren),
-  // per apparaat onthouden. Bij een corrupte/verouderde opslag (bv. na een appversie met een
+  // per apparaat onthouden. Bij een corrupte/verouderde opslag (bijv. na een appversie met een
   // extra tab) valt 'ie terug op de standaardvolgorde i.p.v. half-kapot te blijven.
   const [tabOrder, setTabOrderState] = useState<ViewModeKey[]>(() => {
     try {
@@ -2005,7 +2005,7 @@ const App: React.FC = () => {
     matches: any[];             // automatische kandidaten (top 5) voor de huidige zoekterm
     selectedIndex: number | null; // null = nog geen gekoppelde kaart
     confirmed: boolean;         // true = jij hebt bevestigd dat de match klopt
-    searchMode: boolean;        // true = handmatig-zoeken-balk staat open (bv. na "Niet correct")
+    searchMode: boolean;        // true = handmatig-zoeken-balk staat open (bijv. na "Niet correct")
     searchQuery: string;        // tekst in de handmatig-zoeken-balk
     creatingNew: boolean;       // jij hebt gekozen om hier een nieuwe kaart voor aan te maken
     naam: string;
@@ -2203,7 +2203,7 @@ const App: React.FC = () => {
   // Rechtsvormen en lidwoorden/voorzetsels dragen niets bij aan of dit hetzelfde bedrijf is —
   // "BV", "Van" en "De" komen in duizenden namen voor. Zonder deze uit te sluiten kan een
   // volledig ander bedrijf toch hoog scoren puur omdat het toevallig ook "BV" heet en met
-  // "Van" begint (bv. "X BV" matchte per ongeluk met "Van der Y Bouw BV").
+  // "Van" begint (bijv. "X BV" matchte per ongeluk met "Van der Y Bouw BV").
   const NAAM_MATCH_STOPWOORDEN = new Set(['bv', 'b', 'v', 'nv', 'n', 'vof', 'cv', 'de', 'het', 'een', 'en', 'van', 'der', 'den', 'te', 'aan', 'bij', 'voor']);
   const meaningfulWords = (words: Set<string>): Set<string> => {
     const filtered = new Set(Array.from(words).filter(w => !NAAM_MATCH_STOPWOORDEN.has(w)));
@@ -2217,7 +2217,7 @@ const App: React.FC = () => {
   // er een extra woord tussen. Bekende afkortingen (OMA, MVRDV, BAM, ...) worden meegenomen
   // via expandAliasWords, kleine tikfouten via wordSimilarity/levenshteinDistance.
   //
-  // Staat er een plaatsnaam achteraan (bv. "Studio Linssen Amsterdam"), dan wordt die er
+  // Staat er een plaatsnaam achteraan (bijv. "Studio Linssen Amsterdam"), dan wordt die er
   // eerst uitgehaald en apart gebruikt als extra bewijs, niet als onderdeel van de naam-match.
   // Zo kan "Linssen" in Rotterdam niet per ongeluk verward worden met "Studio Linssen" in
   // Amsterdam: klopt de plaats met wat jij typte, dan telt dat mee als bonus; wijkt de plaats
@@ -2296,7 +2296,7 @@ const App: React.FC = () => {
 
   // Herlaad ALLE persoonlijke instellingen zodra de ingelogde gebruiker verandert — inloggen
   // vlak na page-load (currentUser gaat van null naar de echte gebruiker), uitloggen, of
-  // wisselen tussen accounts binnen dezelfde sessie (bv. Ritchie → Henry op hetzelfde toestel).
+  // wisselen tussen accounts binnen dezelfde sessie (bijv. Ritchie → Henry op hetzelfde toestel).
   // Zonder dit bleven de in-memory React-states van het VORIGE account gewoon staan tot een
   // handmatige page-refresh — ook al lazen nieuwe opslag-acties inmiddels wél de juiste
   // per-account sleutel (zie `uKey` hierboven). Dit was de kern van de klacht dat het aanpassen
@@ -2306,7 +2306,7 @@ const App: React.FC = () => {
     // Eenmalige migratie: als dit account nog NOOIT eigen (per-account) instellingen heeft
     // opgeslagen, maar er WEL nog waarden onder de oude, gedeelde sleutel staan (van vóór deze
     // per-account-scheiding), neem die dan over als startpunt i.p.v. iedereen abrupt terug te
-    // zetten naar de fabrieksinstellingen (bv. terug naar Hengelo terwijl er al lang een eigen
+    // zetten naar de fabrieksinstellingen (bijv. terug naar Hengelo terwijl er al lang een eigen
     // adres was ingesteld). Raakt de oude sleutel zelf niet aan — een ANDER account dat nog
     // niet is ingelogd kan 'm dus ook nog als eigen startpunt overnemen.
     if (currentUser) {
@@ -3257,7 +3257,7 @@ const App: React.FC = () => {
   // Type detectie: architect / bouwbedrijf / aannemer op basis van source + specs
   // Bekende bouwbedrijf-ketens (meerdere vestigingen onder één merk, bron = merknaam zelf).
   // Deze MOETEN op source geclassificeerd worden, vóór de naam-substring-checks hieronder:
-  // anders krijgt bv. "Van Wijnen Bouw Dalfsen" (bevat "bouw" in de naam) het label
+  // anders krijgt bijv. "Van Wijnen Bouw Dalfsen" (bevat "bouw" in de naam) het label
   // 'bouwbedrijf', terwijl "Van Wijnen Deventer" (zelfde merk, andere vestiging, geen "bouw"
   // in de naam) als 'overig' wegvalt — met een kunstmatig typePrio-verschil van 60 punten
   // tot gevolg dat de afstand-sortering compleet overstemt, terwijl het gewoon hetzelfde
@@ -3511,9 +3511,9 @@ const App: React.FC = () => {
               // 1. Exakte hele woord match (incl. genormaliseerd)
               // 2. Begin van woord match (incl. genormaliseerd)
               // 3. Substring match — ALLEEN bij langere termen (5+ tekens, "gedeeltelijke zoeken"
-              //    zoals "eege" voor Ter Steege). Bij korte termen (1-4 tekens, bv. "o", "om", "oma")
+              //    zoals "eege" voor Ter Steege). Bij korte termen (1-4 tekens, bijv. "o", "om", "oma")
               //    zou dit vrijwel élk bedrijf laten matchen zodra die letter(s) ook maar ergens
-              //    MIDDEN in een ander woord voorkomen (bv. "Powerhouse" bevat een "o") — dat is
+              //    MIDDEN in een ander woord voorkomen (bijv. "Powerhouse" bevat een "o") — dat is
               //    geen relevante match. Korte termen moeten dus altijd op woord-BEGIN matchen.
               const matchNaam = searchWordList.length > 0 && searchWordList.every(searchTerm => {
                 const termNorm = normalizeText(searchTerm);
@@ -3536,7 +3536,7 @@ const App: React.FC = () => {
                 return (allowSubstring && locationStrNorm.includes(termNorm)) ||
                        locationWords.some(w => w === searchTerm || w.startsWith(searchTerm)) ||
                        // Tikfouttolerantie voor plaatsnamen — vooral relevant bij spraakinvoer
-                       // die een stad soms iets anders verstaat/spelt (bv. "roterdam"). Alleen
+                       // die een stad soms iets anders verstaat/spelt (bijv. "roterdam"). Alleen
                        // voor termen van 4+ tekens, anders matcht bijna elke korte stad wel iets.
                        (termNorm.length >= 4 && locationWords.some(w => {
                          const wNorm = normalizeText(w);
@@ -3565,8 +3565,8 @@ const App: React.FC = () => {
       // Prioriteit (hoog naar laag): naam begint met de term > los woord elders is exact de term >
       // los woord elders begint ermee > vrije substring (alleen voor lange termen, 5+ tekens, voor
       // gedeeltelijk zoeken zoals "eege" in "Ter Steege"). Zo geeft "o" eerst OMA/OPA/OTO (beginnen
-      // met o), dan pas bedrijven waar "o" een los woord is (bv. "B+O ARCHITECTEN"), en NOOIT
-      // bedrijven waar de letters toevallig midden in een ander woord zitten (bv. "Powerhouse").
+      // met o), dan pas bedrijven waar "o" een los woord is (bijv. "B+O ARCHITECTEN"), en NOOIT
+      // bedrijven waar de letters toevallig midden in een ander woord zitten (bijv. "Powerhouse").
       const queryMatchScore = (b: any): number => {
         if (!q) return 0;
         const naam = (b.naam || '').toLowerCase();
@@ -3585,9 +3585,9 @@ const App: React.FC = () => {
           if (naamNorm === tNorm) best = Math.max(best, 1950); // hele naam exact, genormaliseerd
           if (firstWord === t) best = Math.max(best, 1800); // naam begint met dit hele woord
           if (firstWordNorm === tNorm) best = Math.max(best, 1750); // genormaliseerd
-          if (firstWord.startsWith(t)) best = Math.max(best, 1600); // naam BEGINT met deze letters (bv. "o" → OMA, OPA, OTO)
+          if (firstWord.startsWith(t)) best = Math.max(best, 1600); // naam BEGINT met deze letters (bijv. "o" → OMA, OPA, OTO)
           if (firstWordNorm.startsWith(tNorm)) best = Math.max(best, 1550); // genormaliseerd
-          if (restWords.some(w => w === t)) best = Math.max(best, 1200); // los woord ELDERS in de naam is exact de term (bv. "B+O")
+          if (restWords.some(w => w === t)) best = Math.max(best, 1200); // los woord ELDERS in de naam is exact de term (bijv. "B+O")
           if (restWordsNorm.some(w => w === tNorm)) best = Math.max(best, 1150); // genormaliseerd
           if (restWords.some(w => w.startsWith(t))) best = Math.max(best, 900); // los woord elders begint ermee
           if (restWordsNorm.some(w => w.startsWith(tNorm))) best = Math.max(best, 850); // genormaliseerd
@@ -3630,7 +3630,7 @@ const App: React.FC = () => {
       // Gebruikt bewust haversine (hemelsbreed), niet rijafstand: hemelsbreed is altijd
       // ≤ de werkelijke rijafstand, dus dit filter laat nooit ten onrechte een bedrijf
       // wég dat écht binnen de straal ligt — hooguit af en toe eentje ietsje over de rand
-      // erbij (bv. binnen 20km hemelsbreed, 21km rijdend). Preciezere rijafstand met een
+      // erbij (bijv. binnen 20km hemelsbreed, 21km rijdend). Preciezere rijafstand met een
       // routing-API voor de hele (mogelijk duizenden bedrijven tellende) kandidatenlijst
       // zou de gratis publieke OSRM-server overbelasten; de getóónde km-waarde per bedrijf
       // wordt daarom pas ná dit filter, alleen voor de zichtbare pagina, verfijnd — zie de
@@ -3650,7 +3650,7 @@ const App: React.FC = () => {
       }
 
       // ÉÉN bron van waarheid voor "waar ben ik": als straal-zoeken actief is met een ingevoerde
-      // plaats (bv. "Rotterdam"), is DIE plaats de oorsprong — je zoekt expliciet vanuit daar,
+      // plaats (bijv. "Rotterdam"), is DIE plaats de oorsprong — je zoekt expliciet vanuit daar,
       // niet vanuit je eigen locatie. Zonder straal: live GPS > ingesteld adres > Hengelo-fallback.
       // Dit wordt gebruikt voor DE SORTERING, HET GETOONDE LABEL, én de rijafstand-berekening
       // verderop — anders klopt de volgorde/afstand niet met wat er staat (bug: zocht binnen
@@ -3668,7 +3668,7 @@ const App: React.FC = () => {
 
       // Precieze (rij-)afstand vooraf ophalen voor het HELE resultaat, zodat sortering en
       // getoonde km altijd exact overeenkomen. Hemelsbrede afstand alleen sorteren op geeft
-      // soms een andere volgorde dan de getoonde rijafstand (rivieren/omwegen — bv. Dalfsen
+      // soms een andere volgorde dan de getoonde rijafstand (rivieren/omwegen — bijv. Dalfsen
       // ligt over de IJssel), wat oogt als "verkeerd gesorteerd" terwijl het technisch nog
       // klopte op basis van de rechte lijn. Bij een klein resultaat (merk-/naamzoekopdracht,
       // meestal < 150 treffers) is dit prima te doen zonder de gratis OSRM-server te
@@ -3812,7 +3812,7 @@ const App: React.FC = () => {
               : 'Kon je locatie niet bepalen. Probeer het opnieuw.'
           );
         },
-        // maximumAge: 60s in plaats van 0 — een net opgehaalde locatie (bv. via een eerdere
+        // maximumAge: 60s in plaats van 0 — een net opgehaalde locatie (bijv. via een eerdere
         // klik, of door de browser al gecached) mag hergebruikt worden i.p.v. altijd een
         // volledig verse (tragere) opzoek te forceren. Bij een écht nieuwe locatie ververst
         // de browser dit vanzelf zodra de cache verlopen is.
@@ -3824,7 +3824,7 @@ const App: React.FC = () => {
     }
   };
 
-  // Zoek vanaf een los ingetypt adres (bv. "Weena-Zuid 158, Rotterdam") — onafhankelijk van
+  // Zoek vanaf een los ingetypt adres (bijv. "Weena-Zuid 158, Rotterdam") — onafhankelijk van
   // waar je zelf bent. Eerst kijken of dit adres al bij een bekend bedrijf hoort (gratis,
   // instant, geen netwerk nodig); anders het adres zelf live geocoden.
   const searchFromAddress = async () => {
@@ -4226,11 +4226,12 @@ const App: React.FC = () => {
                       <h2 className="text-base font-black text-slate-900 uppercase font-condensed tracking-wider">Instellingen</h2>
                       <button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-slate-800 pb-4"><X className="w-5 h-5"/></button>
                   </div>
-                  {/* Tabs */}
+                  {/* Tabs. min-w-0 + compacte tekst/tracking op telefoon zodat alle vier de tabbladen
+                      binnen de schermbreedte passen. */}
                   <div className="flex border-b border-slate-100">
                       {(['profiel', 'voorkeuren', 'audit', 'prullenbak'] as const).map(tab => (
                           <button key={tab} onClick={() => setSettingsTab(tab)}
-                              className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${settingsTab === tab ? 'border-b-2 border-[#E85E26] text-[#E85E26]' : 'text-slate-400 hover:text-slate-700'}`}>
+                              className={`flex-1 min-w-0 py-3 px-1 text-[11px] sm:text-xs font-bold uppercase tracking-tight sm:tracking-wider transition-colors ${settingsTab === tab ? 'border-b-2 border-[#E85E26] text-[#E85E26]' : 'text-slate-400 hover:text-slate-700'}`}>
                               {tab === 'profiel' ? 'Profiel' : tab === 'voorkeuren' ? 'Voorkeuren' : tab === 'audit' ? 'Logboek' : `Prullenbak${deletedEntries.size > 0 ? ` (${deletedEntries.size})` : ''}`}
                           </button>
                       ))}
@@ -4336,7 +4337,7 @@ const App: React.FC = () => {
                               </div>
 
                               {/* Volgorde tabbladen — zelfde versleep-patroon als bedrijven herordenen
-                                  (bv. Onderweg): sleep op de rij, of gebruik de pijltjes (nodig op
+                                  (bijv. Onderweg): sleep op de rij, of gebruik de pijltjes (nodig op
                                   telefoon, waar slepen niet altijd betrouwbaar vuurt via touch). */}
                               <div>
                                   <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Volgorde tabbladen</label>
@@ -4628,7 +4629,7 @@ const App: React.FC = () => {
              <div className="relative max-w-4xl mx-auto w-full mb-4 sm:mb-6">
              <div ref={tabBarRef} className="flex gap-1 border-b border-slate-200 overflow-x-auto scroll-smooth">
                  {tabOrder.map((key, i) => {
-                   // Zelfde sleep-patroon als bedrijven/route-stops herordenen (bv. Onderweg):
+                   // Zelfde sleep-patroon als bedrijven/route-stops herordenen (bijv. Onderweg):
                    // native draggable + drag-over-highlight. Op touch (telefoon) vuurt dit niet
                    // betrouwbaar — daarvoor staan de pijltjes bij Instellingen > Voorkeuren.
                    const dragProps = {
@@ -4811,7 +4812,7 @@ const App: React.FC = () => {
                        type="text"
                        value={dbPostcodeFilter}
                        onChange={e => { setDbPostcodeFilter(e.target.value); setDbPage(1); }}
-                       placeholder="Postcodegebied (bv. 30 of 3000-3099)"
+                       placeholder="Postcodegebied (bijv. 30 of 3000-3099)"
                        className="flex-1 min-w-[180px] px-3 py-2 border border-slate-200 text-sm focus:outline-none focus:border-[#009FE3] rounded-sm"
                      />
                      <div className="relative">
@@ -5128,7 +5129,7 @@ const App: React.FC = () => {
                                  value={radiusAddressQuery}
                                  onChange={e => { setRadiusAddressQuery(e.target.value); setRadiusAddressError(null); }}
                                  onKeyDown={e => e.key === 'Enter' && searchFromAddress()}
-                                 placeholder="Of zoek vanaf een adres (bv. Weena-Zuid 158, Rotterdam)"
+                                 placeholder="Of zoek vanaf een adres (bijv. Weena-Zuid 158, Rotterdam)"
                                  className="w-full pl-3 pr-8 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-[#009FE3]"
                                />
                                <div className="absolute right-1 top-1/2 -translate-y-1/2">
@@ -5253,7 +5254,7 @@ const App: React.FC = () => {
                         <span className="absolute inset-0 rounded-full animate-orb-glow blur-lg opacity-50" style={{ background: 'linear-gradient(135deg, #009FE3, #16a34a, #E85E26)' }} />
                         <AgentOrb size={64} />
                       </div>
-                      <h3 className="text-lg font-bold text-slate-900">Vraag het je Inncempro Agent</h3>
+                      <h3 className="text-lg font-bold text-slate-900">Stel uw vraag aan de Inncempro Agent</h3>
                       <p className="text-sm text-slate-400 mt-1 max-w-md mx-auto">Doorzoekt live alle bedrijven, vergelijkt ze en plant bezoekroutes.</p>
                       <div className="mt-5 flex flex-wrap items-center justify-center gap-2 max-w-2xl mx-auto">
                         {SUGGESTIONS.map((s, i) => (
@@ -5423,7 +5424,7 @@ const App: React.FC = () => {
                       </div>
                       <div className="text-left">
                         <h2 className="text-lg font-bold text-slate-900">Onderweg</h2>
-                        <p className="text-xs text-slate-400">Rijd van bedrijf naar bedrijf, telkens de dichtstbijzijnde eerst</p>
+                        <p className="text-xs text-slate-400">Stel een efficiënte bezoekroute samen</p>
                       </div>
                     </div>
                     {showRidePanel ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
@@ -6209,7 +6210,7 @@ const App: React.FC = () => {
               </h3>
               <p className="text-xs text-slate-400 mt-1">
                 {bulkVisitStep === 'input'
-                  ? 'Eén bedrijfsnaam per regel, hoeveel je maar wilt. Zet er de stad achter als je die weet (bv. "Linssen Rotterdam"), dat helpt onderscheid maken tussen bedrijven met een gelijke naam in andere steden.'
+                  ? 'Eén bedrijfsnaam per regel, hoeveel je maar wilt. Zet er de stad achter als je die weet (bijv. "Linssen Rotterdam"), dat helpt onderscheid maken tussen bedrijven met een gelijke naam in andere steden.'
                   : `${bulkVisitRows.length} rijen. Klopt een match niet? Klik op het kruisje en zoek handmatig, of maak een nieuwe kaart aan als het bedrijf echt nog niet bestaat. Klap een rij open om alles te controleren of bij te werken.`}
               </p>
             </div>
@@ -6910,7 +6911,7 @@ const App: React.FC = () => {
                   );
                 })()}
 
-                {/* Zusterbedrijven binnen dezelfde holding (bv. TBI, Dura Vermeer) */}
+                {/* Zusterbedrijven binnen dezelfde holding (bijv. TBI, Dura Vermeer) */}
                 {(() => {
                   const groep = holdingGroepNaam(b.spec2);
                   const zusters = getGroepBedrijven(b, activeData);
@@ -6986,7 +6987,7 @@ const App: React.FC = () => {
                   </div>
                 )}
 
-                {/* Over dit bedrijf (redactionele beschrijving, bv. uit architectenlijsten) */}
+                {/* Over dit bedrijf (redactionele beschrijving, bijv. uit architectenlijsten) */}
                 {b.beschrijving && (
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Over dit bedrijf</p>

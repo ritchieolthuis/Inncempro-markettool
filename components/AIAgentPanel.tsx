@@ -99,7 +99,7 @@ const CAPABILITIES = [
 ];
 
 // De Gemini SDK gooit soms een error waarvan `.message` zelf een JSON-blob is
-// (bv. `{"error":{"message":"API key not valid...","status":"INVALID_ARGUMENT"}}`) —
+// (bijv. `{"error":{"message":"API key not valid...","status":"INVALID_ARGUMENT"}}`) —
 // pak daar het leesbare bericht uit i.p.v. de ruwe JSON te tonen.
 function extractErrorMessage(e: any): string {
   const raw = e?.message || String(e);
@@ -168,7 +168,7 @@ interface AIAgentPanelProps {
   onSetStatus: (naam: string, status: string) => void;
   onAddNote: (naam: string, notitie: string) => void;
   onCreateRoute: (bedrijven: any[]) => void;
-  // Laat de hoofdpagina (bv. een suggestie-knop op de Live Zoeken-pagina) het paneel
+  // Laat de hoofdpagina (bijv. een suggestie-knop op de Live Zoeken-pagina) het paneel
   // van buitenaf openen én meteen een vraag laten versturen, zonder dat de agent zijn
   // eigen open/dicht-state naar buiten hoeft te exposen.
   openRequest?: { text: string; ts: number } | null;
@@ -238,7 +238,7 @@ const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ activeData, onOpenInDatabas
 
   const send = () => sendMessage(input);
 
-  // Externe trigger (bv. een suggestie-knop op de Live Zoeken-pagina): opent het paneel
+  // Externe trigger (bijv. een suggestie-knop op de Live Zoeken-pagina): opent het paneel
   // en stuurt de meegegeven vraag direct, alsof de gebruiker 'm zelf had getypt.
   useEffect(() => {
     if (!openRequest) return;
