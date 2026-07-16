@@ -5419,7 +5419,7 @@ const App: React.FC = () => {
                               <div className="flex items-center justify-end mb-3">
                                 <button onClick={() => { setRecentViewed([]); setRecentViewedPage(1); localStorage.removeItem(uKey('inncempro_recent_viewed')); }} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-wider">Wis alles</button>
                               </div>
-                              <div className="grid sm:grid-cols-2 gap-2.5 sm:gap-3 min-w-0">
+                              <div className="grid lg:grid-cols-2 gap-2.5 sm:gap-3 min-w-0">
                                 {recentViewed.slice((recentPage - 1) * RECENT_VIEWED_PAGE_SIZE, recentPage * RECENT_VIEWED_PAGE_SIZE).map((r, i) => {
                                   const match = activeData.find(b => b.naam === r.naam);
                                   return (
@@ -5443,7 +5443,7 @@ const App: React.FC = () => {
                                           <span className="whitespace-nowrap">{timeAgo(r.timestamp)}</span>
                                         </p>
                                       </div>
-                                      <span className="hidden sm:inline-flex flex-shrink-0 px-3 py-1.5 rounded-full border border-slate-200 text-xs font-bold text-slate-600 group-hover:border-[#009FE3] group-hover:text-[#009FE3] transition-colors">
+                                      <span className="inline-flex flex-shrink-0 px-3 py-1.5 rounded-full border border-slate-200 text-xs font-bold text-slate-600 group-hover:border-[#009FE3] group-hover:text-[#009FE3] transition-colors">
                                         Open
                                       </span>
                                     </button>
@@ -5477,7 +5477,7 @@ const App: React.FC = () => {
 
                         {searchLandingTab === 'saved' && (
                           savedFilters.length > 0 ? (
-                            <div className="grid sm:grid-cols-2 gap-2.5 sm:gap-3 min-w-0">
+                            <div className="grid lg:grid-cols-2 gap-2.5 sm:gap-3 min-w-0">
                               {savedFilters.map(f => (
                                 <div
                                   key={f.name}
@@ -5492,7 +5492,7 @@ const App: React.FC = () => {
                                       <p className="text-xs text-slate-400 truncate mt-0.5">{describeSavedFilter(f)}</p>
                                     </div>
                                   </button>
-                                  <button onClick={() => applySavedFilter(f)} className="hidden sm:inline-flex flex-shrink-0 px-3 py-1.5 rounded-full border border-slate-200 text-xs font-bold text-slate-600 group-hover:border-[#009FE3] group-hover:text-[#009FE3] transition-colors">
+                                  <button onClick={() => applySavedFilter(f)} className="inline-flex flex-shrink-0 px-3 py-1.5 rounded-full border border-slate-200 text-xs font-bold text-slate-600 group-hover:border-[#009FE3] group-hover:text-[#009FE3] transition-colors">
                                     Open
                                   </button>
                                   <button onClick={() => deleteSavedFilter(f.name)} className="flex-shrink-0 text-slate-300 hover:text-red-400">
