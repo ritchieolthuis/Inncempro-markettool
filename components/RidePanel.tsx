@@ -1370,9 +1370,6 @@ const RidePanel: React.FC<RidePanelProps> = ({
               {suggestions.length === 0 && !loadingSuggestions && (
                 <p className="text-xs text-slate-400 py-4 text-center">Geen bedrijven gevonden binnen bereik met deze filters.</p>
               )}
-              {showAllSuggestions && suggestions.length > 300 && (
-                <p className="text-[10px] text-slate-400 mb-1.5">Lijst toont alles ({suggestions.length}); op de kaart staan de eerste 300 (anders wordt de kaart traag).</p>
-              )}
               <div className="space-y-1.5 max-h-80 overflow-y-auto">
                 {suggestions.map((s, i) => (
                   <div key={i} className="flex items-center gap-2 p-2.5 border border-slate-100 rounded-sm hover:border-[#009FE3]/40 transition-colors">

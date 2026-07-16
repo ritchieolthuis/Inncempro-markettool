@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Loader2, ArrowRight, X, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send, Clock, Eye, List, Linkedin, Navigation, GripVertical } from 'lucide-react';
+import { Search, Loader2, ArrowRight, X, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send, Clock, Eye, List, Linkedin, Navigation, GripVertical, Copy } from 'lucide-react';
 import Papa from 'papaparse';
 import bouwgarantData from './bouwgarant_data.json';
 import cityCoords from './city_coords.json';
@@ -15,7 +15,7 @@ import RidePanel from './components/RidePanel';
 import { fuzzyMatch } from './utils/fuzzyMatch';
 import { authService } from './services/authService';
 import { preloadAllAddresses, onGeoclusterProgress, GeoclusterProgress, clearClusterCache } from './services/geoclusterService';
-import { queuedNominatim } from './services/nominatimQueue';
+import { priorityNominatim } from './services/nominatimQueue';
 import { SearchState, DiscoveredCompany, User, CompanyList } from './types';
 import { scoreInsertionCandidates } from './utils/dagbezoek';
 import { mergeEntries, isNederlandBedrijf, isPureInterieurBedrijf } from './utils/mergeBedrijven';
@@ -1643,6 +1643,8 @@ const App: React.FC = () => {
     (localStorage.getItem(uKey('inncempro_pref_sort')) as 'relevant' | 'az') || 'relevant');
   const [prefResultsPerPage, setPrefResultsPerPage] = useState<number>(() =>
     Number(localStorage.getItem(uKey('inncempro_pref_rpp'))) || 10);
+  const [prefDbResultsPerPage, setPrefDbResultsPerPage] = useState<number>(() =>
+    Number(localStorage.getItem(uKey('inncempro_pref_db_rpp'))) || 50);
   const [prefCardFields, setPrefCardFields] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem(uKey('inncempro_pref_card')) || '{}'); } catch { return {}; }
   });
@@ -1661,6 +1663,7 @@ const App: React.FC = () => {
 
   const savePrefSort = (v: 'relevant' | 'az') => { setPrefSort(v); setSortMode(v); localStorage.setItem(uKey('inncempro_pref_sort'), v); };
   const savePrefRpp = (v: number) => { setPrefResultsPerPage(v); localStorage.setItem(uKey('inncempro_pref_rpp'), String(v)); };
+  const savePrefDbRpp = (v: number) => { setPrefDbResultsPerPage(v); setDbPage(1); localStorage.setItem(uKey('inncempro_pref_db_rpp'), String(v)); };
   const toggleCardField = (key: string) => {
     const next = { ...cardFieldDefault, ...prefCardFields, [key]: !showField(key) };
     setPrefCardFields(next);
@@ -1669,17 +1672,18 @@ const App: React.FC = () => {
 
   // Geocodeert het bedrijfsadres via Nominatim en cachet het resultaat, zodat straal-zoeken
   // en de afstandsweergave een precies punt hebben in plaats van alleen een plaatsnaam.
-  // Gebruikt `queuedNominatim` (dezelfde gedeelde, getemporiseerde wachtrij als de Routekaart
-  // en de achtergrond-kaartgeocoder) i.p.v. een losse fetch — anders kon deze aanroep
-  // gelijktijdig met tientallen achtergrond-verzoeken vuren en door Nominatim's rate-limit
-  // (~1 verzoek/seconde) worden afgewezen, wat een perfect geldig adres (bv. het eigen
-  // kantooradres) ten onrechte als "niet gevonden" liet ogen.
+  // Gebruikt `priorityNominatim` (losse, niet-gewachtrijde fetch) i.p.v. `queuedNominatim`:
+  // dit is een directe gebruikersactie (Instellingen > Mijn adres opslaan) die niet achter een
+  // eventuele achtergrond-preload van duizenden adressen (elk 1.1s uit elkaar) mag blijven
+  // hangen — dat liet deze ene opzoeking soms 10+ seconden duren i.p.v. de ~1s die één los
+  // verzoek kost, en een enkel interactief extra verzoek naast de achtergrondwachtrij
+  // overtreedt Nominatim's ~1/s-beleid (bedoeld tegen geautomatiseerde bulk-scraping) niet.
   const geocodeAddress = async (address: string) => {
     setPrefAddressGeocoding(true);
     setPrefAddressGeocodeError(false);
     setPrefAddressApproximate(false);
     try {
-      const hit = await queuedNominatim(`${address}, Nederland`);
+      const hit = await priorityNominatim(`${address}, Nederland`);
       if (hit) {
         const coords = { lat: hit[0], lng: hit[1] };
         setPrefAddressCoords(coords);
@@ -1747,12 +1751,17 @@ const App: React.FC = () => {
         if (!r.ok) return;
         const data = await r.json();
         if (data.address) {
-          // Bouw het adres op: huisnummer + straatnaam + plaats (minimaal).
+          // Bouw het adres op als "Straatnaam huisnummer, postcode plaats" — Nominatim's
+          // forward-search (gebruikt later om dit adres weer te geocoden) verwacht die volgorde;
+          // "huisnummer, straat" (het huisnummer los vóóraan met een komma) liet zoekopdrachten
+          // stelselmatig mislukken met "Adres niet gevonden", ook voor adressen die prima bestaan.
           const houseNum = (data.address.house_number || '') as string;
           const street = (data.address.road || data.address.street || data.address.name || '') as string;
           const city = (data.address.city || data.address.town || data.address.village || '') as string;
           const postcode = (data.address.postcode || '') as string;
-          const addrParts = [houseNum, street, postcode, city].filter(x => x?.trim());
+          const streetLine = [street, houseNum].filter(x => x?.trim()).join(' ');
+          const cityLine = [postcode, city].filter(x => x?.trim()).join(' ');
+          const addrParts = [streetLine, cityLine].filter(x => x?.trim());
           const fullAddr = addrParts.join(', ');
           if (fullAddr.trim()) {
             setPrefAddressState(fullAddr);
@@ -1966,7 +1975,7 @@ const App: React.FC = () => {
   const [dbCrmFilter, setDbCrmFilter] = useState<string[]>([]); // Multi-select CRM status filter
   const [showStatusFilter, setShowStatusFilter] = useState(false);
   const [dbPage, setDbPage] = useState(1);
-  const DB_PAGE_SIZE = 50;
+  const DB_PAGE_SIZE = prefDbResultsPerPage;
   const [favorites, setFavorites] = useState<DiscoveredCompany[]>([]);
   const [lists, setLists] = useState<CompanyList[]>([]);
   const [activeListId, setActiveListId] = useState<string | null>(null);
@@ -3130,20 +3139,19 @@ const App: React.FC = () => {
 
   const addSelectionToList = async (listId: string, companies: DiscoveredCompany[]) => {
       if (!currentUser) return;
-      let next = await authService.getLists(currentUser.id);
-      for (const c of companies) { next = await authService.addToList(currentUser.id, listId, c); }
+      const next = await authService.addMultipleToList(currentUser.id, listId, companies);
       setLists(next);
-      clearSelection(); // Ledig selectie na het toevoegen — gebruiker weet dat actie klaar is
+      clearSelection();
   };
 
   const createListAndAddSelection = async (name: string, companies: DiscoveredCompany[]) => {
       if (!currentUser || !name.trim()) return;
       const existing = lists.find(l => l.name.toLowerCase() === name.trim().toLowerCase());
-      let next = existing ? lists : await authService.createList(currentUser.id, name.trim());
-      const listId = existing ? existing.id : next[next.length - 1].id;
-      for (const c of companies) { next = await authService.addToList(currentUser.id, listId, c); }
+      const listData = existing ? lists : await authService.createList(currentUser.id, name.trim());
+      const listId = existing ? existing.id : listData[listData.length - 1].id;
+      const next = await authService.addMultipleToList(currentUser.id, listId, companies);
       setLists(next);
-      clearSelection(); // Ledig selectie na het aanmaken/toevoegen
+      clearSelection();
   };
 
   const toggleFilter = (set: React.Dispatch<React.SetStateAction<string[]>>, item: string) => {
@@ -3846,7 +3854,7 @@ const App: React.FC = () => {
       coords = getBedrijfCoords(match);
       label = [match.naam, match.straat, match.stad].filter(Boolean).join(', ');
     } else {
-      const hit = await queuedNominatim(`${query}, Nederland`);
+      const hit = await priorityNominatim(`${query}, Nederland`);
       if (hit) coords = { lat: hit[0], lng: hit[1] };
     }
 
@@ -4975,6 +4983,19 @@ const App: React.FC = () => {
                        </div>
                      ))}
                    </div>
+                   <div className="flex items-center justify-center gap-2 flex-wrap py-3 border-t border-slate-200 mt-4">
+                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Per pagina</span>
+                     {[10, 20, 50, 100].map(n => (
+                       <button key={n} onClick={() => savePrefDbRpp(n)}
+                         className={`px-2.5 py-1 text-[10px] font-bold border rounded-sm transition-colors ${prefDbResultsPerPage === n ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}>
+                         {n}
+                       </button>
+                     ))}
+                     <button onClick={() => savePrefDbRpp(RESULTS_PER_PAGE_ALL)}
+                       className={`px-2.5 py-1 text-[10px] font-bold border rounded-sm transition-colors ${prefDbResultsPerPage === RESULTS_PER_PAGE_ALL ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}>
+                       Alles
+                     </button>
+                   </div>
                    {totalPages > 1 && (
                    <div className="flex items-center gap-2 flex-wrap justify-center py-8 border-t border-slate-200 mt-4">
                      <button onClick={() => setDbPage(1)} disabled={dbPage === 1} className="px-3 py-2 bg-slate-200 text-slate-700 text-xs font-bold disabled:opacity-40 hover:bg-slate-300 rounded-sm">«</button>
@@ -5595,21 +5616,18 @@ const App: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Zwevende balk: verschijnt zodra je op de kaart iets hebt geselecteerd, met
-                      de namen en een knop om de route in Google Maps te openen (handleCreateSmartRoute,
-                      dezelfde betrouwbare Maps-URL als elders in de app). */}
+                  {/* Zwevende knop: verschijnt zodra je op de kaart iets hebt geselecteerd. Alleen
+                      de kaart-specifieke "Maak route"-actie (handleCreateSmartRoute) — kopiëren,
+                      wissen en de namenlijst zelf staan al in de persistente SelectionBar hieronder
+                      (zelfde selectedIds/selectedRaws state), dus die niet dubbel tonen. Boven de
+                      SelectionBar (bottom-20 i.p.v. bottom-4) zodat ze niet over elkaar heen vallen. */}
                   {mapSelectionMode && selectedIds.size > 0 && (
-                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] bg-white rounded-sm shadow-lg border border-slate-200 px-4 py-3 max-w-lg w-[calc(100%-2rem)]">
-                      <div className="flex items-center justify-between gap-3 mb-2">
-                        <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">{selectedIds.size} geselecteerd</span>
-                        <button onClick={clearSelection} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-wider">Wis selectie</button>
-                      </div>
-                      <p className="text-xs text-slate-500 truncate mb-3">{Array.from(selectedIds).join(', ')}</p>
+                    <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-[1000] w-[calc(100%-2rem)] max-w-lg">
                       <button
                         onClick={handleCreateSmartRoute}
-                        className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#009FE3] hover:bg-[#008ac5] text-white text-xs font-bold uppercase tracking-wider rounded-sm transition-colors"
+                        className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-[#009FE3] hover:bg-[#008ac5] text-white text-xs font-bold uppercase tracking-wider rounded-sm shadow-lg border border-[#009FE3] transition-colors"
                       >
-                        <MapPin className="w-3.5 h-3.5" /> Maak route in Google Maps
+                        <MapPin className="w-3.5 h-3.5" /> Maak route in Google Maps ({selectedIds.size})
                       </button>
                     </div>
                   )}
@@ -7218,6 +7236,16 @@ const SelectionBar: React.FC<{
               <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-slate-100 sticky top-0 bg-white">
                 <span className="text-xs font-black uppercase tracking-wider text-slate-600 flex-shrink-0">Geselecteerd ({selected.length})</span>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <button
+                    onClick={() => {
+                      const names = selected.map((b: any) => b.naam).join('\n');
+                      navigator.clipboard.writeText(names).catch(err => console.error('Kopieren naar klembord mislukt:', err));
+                    }}
+                    title="Kopieer namen naar klembord"
+                    className="flex items-center justify-center w-7 h-7 text-slate-400 hover:text-[#009FE3] hover:bg-[#009FE3]/5 rounded-sm transition-colors"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
                   <button
                     ref={listBtnRef}
                     onClick={toggleListPicker}

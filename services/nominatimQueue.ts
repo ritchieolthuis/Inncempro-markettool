@@ -33,3 +33,21 @@ export function queuedNominatim(q: string): Promise<[number, number] | null> {
   queue = result.catch(() => null);
   return result;
 }
+
+// Losse, NIET-gewachtrijde opzoeking voor directe gebruikersacties (bv. "Mijn adres" opslaan
+// in Instellingen) — die mogen niet achter een eventuele achtergrond-preload van duizenden
+// adressen (elk 1.1s uit elkaar) aan blijven hangen; dat liet zo'n opzoeking soms 10+ seconden
+// duren i.p.v. de ~1s die één los verzoek kost. Één interactief verzoek tegelijk overtreedt
+// Nominatim's ~1/s-beleid niet (dat gaat over geautomatiseerde bulk-verzoeken).
+export async function priorityNominatim(q: string): Promise<[number, number] | null> {
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&countrycodes=nl&limit=1`,
+      { headers: { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' } },
+    );
+    const d = await r.json();
+    return d?.[0] ? [parseFloat(d[0].lat), parseFloat(d[0].lon)] : null;
+  } catch {
+    return null;
+  }
+}

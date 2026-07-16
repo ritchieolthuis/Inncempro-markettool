@@ -196,6 +196,15 @@ export const authService = {
         return authService.getLists(userId);
     },
 
+    addMultipleToList: async (userId: string, listId: string, companies: DiscoveredCompany[]): Promise<CompanyList[]> => {
+        if (companies.length === 0) return authService.getLists(userId);
+        const rows = companies.map(c => ({
+            list_id: listId, name: c.name, city: c.city || '', raw: (c as any)._raw || null,
+        }));
+        await supabase.from('list_companies').insert(rows);
+        return authService.getLists(userId);
+    },
+
     removeFromList: async (userId: string, listId: string, company: DiscoveredCompany): Promise<CompanyList[]> => {
         await supabase.from('list_companies').delete().eq('list_id', listId).eq('name', company.name).eq('city', company.city || '');
         return authService.getLists(userId);

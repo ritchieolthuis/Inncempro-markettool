@@ -63,3 +63,11 @@ h1, h2, h3, h4, h5, h6, .font-condensed { font-family: 'Oswald', sans-serif; }
   transition: background-color 0.15s, color 0.15s;
 }
 .leaflet-popup-close-button:hover { background: #f1f5f9; color: #1e293b !important; }
+
+/* Reposition zoom controls to bottom-right on mobile */
+.leaflet-top.leaflet-left {
+  top: auto !important;
+  left: auto !important;
+  bottom: 20px !important;
+  right: 20px !important;
+}

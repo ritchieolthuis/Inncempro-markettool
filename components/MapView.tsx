@@ -139,14 +139,33 @@ function loadCache(): GeoCache { try { return JSON.parse(localStorage.getItem(GE
 function saveCache(c: GeoCache) { localStorage.setItem(GEO_KEY, JSON.stringify(c)); }
 
 async function nominatim(q: string): Promise<Coords | null> {
-  try {
-    const r = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&countrycodes=nl&limit=1`,
-      { headers: { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' } },
-    );
-    const d = await r.json();
-    return d?.[0] ? [parseFloat(d[0].lat), parseFloat(d[0].lon)] : null;
-  } catch { return null; }
+  const queries = [q]; // try exact query first
+
+  // If it looks like "Straat NN, Plaats", try variations
+  const match = q.match(/^(.+?),\s*(.+?)$/);
+  if (match) {
+    const [, first, second] = match;
+    queries.push(`${second}, Nederland`); // just city
+    if (first.match(/^\d+\s*[A-Z]{2}/)) {
+      // Looks like postcode, try just city
+      queries.push(`${second}, Nederland`);
+    } else {
+      // Looks like street, try street + city
+      queries.push(`${first} ${second} Nederland`);
+    }
+  }
+
+  for (const searchQ of queries) {
+    try {
+      const r = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQ)}&countrycodes=nl&limit=1`,
+        { headers: { 'Accept-Language': 'nl', 'User-Agent': 'Inncempro/1.0' } },
+      );
+      const d = await r.json();
+      if (d?.[0]) return [parseFloat(d[0].lat), parseFloat(d[0].lon)];
+    } catch { continue; }
+  }
+  return null;
 }
 
 async function geocodeEntry(b: any, cache: GeoCache): Promise<{ coords: Coords | null; fresh: boolean }> {
@@ -702,7 +721,8 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
   // ── Init map ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return;
-    mapRef.current = L.map(mapDiv.current, { center: [52.15, 5.2], zoom: 7 });
+    mapRef.current = L.map(mapDiv.current, { center: [52.15, 5.2], zoom: 7, zoomControl: false });
+    L.control.zoom({ position: 'bottomright' }).addTo(mapRef.current);
     L.tileLayer('https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png', {
       attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
