@@ -651,7 +651,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
         {selectedRegions.size > 0 && <span className="px-1.5 py-0.5 bg-[#E85E26] text-white rounded-full text-[10px] leading-none">{visibleCount.toLocaleString('nl-NL')}</span>}
       </button>
 
-      <div className="flex-1 flex flex-col bg-slate-50 rounded-sm border border-slate-200 overflow-hidden relative">
+      <div className="flex-1 flex flex-col bg-slate-50 rounded-sm border border-slate-200 overflow-hidden relative isolate">
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-10">
             <div className="text-center">

@@ -1802,7 +1802,7 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
 
       {/* ── Map + route list ── */}
       <div className="flex-1 flex flex-col gap-3 min-w-0">
-        <div className="flex-1 rounded-sm border border-slate-200 overflow-hidden relative min-h-[420px] md:min-h-[300px]">
+        <div className="flex-1 rounded-sm border border-slate-200 overflow-hidden relative isolate min-h-[420px] md:min-h-[300px]">
           <div ref={mapDiv} className="absolute inset-0" />
           {drawMode && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] pointer-events-none">
@@ -1821,7 +1821,7 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
                 <MapPin className="w-8 h-8 text-slate-300 mx-auto mb-3" />
                 <p className="text-sm font-semibold text-slate-600 mb-1">Kaart leeg</p>
                 {hasSelection
-                  ? <p className="text-xs text-slate-400"><b>{selectedItems.length} geselecteerde items</b> klaarstaan — klik <b>Genereer Kaart</b></p>
+                  ? <p className="text-xs text-slate-400"><b>{selectedItems.length} geselecteerde items</b> klaarstaan - klik <b>Genereer Kaart</b></p>
                   : <p className="text-xs text-slate-400">Kies bronnen en klik <b>Genereer Kaart</b></p>}
               </div>
             </div>
@@ -1832,7 +1832,7 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
           <div className="bg-white rounded-sm border border-slate-200 p-4 max-h-48 overflow-y-auto flex-shrink-0">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                Route — {routeStops.length} stops{returnHome ? ' (met terugkeer)' : ''}
+                Route - {routeStops.length} stops{returnHome ? ' (met terugkeer)' : ''}
               </span>
               {mapsUrl && (
                 <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-[#16a34a] font-bold hover:underline flex items-center gap-1">

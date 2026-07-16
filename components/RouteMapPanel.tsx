@@ -804,7 +804,9 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
       </div>
 
       {/* ── Map ── */}
-      <div className="relative flex-1 min-h-0">
+      {/* `isolate` containt Leaflet's eigen panes (interne z-index tot 700) binnen deze wrapper,
+          zodat ze nooit door een modal (bv. Instellingen, z-50) heen kunnen "lekken". */}
+      <div className="relative isolate flex-1 min-h-0">
         <div
           ref={mapDiv}
           className="absolute inset-0"
@@ -974,7 +976,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
                     className="flex-1 font-semibold text-slate-700 truncate hover:text-[#009FE3] cursor-pointer"
                     onClick={e => { e.stopPropagation(); const nm = raw.naam || s.company.name; if (nm) onNavigate?.('database', nm); }}
                     title="Zoek in database">
-                    {raw.naam || s.company.name || '—'}
+                    {raw.naam || s.company.name || '-'}
                   </span>
                   <span className="text-slate-400 flex-shrink-0 text-[10px] truncate max-w-[60px] hidden sm:block">{raw.stad || s.company.city || ''}</span>
                   <div className="flex items-center gap-1 flex-shrink-0">
@@ -1097,7 +1099,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
                         </div>
                         {v.status === 'ok' && !v.accepted && (
                           <p className="text-slate-400 text-[10px] mt-0.5 pl-4.5">
-                            {[raw.straat, raw.postcode, raw.stad].filter(Boolean).join(', ')} — OK
+                            {[raw.straat, raw.postcode, raw.stad].filter(Boolean).join(', ')} - OK
                           </p>
                         )}
                         {(v.status === 'suspect' || v.status === 'not_found') && v.reason && (

@@ -14,6 +14,24 @@ export function isNederlandBedrijf(b: any): boolean {
   return true;
 }
 
+// Bedrijven die UITSLUITEND interieur doen (interieurarchitecten, interior-only studio's) horen
+// niet in deze tool — de doelgroep is architecten/bouwbedrijven/aannemers voor nieuwbouw,
+// verbouw, renovatie etc., niet losse interieurspecialisten (bv. "OdV interieurarchitecten").
+// Een bedrijf dat interieur COMBINEERT met een andere discipline (bv. "Artemis Interieur &
+// Architectuur", of een aannemer die ook interieurbouw doet) blijft gewoon staan — alleen de
+// bedrijven waarvan interieur de ENIGE vermelde discipline is, worden verwijderd. De naam
+// "interieurarchitect(en/uur)" bevat zelf altijd de substring "architect", dus die wordt eerst
+// weggeknipt voordat op een combi-woord wordt gecontroleerd — anders zou zo'n bedrijf zichzelf
+// per ongeluk als "combi" laten doorgaan.
+const INTERIEUR_KW = /interieur|interior/i;
+const COMBI_DISCIPLINE_KW = /architect|bouwkunst|bouwkunde|stedenbouw|aannem|vastgoed|ingenieur|landschap|nieuwbouw|verbouw|renovatie|restauratie/i;
+export function isPureInterieurBedrijf(b: any): boolean {
+  const combined = [b.naam, b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ');
+  if (!INTERIEUR_KW.test(combined)) return false;
+  const rest = combined.replace(/interieur\w*|interior\w*/gi, '');
+  return !COMBI_DISCIPLINE_KW.test(rest);
+}
+
 export function mergeEntries(entries: any[]): any[] {
   // Leestekens vervangen door een SPATIE, niet weglaten — anders hangt het resultaat af
   // van of de bron toevallig spaties om het leesteken had staan. "Bekhuis & KleinJan®" en
@@ -128,7 +146,10 @@ export function mergeEntries(entries: any[]): any[] {
   // this catches two *different* real sources (e.g. BNA "INBO" vs. Architectenweb "INBO
   // Rotterdam") scraping the exact same vestiging under differently-formatted names.
   // Pairwise within a small address bucket, so a shared office building housing several
-  // distinct companies only merges the ones whose (city-free) core name actually matches.
+  // distinct companies only merges the ones whose (city-free) core name actually matches
+  // — or, one is a word-for-word prefix of the other (e.g. Architectenweb "diederendirrix"
+  // vs. BNA "diederendirrix architectuur & stedenbouw": same firm, one source just kept
+  // scraping the descriptive tagline as part of the name).
   for (const idxs of byAddrKey.values()) {
     if (idxs.length < 2) continue;
     for (let a = 0; a < idxs.length; a++) {
@@ -137,7 +158,10 @@ export function mergeEntries(entries: any[]): any[] {
         if (find(ia) === find(ib)) continue;
         const coreA = coreNaamCityFree(entries[ia].naam, entries[ia].stad);
         const coreB = coreNaamCityFree(entries[ib].naam, entries[ib].stad);
-        if (coreA.length >= 3 && coreA === coreB) union(ia, ib);
+        if (coreA.length < 3 || coreB.length < 3) continue;
+        if (coreA === coreB || coreA.startsWith(coreB + ' ') || coreB.startsWith(coreA + ' ')) {
+          union(ia, ib);
+        }
       }
     }
   }

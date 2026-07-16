@@ -337,6 +337,11 @@ const RidePanel: React.FC<RidePanelProps> = ({
 
     setSuggestTotal(candidates.length);
 
+    // Alleen bij expliciete "Toon alles" alles in één keer tonen — ook in routemodus blijft de
+    // normale paginering (10/20 per pagina) gewoon werken, dat is de bekende/gewenste bediening.
+    // "Toon alles" is de manier om écht alles te zien (incl. verderop op de route, bv. Utrecht/
+    // Amersfoort/Apeldoorn) zonder te hoeven doorklikken — niet iets wat automatisch aan moet
+    // staan zodra er een bestemming is gekozen.
     if (showAllSuggestions) {
       // Alles in één keer, geen paginering en geen OSRM-verfijning (zie toelichting bij de
       // state hierboven) — hemelsbrede/route-afstand is voor "alles overzien" ruim genoeg, en
@@ -583,17 +588,21 @@ const RidePanel: React.FC<RidePanelProps> = ({
     // een bolletje van een paar pixels is op een telefoon vrijwel onmogelijk precies te raken.
     const suggestionRadius = isTouchDevice ? 11 : 6;
 
-    // Bij "Toon alles" kan dit oplopen tot honderden bedrijven — de LIJST toont ze allemaal
-    // (goedkoop, gewoon tekst), maar de kaart cappen we op 300 markers. Meer dan dat gaf precies
-    // de traagheid waar deze sessie mee begon (elke marker krijgt eigen hover/popup-bindings,
-    // ook met canvas-rendering). Ruim boven wat je op een schermpje toch kunt onderscheiden.
-    const MAX_SUGGESTION_MARKERS = 300;
-    suggestions.slice(0, MAX_SUGGESTION_MARKERS).forEach(s => {
+    // "Toon alles" moet ECHT alles plotten — anders is de knop zinloos zodra een corridor
+    // (route) of straal meer dan een paar honderd bedrijven bevat, precies de klacht die dit
+    // opnieuw invoerde. Elke marker als canvas-circleMarker tekenen is goedkoop; de eerder
+    // gevonden traagheid zat 'm in de per-marker hover/zoom-listener (attachHoverZoom hieronder),
+    // niet in het tekenen zelf. Die interactieve hover-zoom blijft daarom beperkt tot een
+    // ruime bovengrens, maar ELKE bedrijf krijgt gewoon zijn eigen zichtbare, klikbare punt
+    // (met popup) op de kaart, ook ver voorbij die grens.
+    const MAX_HOVER_ZOOM_MARKERS = 300;
+    suggestions.forEach((s, si) => {
       const bolletje = L.circleMarker([s.coords.lat, s.coords.lng], {
         radius: suggestionRadius, color: '#fff', weight: 1.5, fillColor: '#94a3b8', fillOpacity: 0.9, interactive: true,
       })
         .bindPopup(popupHtml(s.bedrijf, `${s.km.toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`), popupOpts)
         .addTo(markersLayerRef.current!);
+      if (si >= MAX_HOVER_ZOOM_MARKERS) { bounds.push([s.coords.lat, s.coords.lng]); return; }
       // Zelfde hover-gedrag als de bolletjes op de Kaart-tab: even iets groter en geleidelijk
       // inzoomen zolang de muis erop blijft staan.
       attachHoverZoom(bolletje, map,
@@ -687,6 +696,18 @@ const RidePanel: React.FC<RidePanelProps> = ({
     );
   };
 
+  // Bekende plaatsnamen — een woord dat zelf een plaats is (bv. "Rotterdam", "Eindhoven") mag
+  // NOOIT als bedrijfsnaam-treffer tellen. Zonder dit "won" een kale plaatsnaam-zoekopdracht
+  // altijd van het echte stadscentrum zodra een willekeurig bedrijf toevallig op die plaats
+  // eindigt (heel gangbaar in deze data, bv. "BA Architecten Eindhoven"), en werd bv. "Eindhoven"
+  // intypen ineens "BA Architecten Eindhoven" als startpunt i.p.v. het centrum van Eindhoven
+  // zoals Google Maps dat ook zou pakken.
+  const knownCityWords = React.useMemo(() => {
+    const set = new Set<string>();
+    Object.keys(cityCoords).forEach(k => set.add(k.toLowerCase()));
+    return set;
+  }, [cityCoords]);
+
   // Vindt het best passende bedrijf voor een combinatie als "OMA Rotterdam": een simpele
   // .includes(hele zoekterm) op de naam mist dit compleet, want de plaatsnaam staat in een
   // ANDER veld (stad) dan de bedrijfsnaam. Telt daarom per zoekwoord punten op, of het nou in
@@ -700,11 +721,20 @@ const RidePanel: React.FC<RidePanelProps> = ({
     for (const b of allData) {
       const naam = (b.naam || '').toLowerCase();
       if (!naam) continue;
+      const naamWords = naam.split(/[\s\-\/&,.()+]+/).filter(Boolean);
       const stad = (b.stad || '').toLowerCase();
       let score = 0;
       let naamHits = 0;
       for (const w of qWords) {
-        if (naam.includes(w)) { score += 2; naamHits++; }
+        // Een plaatsnaam-woord telt nooit als naam-treffer (zie toelichting hierboven) — alleen
+        // via het stad-veld. En i.p.v. een kale substring (die "oma" ook in "Glomad" of
+        // "Nomadic" liet matchen) vereisen we een woordgrens-match: het hele woord, of het begin
+        // ervan; alleen langere termen (5+) mogen ook los als substring matchen.
+        const isCityWord = knownCityWords.has(w);
+        const naamWordMatch = !isCityWord && (
+          naamWords.some(nw => nw === w || nw.startsWith(w)) || (w.length >= 5 && naam.includes(w))
+        );
+        if (naamWordMatch) { score += 2; naamHits++; }
         else if (stad.includes(w)) score += 1;
       }
       // Een kale plaatsnaam (bv. "Eindhoven") mag nooit een bedrijf triggeren puur omdat het
@@ -960,8 +990,13 @@ const RidePanel: React.FC<RidePanelProps> = ({
         {/* Kaart: ALTIJD renderen, niet in een ternary-branch — anders wordt de div pas
             gerenderd zodra startCoords ingesteld is, en faalt de mapInit useEffect stil
             omdat mapDivRef.current undefined is. In fullscreen wordt de wrapper een vaste
-            overlay over het hele scherm (zelfde idee als de Route Kaart bij Lijsten). */}
-        <div className={isFullscreen ? 'fixed inset-0 z-[9999] bg-white flex flex-col' : 'relative border-b border-slate-100'}>
+            overlay over het hele scherm (zelfde idee als de Route Kaart bij Lijsten).
+            `isolate` is ESSENTIEEL hier: Leaflet's eigen panes zetten intern z-index-waarden
+            tot 700 (ver boven onze modals' z-50), en zonder een eigen stacking-context op deze
+            wrapper "lekten" die door naar de rest van de pagina — de kaart tekende zich dan
+            bovenop/dwars door de Instellingen-modal heen zodra die open stond terwijl Onderweg
+            nog in de achtergrond gerenderd was. */}
+        <div className={isFullscreen ? 'fixed inset-0 z-[9999] bg-white flex flex-col' : 'relative isolate border-b border-slate-100'}>
           <div ref={mapDivRef} className={isFullscreen ? 'flex-1 w-full bg-slate-200' : 'w-full h-72 sm:h-80 bg-slate-200'} />
           <button
             onClick={() => setIsFullscreen(v => !v)}
@@ -1033,7 +1068,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
         ) : finished ? (
           <div className="p-8 text-center space-y-3">
             <Check className="w-10 h-10 text-green-500 mx-auto" />
-            <p className="text-sm font-bold text-slate-800">Rit afgerond — {chain.length} bezoeken gelogd{saveListName.trim() ? ` en opgeslagen als lijst "${saveListName.trim()}"` : ''}.</p>
+            <p className="text-sm font-bold text-slate-800">Rit afgerond - {chain.length} bezoeken gelogd{saveListName.trim() ? ` en opgeslagen als lijst "${saveListName.trim()}"` : ''}.</p>
             <button onClick={resetRide} className="text-xs font-bold uppercase tracking-wider text-[#009FE3] hover:underline">Nieuwe rit starten</button>
           </div>
         ) : (
@@ -1197,7 +1232,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
               )}
               {mapsUrls.length > 1 && (
                 <div className="mt-3 space-y-1.5">
-                  <p className="text-[10px] text-slate-400">Google Maps kan max. 10 punten per route aan — deze rit is daarom gesplitst in {mapsUrls.length} delen, elk aansluitend op het vorige:</p>
+                  <p className="text-[10px] text-slate-400">Google Maps kan max. 10 punten per route aan - deze rit is daarom gesplitst in {mapsUrls.length} delen, elk aansluitend op het vorige:</p>
                   {mapsUrls.map((url, i) => (
                     <a key={i} href={url} target="_blank" rel="noreferrer" className="w-full inline-flex items-center justify-center gap-2 py-2 bg-white border border-[#009FE3] text-[#009FE3] text-xs font-bold uppercase tracking-wider rounded-sm hover:bg-[#009FE3]/5">
                       <MapPin className="w-3.5 h-3.5" /> Deel {i + 1} van {mapsUrls.length} in Google Maps
@@ -1223,7 +1258,8 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   );
                 })}
               </div>
-              {/* Zoekstraal — zelfde sleepbare "Straal"-slider als Live Zoeken, van 1 tot 150 km.
+              {/* Zoekstraal - zelfde sleepbare "Straal"-slider als Live Zoeken, van 5 tot 200 km
+                  (200 km dekt vanuit elk punt in Nederland zo goed als het hele land).
                   Bepaalt hoeveel bedrijven er in de resultaten/paginering hieronder komen. In de
                   Van→Naar-richtingmodus is straal niet relevant (dan geldt de route zelf), dus
                   verbergen we 'm dan volledig. */}
@@ -1233,7 +1269,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   <input
                     type="range"
                     min={5}
-                    max={150}
+                    max={200}
                     step={5}
                     value={radiusKm}
                     onChange={e => setRadiusKm(Number(e.target.value))}
@@ -1314,7 +1350,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
               <div className="flex items-center justify-between mb-2 gap-2">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   Dichtstbijzijnde vanaf {chain.length > 0 ? chain[chain.length - 1].bedrijf.naam : (startLabel || 'startpunt')}
-                  {suggestTotal > 0 && <span className="normal-case font-normal text-slate-400"> — {suggestTotal} binnen bereik</span>}
+                  {suggestTotal > 0 && <span className="normal-case font-normal text-slate-400"> - {suggestTotal} binnen bereik</span>}
                 </span>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {loadingSuggestions && <Loader2 className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
@@ -1436,7 +1472,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   onClick={finishRide}
                   className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold uppercase tracking-wider rounded-sm flex items-center justify-center gap-2"
                 >
-                  <Save className="w-4 h-4" /> Klaar voor vandaag — log {chain.length} bezoek{chain.length !== 1 ? 'en' : ''}
+                  <Save className="w-4 h-4" /> Klaar voor vandaag - log {chain.length} bezoek{chain.length !== 1 ? 'en' : ''}
                 </button>
               </div>
             )}

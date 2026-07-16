@@ -18,7 +18,7 @@ import { preloadAllAddresses, onGeoclusterProgress, GeoclusterProgress, clearClu
 import { queuedNominatim } from './services/nominatimQueue';
 import { SearchState, DiscoveredCompany, User, CompanyList } from './types';
 import { scoreInsertionCandidates } from './utils/dagbezoek';
-import { mergeEntries, isNederlandBedrijf } from './utils/mergeBedrijven';
+import { mergeEntries, isNederlandBedrijf, isPureInterieurBedrijf } from './utils/mergeBedrijven';
 import { getDrivingDistancesKm } from './services/routingService';
 
 // Tijdelijk alle AI-agent-functionaliteit (floating chat-orb, chatpaneel, suggestieknoppen)
@@ -1560,6 +1560,19 @@ const App: React.FC = () => {
   // AUTH STATE
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+
+  // Per-account localStorage-sleutel — voorkomt dat persoonlijke instellingen (thuisadres,
+  // weergavevoorkeuren, opgeslagen filters, recent bekeken, ...) worden gedeeld/overschreven
+  // tussen accounts op hetzelfde toestel (bv. inloggen als Ritchie, dan als Henry — Henry's
+  // eigen adres/instellingen mogen nooit Ritchie's overschrijven of andersom). Zelfde patroon
+  // als het bestaande `inncempro_search_history_${currentUser.id}` verderop. Zolang er nog geen
+  // ingelogde gebruiker bekend is (net na page-load, vóór de auth-check) valt dit terug op de
+  // kale sleutel — onschuldig, want de reload-effect hieronder herstelt de juiste per-account
+  // waarden zodra currentUser bekend is. BEWUST NIET gebruikt voor de GEDEELDE teamgegevens
+  // (custom_entries, deleted_entries, manual_edits, audit_log — dat blijft één gezamenlijke
+  // database voor het hele team) of de geo/routing-caches (puur coördinaten-opzoek, geen
+  // persoonlijke data, prima om te delen en dubbel werk te besparen).
+  const uKey = (base: string) => currentUser ? `${base}::${currentUser.id}` : base;
   
   // LOGIN FORM
   const [loginIdent, setLoginIdent] = useState('');
@@ -1595,9 +1608,9 @@ const App: React.FC = () => {
   // Volledig bedrijfsadres — bepaalt het standaard middelpunt voor straal-zoeken en
   // de "km van ..." afstandsweergave. Per gebruiker aan te passen bij Instellingen.
   const [prefAddress, setPrefAddressState] = useState<string>(() =>
-    localStorage.getItem('inncempro_pref_address') || DEFAULT_HQ_ADDRESS);
+    localStorage.getItem(uKey('inncempro_pref_address')) || DEFAULT_HQ_ADDRESS);
   const [prefAddressCoords, setPrefAddressCoords] = useState<{ lat: number; lng: number } | null>(() => {
-    try { return JSON.parse(localStorage.getItem('inncempro_pref_address_coords') || 'null'); } catch { return null; }
+    try { return JSON.parse(localStorage.getItem(uKey('inncempro_pref_address_coords')) || 'null'); } catch { return null; }
   });
   const [prefAddressGeocoding, setPrefAddressGeocoding] = useState(false);
   // Welk adres de HUIDIGE prefAddressCoords daadwerkelijk representeren. Zonder dit kon de UI
@@ -1605,8 +1618,16 @@ const App: React.FC = () => {
   // adres), terwijl het zojuist ingevoerde adres in werkelijkheid niet gevonden werd (netwerkfout,
   // Nominatim rate-limit, etc.) — dan bleven de OUDE coördinaten stilzwijgend in gebruik en klopte
   // de getoonde afstand niet meer met het ingevulde adres, zonder dat de gebruiker dat kon zien.
+  // BELANGRIJK: dit wordt als EIGEN sleutel bewaard (inncempro_pref_address_coords_for), niet
+  // afgeleid uit "bestaat er een coords-sleutel" — die eerdere aanname was zelf de bug: na een
+  // mislukte adreswijziging bleef `prefAddress` (tekst) al wél bijgewerkt naar het NIEUWE adres
+  // terwijl `prefAddressCoords` bewust op het OUDE adres bleef staan, en bij een page-refresh
+  // "zag" de oude logica alleen "er staan coördinaten" en nam foutief aan dat die bij de NIEUWE
+  // (mislukte) adrestekst hoorden — met een compleet verkeerde afstand tot gevolg (bv. "1,7 km
+  // van Wittenbrink, Den Ham" terwijl de coördinaten in werkelijkheid nog een heel ander,
+  // eerder succesvol adres waren).
   const [prefAddressCoordsFor, setPrefAddressCoordsFor] = useState<string | null>(() =>
-    localStorage.getItem('inncempro_pref_address_coords') ? localStorage.getItem('inncempro_pref_address') : null);
+    localStorage.getItem(uKey('inncempro_pref_address_coords_for')));
   // ÉCHT niet gevonden (ook de plaatsnaam-fallback faalde) vs. WEL gevonden maar alleen op
   // plaatsnaam-niveau (bv. je typte simpelweg "Hengelo" of "Rijssen" — dat IS gewoon gevonden,
   // alleen niet preciezer dan het centrum van die plaats, want een los ingetypte plaatsnaam
@@ -1615,11 +1636,11 @@ const App: React.FC = () => {
   const [prefAddressGeocodeError, setPrefAddressGeocodeError] = useState(false);
   const [prefAddressApproximate, setPrefAddressApproximate] = useState(false);
   const [prefSort, setPrefSort] = useState<'relevant' | 'az'>(() =>
-    (localStorage.getItem('inncempro_pref_sort') as 'relevant' | 'az') || 'relevant');
+    (localStorage.getItem(uKey('inncempro_pref_sort')) as 'relevant' | 'az') || 'relevant');
   const [prefResultsPerPage, setPrefResultsPerPage] = useState<number>(() =>
-    Number(localStorage.getItem('inncempro_pref_rpp')) || 10);
+    Number(localStorage.getItem(uKey('inncempro_pref_rpp'))) || 10);
   const [prefCardFields, setPrefCardFields] = useState<Record<string, boolean>>(() => {
-    try { return JSON.parse(localStorage.getItem('inncempro_pref_card') || '{}'); } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem(uKey('inncempro_pref_card')) || '{}'); } catch { return {}; }
   });
 
   const cardFieldDefault: Record<string, boolean> = {
@@ -1634,12 +1655,12 @@ const App: React.FC = () => {
   const [searchOriginCoords, setSearchOriginCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [activeSearchOriginLabel, setActiveSearchOriginLabel] = useState<string>('');
 
-  const savePrefSort = (v: 'relevant' | 'az') => { setPrefSort(v); setSortMode(v); localStorage.setItem('inncempro_pref_sort', v); };
-  const savePrefRpp = (v: number) => { setPrefResultsPerPage(v); localStorage.setItem('inncempro_pref_rpp', String(v)); };
+  const savePrefSort = (v: 'relevant' | 'az') => { setPrefSort(v); setSortMode(v); localStorage.setItem(uKey('inncempro_pref_sort'), v); };
+  const savePrefRpp = (v: number) => { setPrefResultsPerPage(v); localStorage.setItem(uKey('inncempro_pref_rpp'), String(v)); };
   const toggleCardField = (key: string) => {
     const next = { ...cardFieldDefault, ...prefCardFields, [key]: !showField(key) };
     setPrefCardFields(next);
-    localStorage.setItem('inncempro_pref_card', JSON.stringify(next));
+    localStorage.setItem(uKey('inncempro_pref_card'), JSON.stringify(next));
   };
 
   // Geocodeert het bedrijfsadres via Nominatim en cachet het resultaat, zodat straal-zoeken
@@ -1659,7 +1680,8 @@ const App: React.FC = () => {
         const coords = { lat: parseFloat(hit.lat), lng: parseFloat(hit.lon) };
         setPrefAddressCoords(coords);
         setPrefAddressCoordsFor(address);
-        localStorage.setItem('inncempro_pref_address_coords', JSON.stringify(coords));
+        localStorage.setItem(uKey('inncempro_pref_address_coords'), JSON.stringify(coords));
+        localStorage.setItem(uKey('inncempro_pref_address_coords_for'), address);
         setPrefAddressGeocoding(false);
         return;
       }
@@ -1680,11 +1702,16 @@ const App: React.FC = () => {
         setPrefAddressCoords(cityCoordsFallback);
         setPrefAddressCoordsFor(address);
         setPrefAddressApproximate(true);
-        localStorage.setItem('inncempro_pref_address_coords', JSON.stringify(cityCoordsFallback));
+        localStorage.setItem(uKey('inncempro_pref_address_coords'), JSON.stringify(cityCoordsFallback));
+        localStorage.setItem(uKey('inncempro_pref_address_coords_for'), address);
       } else {
-        // Ook de plaatsnaam-fallback mislukte: laat de oude coördinaten ONGEMOEID (horen niet
-        // bij dit adres) en toon dat expliciet, in plaats van een vals "✓ gevonden".
-        setPrefAddressCoordsFor(null);
+        // Ook de plaatsnaam-fallback mislukte: laat de OUDE coördinaten èn het adres waar die
+        // eigenlijk bij horen ONGEMOEID (niet naar null zetten!) — anders "ziet" hqShortLabel
+        // elders in de app straks geen geldig gekoppeld adres meer, valt terug op de rauwe
+        // (net mislukte) tekst, en toont precies de misleidende mismatch die dit fixte
+        // ("X km van [nieuw mislukt adres]" terwijl de afstand feitelijk nog vanaf het OUDE,
+        // wél kloppende adres kwam). De Instellingen-pagina detecteert deze situatie zelf via
+        // `prefAddressGeocodeError`, niet via het (bewust ongewijzigd blijvende) coordsFor.
         setPrefAddressGeocodeError(true);
       }
     }
@@ -1693,7 +1720,7 @@ const App: React.FC = () => {
 
   const savePrefAddress = (v: string) => {
     setPrefAddressState(v);
-    localStorage.setItem('inncempro_pref_address', v);
+    localStorage.setItem(uKey('inncempro_pref_address'), v);
     if (v.trim()) geocodeAddress(v.trim());
   };
 
@@ -1786,12 +1813,13 @@ const App: React.FC = () => {
         // geocode voor de LEESBARE tekst lukte — dus GEEN foutstatus tonen als alleen de
         // human-readable naam terugvalt op de plaatsnaam; de afstandsberekening zelf klopt.
         setPrefAddressState(displayName);
-        localStorage.setItem('inncempro_pref_address', displayName);
+        localStorage.setItem(uKey('inncempro_pref_address'), displayName);
         setPrefAddressCoords(coords);
         setPrefAddressCoordsFor(displayName);
         setPrefAddressGeocodeError(false);
         setPrefAddressApproximate(false);
-        localStorage.setItem('inncempro_pref_address_coords', JSON.stringify(coords));
+        localStorage.setItem(uKey('inncempro_pref_address_coords'), JSON.stringify(coords));
+        localStorage.setItem(uKey('inncempro_pref_address_coords_for'), displayName);
       },
       (error) => {
         // Geweigerd, timeout, of niet beschikbaar op dit toestel: val terug op het (eventueel
@@ -1837,7 +1865,16 @@ const App: React.FC = () => {
   const hqCoords = prefAddressCoords || DUTCH_CITY_COORDS['hengelo'] || { lat: 52.2549, lng: 6.7782 };
   // Korte label voor badges/teksten (bv. "Hengelo" i.p.v. het volledige adres) — pakt het
   // laatste kommadeel en strip een eventuele postcode.
-  const hqShortLabel = prefAddress.split(',').pop()?.replace(/\b\d{4}\s?[A-Z]{2}\b/i, '').trim() || prefAddress;
+  // BELANGRIJK: gebaseerd op `prefAddressCoordsFor` (het adres dat bij de HUIDIGE prefAddressCoords
+  // hoort), niet op het rauwe `prefAddress`-tekstveld. Als een net getypt adres niet gegeocodeerd
+  // kon worden, blijven prefAddressCoords bewust op het VORIGE (werkende) adres staan — maar
+  // prefAddress zelf is al wél bijgewerkt naar de nieuwe tekst. Zonder deze correctie toonden
+  // alle "X km van ..."-badges door de hele app de NIEUWE (mislukte) adrestekst terwijl de
+  // afstand in werkelijkheid nog vanaf het OUDE adres werd berekend — een misleidende mismatch
+  // (bv. "1,7 km van Wittenbrink, Den Ham" terwijl de rijafstand feitelijk nog vanaf het oude,
+  // heel andere adres kwam).
+  const hqLabelSource = prefAddressCoordsFor || prefAddress;
+  const hqShortLabel = hqLabelSource.split(',').pop()?.replace(/\b\d{4}\s?[A-Z]{2}\b/i, '').trim() || hqLabelSource;
 
   // Zelfde prioriteit als bij het sorteren in executeSearch: live GPS > ingesteld adres > Hengelo.
   // Wordt gebruikt voor de rijafstand-berekening zodat die niet stiekem toch Hengelo gebruikt
@@ -1854,7 +1891,7 @@ const App: React.FC = () => {
   // extra tab) valt 'ie terug op de standaardvolgorde i.p.v. half-kapot te blijven.
   const [tabOrder, setTabOrderState] = useState<ViewModeKey[]>(() => {
     try {
-      const raw = localStorage.getItem('inncempro_tab_order');
+      const raw = localStorage.getItem(uKey('inncempro_tab_order'));
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length === DEFAULT_TAB_ORDER.length && DEFAULT_TAB_ORDER.every(k => parsed.includes(k))) {
@@ -1866,7 +1903,7 @@ const App: React.FC = () => {
   });
   const setTabOrder = (order: ViewModeKey[]) => {
     setTabOrderState(order);
-    localStorage.setItem('inncempro_tab_order', JSON.stringify(order));
+    localStorage.setItem(uKey('inncempro_tab_order'), JSON.stringify(order));
   };
   // Eén gedeeld sleep-statuspaar voor zowel de tabbalk als de Instellingen-lijst — er kan nooit
   // in beide tegelijk gesleept worden, dus scheelt dit dubbele state.
@@ -1893,7 +1930,7 @@ const App: React.FC = () => {
 
   // OPGESLAGEN FILTERS
   const [savedFilters, setSavedFilters] = useState<Array<{name: string; query: string; regions: string[]; types: string[]; werksoort: string[]; bron: string[]; rechtsvorm: string[]; contact: string[]}>>(() => {
-    try { return JSON.parse(localStorage.getItem('inncempro_saved_filters') || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem(uKey('inncempro_saved_filters')) || '[]'); } catch { return []; }
   });
   const [showSaveFilterModal, setShowSaveFilterModal] = useState(false);
   const [saveFilterName, setSaveFilterName] = useState('');
@@ -2035,7 +2072,7 @@ const App: React.FC = () => {
 
   // Recent bekeken kaarten
   const [recentViewed, setRecentViewed] = useState<Array<{ naam: string; timestamp: number }>>(() => {
-    try { return JSON.parse(localStorage.getItem('inncempro_recent_viewed') || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem(uKey('inncempro_recent_viewed')) || '[]'); } catch { return []; }
   });
 
   const addToRecentViewed = (naam: string) => {
@@ -2043,7 +2080,7 @@ const App: React.FC = () => {
     updated.unshift({ naam, timestamp: Date.now() });
     const limited = updated.slice(0, 20); // max 20 recent
     setRecentViewed(limited);
-    localStorage.setItem('inncempro_recent_viewed', JSON.stringify(limited));
+    localStorage.setItem(uKey('inncempro_recent_viewed'), JSON.stringify(limited));
   };
 
   const addVisit = async (bedrijf: any) => {
@@ -2237,12 +2274,59 @@ const App: React.FC = () => {
   // ook al staat het in het logboek — zo kom je vanzelf weer bij bedrijven terecht die
   // aan een nieuw bezoek toe zijn, in plaats van dat ze voorgoed uit Live Zoeken verdwijnen.
   const [revisitCycleMonths, setRevisitCycleMonths] = useState<number>(() => {
-    const stored = localStorage.getItem('inncempro_revisit_cycle');
+    const stored = localStorage.getItem(uKey('inncempro_revisit_cycle'));
     return stored ? Number(stored) : 6;
   });
   useEffect(() => {
-    localStorage.setItem('inncempro_revisit_cycle', String(revisitCycleMonths));
+    localStorage.setItem(uKey('inncempro_revisit_cycle'), String(revisitCycleMonths));
   }, [revisitCycleMonths]);
+
+  // Herlaad ALLE persoonlijke instellingen zodra de ingelogde gebruiker verandert — inloggen
+  // vlak na page-load (currentUser gaat van null naar de echte gebruiker), uitloggen, of
+  // wisselen tussen accounts binnen dezelfde sessie (bv. Ritchie → Henry op hetzelfde toestel).
+  // Zonder dit bleven de in-memory React-states van het VORIGE account gewoon staan tot een
+  // handmatige page-refresh — ook al lazen nieuwe opslag-acties inmiddels wél de juiste
+  // per-account sleutel (zie `uKey` hierboven). Dit was de kern van de klacht dat het aanpassen
+  // van je adres/instellingen onder het ene account leek "over te lopen" naar het andere:
+  // beide accounts deelden gewoon dezelfde React-state totdat je de pagina herlaadde.
+  useEffect(() => {
+    // Eenmalige migratie: als dit account nog NOOIT eigen (per-account) instellingen heeft
+    // opgeslagen, maar er WEL nog waarden onder de oude, gedeelde sleutel staan (van vóór deze
+    // per-account-scheiding), neem die dan over als startpunt i.p.v. iedereen abrupt terug te
+    // zetten naar de fabrieksinstellingen (bv. terug naar Hengelo terwijl er al lang een eigen
+    // adres was ingesteld). Raakt de oude sleutel zelf niet aan — een ANDER account dat nog
+    // niet is ingelogd kan 'm dus ook nog als eigen startpunt overnemen.
+    if (currentUser) {
+      ['inncempro_pref_address', 'inncempro_pref_address_coords', 'inncempro_pref_sort', 'inncempro_pref_rpp',
+       'inncempro_pref_card', 'inncempro_tab_order', 'inncempro_saved_filters', 'inncempro_recent_viewed',
+       'inncempro_revisit_cycle'].forEach(base => {
+        const scoped = uKey(base);
+        if (localStorage.getItem(scoped) === null) {
+          const legacy = localStorage.getItem(base);
+          if (legacy !== null) localStorage.setItem(scoped, legacy);
+        }
+      });
+    }
+    setPrefAddressState(localStorage.getItem(uKey('inncempro_pref_address')) || DEFAULT_HQ_ADDRESS);
+    try { setPrefAddressCoords(JSON.parse(localStorage.getItem(uKey('inncempro_pref_address_coords')) || 'null')); } catch { setPrefAddressCoords(null); }
+    setPrefAddressCoordsFor(localStorage.getItem(uKey('inncempro_pref_address_coords_for')));
+    setPrefAddressGeocodeError(false);
+    setPrefAddressApproximate(false);
+    setPrefSort((localStorage.getItem(uKey('inncempro_pref_sort')) as 'relevant' | 'az') || 'relevant');
+    setSortMode((localStorage.getItem(uKey('inncempro_pref_sort')) as 'relevant' | 'az') || 'relevant');
+    setPrefResultsPerPage(Number(localStorage.getItem(uKey('inncempro_pref_rpp'))) || 10);
+    try { setPrefCardFields(JSON.parse(localStorage.getItem(uKey('inncempro_pref_card')) || '{}')); } catch { setPrefCardFields({}); }
+    try {
+      const raw = localStorage.getItem(uKey('inncempro_tab_order'));
+      const parsed = raw ? JSON.parse(raw) : null;
+      setTabOrderState(Array.isArray(parsed) && parsed.length === DEFAULT_TAB_ORDER.length && DEFAULT_TAB_ORDER.every(k => parsed.includes(k)) ? parsed : DEFAULT_TAB_ORDER);
+    } catch { setTabOrderState(DEFAULT_TAB_ORDER); }
+    try { setSavedFilters(JSON.parse(localStorage.getItem(uKey('inncempro_saved_filters')) || '[]')); } catch { setSavedFilters([]); }
+    try { setRecentViewed(JSON.parse(localStorage.getItem(uKey('inncempro_recent_viewed')) || '[]')); } catch { setRecentViewed([]); }
+    const storedCycle = localStorage.getItem(uKey('inncempro_revisit_cycle'));
+    setRevisitCycleMonths(storedCycle ? Number(storedCycle) : 6);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id]);
 
   const lastVisitDate = (bedrijf: any): string | null => {
     const id = bedrijf.id || bedrijf.naam;
@@ -2346,7 +2430,7 @@ const App: React.FC = () => {
     });
   };
   const [sortMode, setSortMode] = useState<'relevant' | 'az'>(() =>
-    (localStorage.getItem('inncempro_pref_sort') as 'relevant' | 'az') || 'relevant');
+    (localStorage.getItem(uKey('inncempro_pref_sort')) as 'relevant' | 'az') || 'relevant');
   const [showRouteMap, setShowRouteMap] = useState(false);
   const [autoOptimizeRoute, setAutoOptimizeRoute] = useState(false);
   const [routeMapFullscreen, setRouteMapFullscreen] = useState(false);
@@ -2601,7 +2685,7 @@ const App: React.FC = () => {
     const preset = { name, query: city, regions: selectedRegions, types: selectedTypes, werksoort: selectedWerksoort, bron: selectedBron, rechtsvorm: selectedRechtsvorm, contact: selectedContact };
     const next = [...savedFilters.filter(f => f.name !== name), preset];
     setSavedFilters(next);
-    localStorage.setItem('inncempro_saved_filters', JSON.stringify(next));
+    localStorage.setItem(uKey('inncempro_saved_filters'), JSON.stringify(next));
   };
 
   const applySavedFilter = (preset: typeof savedFilters[0]) => {
@@ -2619,7 +2703,7 @@ const App: React.FC = () => {
   const deleteSavedFilter = (name: string) => {
     const next = savedFilters.filter(f => f.name !== name);
     setSavedFilters(next);
-    localStorage.setItem('inncempro_saved_filters', JSON.stringify(next));
+    localStorage.setItem(uKey('inncempro_saved_filters'), JSON.stringify(next));
   };
 
   const describeSavedFilter = (f: typeof savedFilters[0]) => {
@@ -3627,7 +3711,7 @@ const App: React.FC = () => {
   // "Gebruik mijn locatie" — haalt WiFi networks op je device op (via browser's native Geolocation)
   // en zet die om naar lat/lng, daarna naar dichtstbijzijnde plaats. 100% gratis, geen rate-limits!
   const useMyLocation = () => {
-    localStorage.setItem('inncempro_location_used', 'true'); // Onthoud voor volgende page load
+    localStorage.setItem(uKey('inncempro_location_used'), 'true'); // Onthoud voor volgende page load
     setLocationError(null);
     setLocationNote(null);
     setLocating(true);
@@ -3880,6 +3964,7 @@ const App: React.FC = () => {
     () => {
       const filtered = (bouwgarantData as any[]).filter(b =>
         isNederlandBedrijf(b) &&
+        !isPureInterieurBedrijf(b) &&
         !deletedEntries.has(deleteKey(b.naam, b.straat)) &&
         !deletedEntries.has(b.naam)
       );
@@ -4009,7 +4094,7 @@ const App: React.FC = () => {
                   <div className="flex justify-center mb-6">
                       <img src="https://www.inncempro.nl/wp-content/uploads/2018/06/Logo-Inncempro-facebook.png" alt="Inncempro Logo" className="w-24 h-24 object-contain"/>
                   </div>
-                  <h1 className="text-3xl font-normal text-slate-900 font-condensed uppercase tracking-tight mb-2">Market Intelligence</h1>
+                  <h1 className="text-3xl font-normal text-slate-900 font-condensed uppercase tracking-tight mb-2">Market Tool</h1>
                   <p className="text-slate-500 mb-8 text-sm">
                       Log in om toegang te krijgen tot het dashboard.
                   </p>
@@ -4175,12 +4260,12 @@ const App: React.FC = () => {
                                       {prefAddressGeocoding
                                           ? <span className="text-slate-400">Adres opzoeken…</span>
                                           : prefAddressGeocodeError
-                                          ? <span className="text-amber-600">Adres niet gevonden{!prefAddressCoordsFor ? ' — vorige locatie behouden' : ''}</span>
+                                          ? <span className="text-amber-600">Adres niet gevonden{prefAddressCoords ? ' - vorige locatie behouden' : ''}</span>
                                           : prefAddressCoords && prefAddressCoordsFor === prefAddress && prefAddressApproximate
-                                          ? <span className="text-green-600">✓ Plaats gevonden — vul straat + huisnummer toe voor een preciezere afstand</span>
+                                          ? <span className="text-green-600">✓ Plaats gevonden - vul straat + huisnummer toe voor een preciezere afstand</span>
                                           : prefAddressCoords && prefAddressCoordsFor === prefAddress
                                           ? <span className="text-green-600">✓ Adres gevonden</span>
-                                          : <span className="text-amber-600">Adres niet gevonden — standaard Hengelo-locatie wordt gebruikt</span>}
+                                          : <span className="text-amber-600">Adres niet gevonden - standaard Hengelo-locatie wordt gebruikt</span>}
                                   </p>
                               </div>
 
@@ -4365,7 +4450,7 @@ const App: React.FC = () => {
                                       })}
                                   </div>
                               )}
-                              <p className="text-[10px] text-slate-400">Verwijderde bedrijven belanden hier — ze worden nooit automatisch definitief gewist, alleen jij kunt ze herstellen.</p>
+                              <p className="text-[10px] text-slate-400">Verwijderde bedrijven belanden hier - ze worden nooit automatisch definitief gewist, alleen jij kunt ze herstellen.</p>
                           </div>
                       )}
 
@@ -4921,7 +5006,7 @@ const App: React.FC = () => {
                        />
                        <span className="text-xs font-bold text-[#009FE3] w-14 flex-shrink-0">{radiusKm} km</span>
                        <span className="text-xs text-slate-500">
-                         Zoek bedrijven binnen <strong>{radiusKm} km</strong> van de ingevoerde locatie — hoe dichterbij, hoe hoger de match
+                         Zoek bedrijven binnen <strong>{radiusKm} km</strong> van de ingevoerde locatie - hoe dichterbij, hoe hoger de match
                        </span>
                        <div className="basis-full flex items-center gap-2 flex-wrap">
                          {radiusAddressResolved ? (
@@ -5021,7 +5106,7 @@ const App: React.FC = () => {
                          <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                          <span className="min-w-0 truncate">
                            <strong className="font-semibold text-slate-900">{s.value}</strong>
-                           {s.naam && s.value !== s.naam && <span className="text-slate-400"> — {s.naam}</span>}
+                           {s.naam && s.value !== s.naam && <span className="text-slate-400"> - {s.naam}</span>}
                          </span>
                        </button>
                      ))}
@@ -5110,7 +5195,7 @@ const App: React.FC = () => {
                           recentViewed.length > 0 ? (
                             <>
                               <div className="flex items-center justify-end mb-3">
-                                <button onClick={() => { setRecentViewed([]); setRecentViewedPage(1); localStorage.removeItem('inncempro_recent_viewed'); }} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-wider">Wis alles</button>
+                                <button onClick={() => { setRecentViewed([]); setRecentViewedPage(1); localStorage.removeItem(uKey('inncempro_recent_viewed')); }} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-wider">Wis alles</button>
                               </div>
                               <div className="grid sm:grid-cols-2 gap-3">
                                 {recentViewed.slice((recentPage - 1) * RECENT_VIEWED_PAGE_SIZE, recentPage * RECENT_VIEWED_PAGE_SIZE).map((r, i) => {
@@ -5872,7 +5957,7 @@ const App: React.FC = () => {
                                       <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wide leading-tight">{b.naam || company.name}</h3>
                                       {crmData[crmKey(b)]?.status && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm border flex-shrink-0 ${CRM_COLORS[crmData[crmKey(b)]!.status!]}`}>{CRM_LABELS[crmData[crmKey(b)]!.status!]}</span>}
                                       {isNew(b) && <span className="text-[9px] bg-green-500 text-white px-1.5 py-0.5 font-bold rounded-sm flex-shrink-0">Nieuw</span>}
-                                      {distKm !== undefined && showField('afstand') && <span title={distIsDriving ? 'Rijafstand over de weg' : 'Hemelsbrede schatting — rijafstand wordt geladen...'} className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`} van {(company as any)._hqLabel || hqShortLabel}{!distIsDriving && ' *'}</span>}
+                                      {distKm !== undefined && showField('afstand') && <span title={distIsDriving ? 'Rijafstand over de weg' : 'Hemelsbrede schatting - rijafstand wordt geladen...'} className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`} van {(company as any)._hqLabel || hqShortLabel}{!distIsDriving && ' *'}</span>}
                                     </div>
                                     {(b.straat || b.postcode || b.stad || company.city) && (
                                       <p className="text-slate-500 text-xs mt-1 flex items-start gap-1 flex-wrap">
@@ -6288,7 +6373,7 @@ const App: React.FC = () => {
                               <td key={i} className="py-2.5 px-3 text-slate-700 align-top">
                                 {label === 'Website' && fn(b)
                                   ? <a href={toUrl(fn(b)!)} target="_blank" rel="noreferrer" className="text-[#009FE3] hover:underline truncate block max-w-[180px]">{fn(b)}</a>
-                                  : <span className="text-slate-700">{fn(b) || <span className="text-slate-300">—</span>}</span>
+                                  : <span className="text-slate-700">{fn(b) || <span className="text-slate-300">-</span>}</span>
                                 }
                               </td>
                             ))}
@@ -6381,7 +6466,7 @@ const App: React.FC = () => {
                     {addDuplicate && (
                       <div className="bg-amber-50 border border-amber-300 rounded-sm p-3 text-xs text-amber-800">
                         <p className="font-bold mb-1">⚠ Mogelijk al in database</p>
-                        <p className="mb-2">Gevonden: <span className="font-semibold">{addDuplicate.naam}</span>{addDuplicate.stad ? ` — ${addDuplicate.stad}` : ''}{addDuplicate.straat ? `, ${addDuplicate.straat}` : ''}</p>
+                        <p className="mb-2">Gevonden: <span className="font-semibold">{addDuplicate.naam}</span>{addDuplicate.stad ? ` - ${addDuplicate.stad}` : ''}{addDuplicate.straat ? `, ${addDuplicate.straat}` : ''}</p>
                         <div className="flex gap-2">
                           <button onClick={() => { addCustomEntries([{ ...addForm, source: addForm.source || 'Web' }]); setAddDuplicate(null); setShowAddModal(false); }} className="flex-1 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-sm">Toch toevoegen</button>
                           <button onClick={() => setAddDuplicate(null)} className="flex-1 py-1.5 border border-amber-300 text-amber-700 font-bold rounded-sm hover:bg-amber-100">Annuleren</button>
@@ -6404,7 +6489,7 @@ const App: React.FC = () => {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <p className="text-xs text-slate-500 leading-relaxed">Plak bedrijfsgegevens — één bedrijf per alinea (of één per regel). Het systeem herkent automatisch namen, adressen, telefoonnummers, e-mailadressen en websites.</p>
+                    <p className="text-xs text-slate-500 leading-relaxed">Plak bedrijfsgegevens - één bedrijf per alinea (of één per regel). Het systeem herkent automatisch namen, adressen, telefoonnummers, e-mailadressen en websites.</p>
                     <textarea
                       rows={10}
                       className="w-full border border-slate-200 rounded-sm px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-[#009FE3] font-mono resize-y"
@@ -6415,7 +6500,7 @@ const App: React.FC = () => {
                     {bulkParsed.length === 0 ? (
                       <button
                         disabled={!bulkText.trim()}
-                        onClick={() => { const p = parseBulkText(bulkText); setBulkParsed(p); setBulkMsg(`${p.length} bedrijf/bedrijven herkend — controleer en klik Importeren.`); }}
+                        onClick={() => { const p = parseBulkText(bulkText); setBulkParsed(p); setBulkMsg(`${p.length} bedrijf/bedrijven herkend - controleer en klik Importeren.`); }}
                         className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold uppercase tracking-wider bg-slate-700 hover:bg-slate-900 disabled:opacity-40 text-white rounded-sm transition-all"
                       ><Search className="w-3.5 h-3.5"/>Verwerken</button>
                     ) : (
@@ -6427,7 +6512,7 @@ const App: React.FC = () => {
                               <span className="text-slate-400 w-5 flex-shrink-0 font-mono">{i + 1}.</span>
                               <div>
                                 <span className="font-semibold text-slate-800">{e.naam || '(geen naam)'}</span>
-                                {(e.stad || e.straat) && <span className="text-slate-500 ml-1">— {[e.straat, e.postcode, e.stad].filter(Boolean).join(' ')}</span>}
+                                {(e.stad || e.straat) && <span className="text-slate-500 ml-1">- {[e.straat, e.postcode, e.stad].filter(Boolean).join(' ')}</span>}
                                 {e.telefoon && <span className="text-slate-400 ml-1">· {e.telefoon}</span>}
                                 {e.email && <span className="text-slate-400 ml-1">· {e.email}</span>}
                               </div>

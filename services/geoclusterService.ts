@@ -1,12 +1,12 @@
 import bouwgarantData from '../bouwgarant_data.json';
 import cityCoords from '../city_coords.json';
-import { mergeEntries, isNederlandBedrijf } from '../utils/mergeBedrijven';
+import { mergeEntries, isNederlandBedrijf, isPureInterieurBedrijf } from '../utils/mergeBedrijven';
 import { queuedNominatim } from './nominatimQueue';
 
-// Zelfde dedup/NL-filter als Live Zoeken en Bedrijvendatabase (App.tsx's `activeData`) —
-// zonder dit telde de kaart losse scrapes van hetzelfde bedrijf (bv. via Bouwgarant én
+// Zelfde dedup/NL-filter als Live Zoeken en Bedrijvendatabase (App.tsx's `activeData`) -
+// zonder dit telde de kaart losse scrapes van hetzelfde bedrijf (bv. via Bouwgarant en
 // "Onbekend") als aparte bedrijven mee, wat een hoger totaal gaf dan de rest van de app.
-const MERGED_BEDRIJVEN: any[] = mergeEntries((bouwgarantData as any[]).filter(isNederlandBedrijf));
+const MERGED_BEDRIJVEN: any[] = mergeEntries((bouwgarantData as any[]).filter(b => isNederlandBedrijf(b) && !isPureInterieurBedrijf(b)));
 
 // city_coords.json has mixed-case keys (e.g. "Amsterdam", "'S-Gravenhage") and uses
 // `lng` (not `lon`) — normalize once into a lowercase-keyed lookup so city-based

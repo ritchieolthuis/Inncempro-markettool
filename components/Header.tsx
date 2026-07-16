@@ -43,7 +43,7 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, user, onLogout, onOpenSett
                     inncempro
                 </span>
                 <span className="text-[9px] sm:text-xs text-[#E85E26] font-normal tracking-[0.15em] sm:tracking-[0.2em] uppercase mt-0.5 sm:mt-1 font-condensed">
-                    Market Intelligence
+                    Market Tool
                 </span>
             </div>
         </button>
