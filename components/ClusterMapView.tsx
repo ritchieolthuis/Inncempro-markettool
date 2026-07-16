@@ -7,24 +7,7 @@ import 'leaflet/dist/leaflet.css';
 import { MapPin, Loader2, Check, ChevronDown, ChevronRight, Search, X, Navigation } from 'lucide-react';
 import VoiceInputButton from './VoiceInputButton';
 import { fuzzyMatch } from '../utils/fuzzyMatch';
-
-const SRC_COLOR: Record<string, string> = {
-  Bouwgarant: '#009FE3',
-  Architectenweb: '#E85E26',
-  Stiho: '#EA580C',
-  Jongeneel: '#16A34A',
-  BouwPartner: '#CA8A04',
-  PontMeyer: '#DC2626',
-  Bouwcenter: '#7C3AED',
-  Sweco: '#059669',
-  'Van Wijnen': '#0D9488',
-  'Plegt-Vos': '#475569',
-  'Ter Steege Groep': '#71717A',
-  VolkerWessels: '#334155',
-  BNA: '#52525B',
-  Onbekend: '#64748B',
-  Handmatig: '#9333EA',
-};
+import { SOURCE_COLOR as SRC_COLOR } from '../utils/sourceColors';
 
 interface ProvGroup {
   provincie: string;

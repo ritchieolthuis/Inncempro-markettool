@@ -19,6 +19,7 @@ import { priorityNominatim } from './services/nominatimQueue';
 import { SearchState, DiscoveredCompany, User, CompanyList } from './types';
 import { scoreInsertionCandidates } from './utils/dagbezoek';
 import { mergeEntries, isNederlandBedrijf, isPureInterieurBedrijf } from './utils/mergeBedrijven';
+import { sourceColor } from './utils/sourceColors';
 import { getDrivingDistancesKm } from './services/routingService';
 
 // Tijdelijk alle AI-agent-functionaliteit (floating chat-orb, chatpaneel, suggestieknoppen)
@@ -2310,6 +2311,7 @@ const App: React.FC = () => {
     // niet is ingelogd kan 'm dus ook nog als eigen startpunt overnemen.
     if (currentUser) {
       ['inncempro_pref_address', 'inncempro_pref_address_coords', 'inncempro_pref_sort', 'inncempro_pref_rpp',
+       'inncempro_pref_db_rpp', 'inncempro_pref_ride_rpp', 'inncempro_saved_routes',
        'inncempro_pref_card', 'inncempro_tab_order', 'inncempro_saved_filters', 'inncempro_recent_viewed',
        'inncempro_revisit_cycle'].forEach(base => {
         const scoped = uKey(base);
@@ -2327,6 +2329,17 @@ const App: React.FC = () => {
     setPrefSort((localStorage.getItem(uKey('inncempro_pref_sort')) as 'relevant' | 'az') || 'relevant');
     setSortMode((localStorage.getItem(uKey('inncempro_pref_sort')) as 'relevant' | 'az') || 'relevant');
     setPrefResultsPerPage(Number(localStorage.getItem(uKey('inncempro_pref_rpp'))) || 10);
+    // db_rpp en ride_rpp werden bij een accountwissel NIET herladen (stonden niet in deze lijst),
+    // waardoor bv. "50 per pagina" van account A stilzwijgend meeging naar account B — precies de
+    // cross-account-lek die hier hoort te worden voorkomen. Nu per user teruggezet naar hun eigen
+    // opgeslagen waarde (of de standaard 50/10 als dit account het nog nooit instelde).
+    setPrefDbResultsPerPage(Number(localStorage.getItem(uKey('inncempro_pref_db_rpp'))) || 50);
+    setPrefRideResultsPerPage(Number(localStorage.getItem(uKey('inncempro_pref_ride_rpp'))) || 10);
+    // Selectie (op de kaart/in lijsten aangevinkte bedrijven) is per definitie sessiegebonden en
+    // hoort NOOIT van het ene account bij het andere zichtbaar te blijven — hard wissen bij elke
+    // account-wissel (incl. uitloggen → currentUser null).
+    setSelectedIds(new Set());
+    setSelectedRaws(new Map());
     try { setPrefCardFields(JSON.parse(localStorage.getItem(uKey('inncempro_pref_card')) || '{}')); } catch { setPrefCardFields({}); }
     try {
       const raw = localStorage.getItem(uKey('inncempro_tab_order'));
@@ -2334,6 +2347,7 @@ const App: React.FC = () => {
       setTabOrderState(Array.isArray(parsed) && parsed.length === DEFAULT_TAB_ORDER.length && DEFAULT_TAB_ORDER.every(k => parsed.includes(k)) ? parsed : DEFAULT_TAB_ORDER);
     } catch { setTabOrderState(DEFAULT_TAB_ORDER); }
     try { setSavedFilters(JSON.parse(localStorage.getItem(uKey('inncempro_saved_filters')) || '[]')); } catch { setSavedFilters([]); }
+    try { setSavedRoutes(JSON.parse(localStorage.getItem(uKey('inncempro_saved_routes')) || '[]')); } catch { setSavedRoutes([]); }
     try { setRecentViewed(JSON.parse(localStorage.getItem(uKey('inncempro_recent_viewed')) || '[]')); } catch { setRecentViewed([]); }
     const storedCycle = localStorage.getItem(uKey('inncempro_revisit_cycle'));
     setRevisitCycleMonths(storedCycle ? Number(storedCycle) : 6);
@@ -4573,7 +4587,7 @@ const App: React.FC = () => {
                      stonden niet in deze lijst terwijl ze wél als source in de data voorkomen — die
                      bedrijven waren dus onvindbaar via de Bron-filter. Aangevuld zodat alle bronnen
                      die daadwerkelijk in bouwgarant_data.json voorkomen ook filterbaar zijn. */}
-                 <CollapsibleFilterGroup title="Bron" items={['Bouwgarant', 'BNA', 'Architectenweb', 'Archined', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Bouwcenter', 'Sweco', 'Van Wijnen', 'Plegt-Vos', 'Ter Steege Groep', 'Nijhuis', 'VolkerWessels', 'bouwnu', 'Bedrijvenoverzicht', 'Web']} selectedItems={selectedBron} onToggleItem={(item) => toggleFilter(setSelectedBron, item)} dataset={activeData} countFn={(item: string, b: any) => { const srcs = b._sources?.length ? b._sources : [b.source || 'Web']; return srcs.includes(item); }} />
+                 <CollapsibleFilterGroup title="Bron" items={['Bouwgarant', 'BNA', 'Architectenweb', 'Archined', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Bouwcenter', 'Sweco', 'Van Wijnen', 'Plegt-Vos', 'Ter Steege Groep', 'Nijhuis', 'VolkerWessels', 'bouwnu', 'Bedrijvenoverzicht', 'Web']} selectedItems={selectedBron} onToggleItem={(item) => toggleFilter(setSelectedBron, item)} dataset={activeData} colorFn={sourceColor} countFn={(item: string, b: any) => { const srcs = b._sources?.length ? b._sources : [b.source || 'Web']; return srcs.includes(item); }} />
                  <CollapsibleFilterGroup title="Rechtsvorm" items={['B.V.', 'V.O.F.', 'Eenmanszaak', 'Stichting', 'N.V.']} selectedItems={selectedRechtsvorm} onToggleItem={(item) => toggleFilter(setSelectedRechtsvorm, item)} dataset={activeData} countFn={(item: string, b: any) => { const rv = (b.rechtsvorm || '').toLowerCase(); const naam = (b.naam || '').toLowerCase(); if (item === 'B.V.') return rv.includes('b.v') || rv.includes('bv') || naam.includes(' bv') || naam.endsWith(' b.v.') || naam.endsWith(' bv'); if (item === 'V.O.F.') return rv.includes('vof') || rv.includes('v.o.f') || naam.includes(' vof'); if (item === 'Eenmanszaak') return rv.includes('eenmanszaak') || rv.includes('zzp'); if (item === 'Stichting') return rv.includes('stichting') || naam.startsWith('stichting'); if (item === 'N.V.') return rv.includes('n.v') || rv.includes('nv') || naam.includes(' nv'); return false; }} />
                  <CollapsibleFilterGroup title="Contactgegevens" items={['Heeft telefoon', 'Heeft e-mail', 'Heeft website', 'Heeft KVK']} selectedItems={selectedContact} onToggleItem={(item) => toggleFilter(setSelectedContact, item)} dataset={activeData} countFn={(item: string, b: any) => { if (item === 'Heeft telefoon') return !!(b.telefoon || b.telefoon_sales || b.telefoon_admin); if (item === 'Heeft e-mail') return !!(b.email || b.email_sales || b.email_overig); if (item === 'Heeft website') return !!(b.website || b.url); if (item === 'Heeft KVK') return !!(b.kvk); return false; }} />
             </div>
@@ -5673,7 +5687,7 @@ const App: React.FC = () => {
                                   <Eye className="w-3.5 h-3.5" /> Bekijken
                                 </button>
                                 <button
-                                  onClick={() => { const next = savedRoutes.filter((r: any) => r.id !== route.id); setSavedRoutes(next); localStorage.setItem('inncempro_saved_routes', JSON.stringify(next)); }}
+                                  onClick={() => { const next = savedRoutes.filter((r: any) => r.id !== route.id); setSavedRoutes(next); localStorage.setItem(uKey('inncempro_saved_routes'), JSON.stringify(next)); }}
                                   className="text-slate-400 hover:text-red-500 flex-shrink-0 p-2"
                                 >
                                   <Trash2 className="w-4 h-4" />
@@ -7576,7 +7590,7 @@ const ProvinceFilter: React.FC<{ selectedRegions: string[]; onToggle: (item: str
   );
 };
 
-const CollapsibleFilterGroup: React.FC<any> = ({ title, items, selectedItems, onToggleItem, searchable, dataset, countFn }) => {
+const CollapsibleFilterGroup: React.FC<any> = ({ title, items, selectedItems, onToggleItem, searchable, dataset, countFn, colorFn }) => {
     const [isOpen, setIsOpen] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const filteredItems = items.filter((item: string) => item.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -7605,6 +7619,7 @@ const CollapsibleFilterGroup: React.FC<any> = ({ title, items, selectedItems, on
                             return (
                                 <label key={item} className="flex items-center gap-3 cursor-pointer group hover:opacity-80">
                                     <div className={`w-4 h-4 border flex-shrink-0 flex items-center justify-center rounded-sm ${isSelected ? 'bg-[#E85E26] border-[#E85E26]' : 'bg-white border-slate-300'}`}>{isSelected && <Check className="w-3 h-3 text-white" />}</div>
+                                    {colorFn && <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: colorFn(item) }} />}
                                     <span className={`text-sm flex-1 ${isSelected ? 'text-slate-900 font-bold' : 'text-slate-600 font-medium'}`}>{item}</span>
                                     {count !== null && <span className="text-[10px] text-slate-300 font-medium ml-auto">{count.toLocaleString('nl-NL')}</span>}
                                     <input type="checkbox" className="hidden" checked={isSelected} onChange={() => onToggleItem(item)} />

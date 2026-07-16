@@ -18,20 +18,8 @@ L.Icon.Default.mergeOptions({
 });
 
 // ─── Colours ──────────────────────────────────────────────────────────────────
-const SRC_COLOR: Record<string, string> = {
-  Bouwgarant:           '#009FE3',
-  Architectenweb:       '#E85E26',
-  Stiho:                '#EA580C',
-  Jongeneel:            '#16A34A',
-  BouwPartner:          '#CA8A04',
-  PontMeyer:            '#DC2626',
-  'Van Wijnen':         '#0D9488',
-  Onbekend:             '#64748B',
-  Handmatig:            '#9333EA',
-  Favorieten:           '#E11D48',
-  'Mijn Adressen':      '#7C3AED',
-  'Geselecteerde items': '#E85E26',
-};
+// Gedeelde bronkleur-tabel (zelfde als kaart-legenda, filters en Onderweg) — één bron van waarheid.
+import { SOURCE_COLOR as SRC_COLOR } from '../utils/sourceColors';
 const ALL_SOURCES = ['Bouwgarant', 'Architectenweb', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Van Wijnen', 'Plegt-Vos', 'VolkerWessels', 'Onbekend'];
 
 // ─── Vestigingen (branch locations van hetzelfde bedrijf) ─────────────────────

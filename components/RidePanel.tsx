@@ -3,6 +3,7 @@ import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus, G
 import { haversineKm, detectType, optimizeRoute, scoreInsertionCandidates, nearestPointOnRoute } from '../utils/dagbezoek';
 import { getDrivingDistancesKm, getRoutePolyline } from '../services/routingService';
 import { getClusterData, makeId } from '../services/geoclusterService';
+import { sourceColor } from '../utils/sourceColors';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -629,8 +630,10 @@ const RidePanel: React.FC<RidePanelProps> = ({
     // (met popup) op de kaart, ook ver voorbij die grens.
     const MAX_HOVER_ZOOM_MARKERS = 300;
     suggestions.forEach((s, si) => {
+      // Bolletje in de bronkleur (zelfde tabel als de kaart-pins/legenda) i.p.v. één generiek grijs,
+      // zodat je in één oogopslag ziet uit welke bron elk voorstel komt.
       const bolletje = L.circleMarker([s.coords.lat, s.coords.lng], {
-        radius: suggestionRadius, color: '#fff', weight: 1.5, fillColor: '#94a3b8', fillOpacity: 0.9, interactive: true,
+        radius: suggestionRadius, color: '#fff', weight: 1.5, fillColor: sourceColor(s.bedrijf.source), fillOpacity: 0.9, interactive: true,
       })
         .bindPopup(popupHtml(s.bedrijf, `${s.km.toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`), popupOpts)
         .addTo(markersLayerRef.current!);
@@ -1335,12 +1338,17 @@ const RidePanel: React.FC<RidePanelProps> = ({
                 <div className="flex flex-wrap gap-1.5">
                   {availableSources.map(src => {
                     const active = filterSources.has(src);
+                    const clr = sourceColor(src);
+                    // Bolletje + rand in de bronkleur (zelfde kleur als de pins op de kaart), zodat
+                    // je meteen ziet welke bron welke kleur is. Actief = gevuld met die kleur.
                     return (
                       <button
                         key={src}
                         onClick={() => setFilterSources(prev => { const next = new Set(prev); next.has(src) ? next.delete(src) : next.add(src); return next; })}
-                        className={`px-2.5 py-1 text-[10px] font-bold rounded-full border transition-colors ${active ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'}`}
+                        style={active ? { background: clr, borderColor: clr, color: '#fff' } : { borderColor: clr }}
+                        className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold rounded-full border bg-white text-slate-600 transition-colors"
                       >
+                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: active ? '#fff' : clr }} />
                         {src}
                       </button>
                     );
