@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus, GripVertical, ChevronUp, ChevronDown, Maximize2, Minimize2, Wand2, Repeat, ArrowRight, ArrowLeftRight, Home } from 'lucide-react';
+import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus, GripVertical, ChevronUp, ChevronDown, Maximize2, Minimize2, Wand2, Repeat, ArrowRight, ArrowLeftRight, Home, Filter } from 'lucide-react';
 import { haversineKm, detectType, optimizeRoute, scoreInsertionCandidates, nearestPointOnRoute } from '../utils/dagbezoek';
 import { getDrivingDistancesKm, getRoutePolyline } from '../services/routingService';
 import { getClusterData, makeId } from '../services/geoclusterService';
@@ -235,6 +235,10 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const [showAllSuggestions, setShowAllSuggestions] = useState(false);
   const [filterTypes, setFilterTypes] = useState<Set<'architect' | 'bouwbedrijf' | 'aannemer' | 'materialen'>>(new Set());
   const [filterSources, setFilterSources] = useState<Set<string>>(new Set());
+  // Discipline- en bronfilters staan standaard ingeklapt (net als "Regio & Locatie" elders) —
+  // ze namen als vaste rijen pillen altijd ruimte in, ook als je ze nooit gebruikt. Alleen de
+  // straal-slider (dagelijks gebruikt) blijft wel altijd zichtbaar.
+  const [showTypeSourceFilters, setShowTypeSourceFilters] = useState(false);
   const [sortMode, setSortMode] = useState<'afstand' | 'az'>('afstand');
   const [onlyUnvisited, setOnlyUnvisited] = useState(true);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
@@ -1244,6 +1248,22 @@ const RidePanel: React.FC<RidePanelProps> = ({
 
             {/* Filters */}
             <div className="px-6 py-4 border-b border-slate-100 space-y-3">
+              {/* Discipline- en bronpillen staan standaard ingeklapt achter deze knop — als vaste
+                  rijen namen ze altijd ruimte in, ook ongebruikt, en dat is precies de ruis die op
+                  telefoon het meest stoort. Badge toont hoeveel er actief staan. */}
+              <button
+                onClick={() => setShowTypeSourceFilters(v => !v)}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs font-bold uppercase tracking-wider text-slate-600 border border-slate-200 rounded-sm hover:border-[#009FE3] hover:text-[#009FE3] transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <Filter className="w-3.5 h-3.5" /> Filters
+                  {(filterTypes.size + filterSources.size) > 0 && (
+                    <span className="px-1.5 py-0.5 bg-[#E85E26] text-white rounded-full text-[10px]">{filterTypes.size + filterSources.size}</span>
+                  )}
+                </span>
+                <ChevronDown className="w-3.5 h-3.5" style={{ transform: showTypeSourceFilters ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }} />
+              </button>
+              {showTypeSourceFilters && (
               <div className="flex flex-wrap gap-1.5">
                 {DISCIPLINES.map(d => {
                   const active = filterTypes.has(d.key);
@@ -1258,6 +1278,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   );
                 })}
               </div>
+              )}
               {/* Zoekstraal - zelfde sleepbare "Straal"-slider als Live Zoeken, van 5 tot 400 km
                   (Nederland is hemelsbreed maximaal ~330 km van hoek tot hoek — bv. Zeeuws-
                   Vlaanderen tot Groningen — dus 400 km dekt echt "heel Nederland", vanaf ELK
@@ -1282,7 +1303,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
               )}
               {/* Bronfilter (Bouwgarant, Architectenweb, BNA, ...) — alleen als er meer dan 1
                   bron in de data zit, anders heeft filteren geen zin. */}
-              {availableSources.length > 1 && (
+              {showTypeSourceFilters && availableSources.length > 1 && (
                 <div className="flex flex-wrap gap-1.5">
                   {availableSources.map(src => {
                     const active = filterSources.has(src);
@@ -1303,7 +1324,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   <input type="checkbox" checked={onlyUnvisited} onChange={e => setOnlyUnvisited(e.target.checked)} className="accent-[#E85E26]" />
                   Alleen nog niet bezocht
                 </label>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3 flex-wrap">
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] text-slate-400">Sorteer:</span>
                     {/* In routemodus betekent "Dichtstbij" → op de route (minimale omweg, in
@@ -1322,9 +1343,9 @@ const RidePanel: React.FC<RidePanelProps> = ({
                       in één keer alle bedrijven binnen bereik/route. Verbergt daarom de "Per
                       pagina"-keuze, want die is dan niet relevant. */}
                   {!showAllSuggestions && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[10px] text-slate-400">Per pagina:</span>
-                      {[10, 20].map(n => (
+                      {[10, 20, 50, 100].map(n => (
                         <button
                           key={n}
                           onClick={() => setSuggestCount(n)}

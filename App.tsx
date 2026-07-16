@@ -5594,7 +5594,12 @@ const App: React.FC = () => {
 
             {viewMode === 'map' && (
               <>
-                <div className="w-full flex flex-col relative" style={{ height: 'calc(100vh - 120px)' }}>
+                {/* Hoogte op mobiel bewust lager dan bijna-volledig scherm (was calc(100vh-120px)
+                    op elk formaat) — anders bleef er geen ruimte over onder de kaart voor de
+                    vaste selectiebalk (die er dan overheen kwam te zweven en Leaflet's eigen
+                    zoom-knoppen rechtsonder verborg). Vanaf md: (tablet/desktop, waar de balk
+                    naast i.p.v. onder de content zit) mag de kaart weer de volle hoogte pakken. */}
+                <div className="w-full flex flex-col relative h-[60vh] md:h-[calc(100vh-120px)]">
                   {/* Selecteren-knop: expliciete opt-in, staat los van het bestaande hover/tik-
                       gedrag op de bolletjes (dat blijft precies zoals het was). Alleen als deze
                       aan staat, selecteert een klik op een bolletje het bedrijf i.p.v. niets.
