@@ -1664,10 +1664,18 @@ const App: React.FC = () => {
   const [searchOriginCoords, setSearchOriginCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [activeSearchOriginLabel, setActiveSearchOriginLabel] = useState<string>('');
 
-  const savePrefSort = (v: 'relevant' | 'az') => { setPrefSort(v); setSortMode(v); localStorage.setItem(uKey('inncempro_pref_sort'), v); };
-  const savePrefRpp = (v: number) => { setPrefResultsPerPage(v); localStorage.setItem(uKey('inncempro_pref_rpp'), String(v)); };
-  const savePrefDbRpp = (v: number) => { setPrefDbResultsPerPage(v); setDbPage(1); localStorage.setItem(uKey('inncempro_pref_db_rpp'), String(v)); };
-  const savePrefRideRpp = (v: number) => { setPrefRideResultsPerPage(v); localStorage.setItem(uKey('inncempro_pref_ride_rpp'), String(v)); };
+  const saveUserPreference = (base: string, value: string) => {
+    localStorage.setItem(uKey(base), value);
+  };
+  const readUserNumberPreference = (base: string, fallback: number) => {
+    const n = Number(localStorage.getItem(uKey(base)));
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  };
+
+  const savePrefSort = (v: 'relevant' | 'az') => { setPrefSort(v); setSortMode(v); saveUserPreference('inncempro_pref_sort', v); };
+  const savePrefRpp = (v: number) => { setPrefResultsPerPage(v); setCurrentPage(1); saveUserPreference('inncempro_pref_rpp', String(v)); };
+  const savePrefDbRpp = (v: number) => { setPrefDbResultsPerPage(v); setDbPage(1); saveUserPreference('inncempro_pref_db_rpp', String(v)); };
+  const savePrefRideRpp = (v: number) => { setPrefRideResultsPerPage(v); saveUserPreference('inncempro_pref_ride_rpp', String(v)); };
   const toggleCardField = (key: string) => {
     const next = { ...cardFieldDefault, ...prefCardFields, [key]: !showField(key) };
     setPrefCardFields(next);
@@ -2328,9 +2336,9 @@ const App: React.FC = () => {
     setPrefAddressApproximate(false);
     setPrefSort((localStorage.getItem(uKey('inncempro_pref_sort')) as 'relevant' | 'az') || 'relevant');
     setSortMode((localStorage.getItem(uKey('inncempro_pref_sort')) as 'relevant' | 'az') || 'relevant');
-    setPrefResultsPerPage(Number(localStorage.getItem(uKey('inncempro_pref_rpp'))) || 10);
-    setPrefDbResultsPerPage(Number(localStorage.getItem(uKey('inncempro_pref_db_rpp'))) || 50);
-    setPrefRideResultsPerPage(Number(localStorage.getItem(uKey('inncempro_pref_ride_rpp'))) || 10);
+    setPrefResultsPerPage(readUserNumberPreference('inncempro_pref_rpp', 10));
+    setPrefDbResultsPerPage(readUserNumberPreference('inncempro_pref_db_rpp', 50));
+    setPrefRideResultsPerPage(readUserNumberPreference('inncempro_pref_ride_rpp', 10));
     setSelectedIds(new Set());
     setSelectedRaws(new Map());
     try { setPrefCardFields(JSON.parse(localStorage.getItem(uKey('inncempro_pref_card')) || '{}')); } catch { setPrefCardFields({}); }
@@ -4347,12 +4355,12 @@ const App: React.FC = () => {
                                       {prefAddressGeocoding
                                           ? <span className="text-slate-400">Adres opzoeken…</span>
                                           : prefAddressGeocodeError
-                                          ? <span className="text-amber-600">Adres niet gevonden{prefAddressCoords ? ' - vorige locatie behouden' : ''}</span>
+                                          ? <span className="text-amber-600">Adres niet gevonden{prefAddressCoords ? '. Vorige locatie behouden.' : ''}</span>
                                           : prefAddressCoords && prefAddressCoordsFor === prefAddress && prefAddressApproximate
-                                          ? <span className="text-green-600">✓ Plaats gevonden - vul straat + huisnummer toe voor een preciezere afstand</span>
+                                          ? <span className="text-green-600">✓ Plaats gevonden. Vul straat en huisnummer toe voor een preciezere afstand.</span>
                                           : prefAddressCoords && prefAddressCoordsFor === prefAddress
                                           ? <span className="text-green-600">✓ Adres gevonden</span>
-                                          : <span className="text-amber-600">Adres niet gevonden - standaard Hengelo-locatie wordt gebruikt</span>}
+                                          : <span className="text-amber-600">Adres niet gevonden. Standaardlocatie Hengelo wordt gebruikt.</span>}
                                   </p>
                               </div>
 
@@ -4563,7 +4571,7 @@ const App: React.FC = () => {
                                       })}
                                   </div>
                               )}
-                              <p className="text-[10px] text-slate-400">Verwijderde bedrijven belanden hier - ze worden nooit automatisch definitief gewist, alleen jij kunt ze herstellen.</p>
+                              <p className="text-[10px] text-slate-400">Verwijderde bedrijven staan hier. Ze worden niet automatisch definitief gewist; alleen jij kunt ze herstellen.</p>
                           </div>
                       )}
 
@@ -5142,7 +5150,7 @@ const App: React.FC = () => {
                        />
                        <span className="text-xs font-bold text-[#009FE3] w-14 flex-shrink-0">{radiusKm} km</span>
                        <span className="hidden sm:inline text-xs text-slate-500">
-                         Zoek bedrijven binnen <strong>{radiusKm} km</strong> van de ingevoerde locatie - hoe dichterbij, hoe hoger de match
+                         Zoek bedrijven binnen <strong>{radiusKm} km</strong> van de ingevoerde locatie. Dichtbij staat bovenaan.
                        </span>
                        <div className="basis-full flex items-center gap-2 flex-wrap">
                          {radiusAddressResolved ? (
@@ -5285,7 +5293,7 @@ const App: React.FC = () => {
                          <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                          <span className="min-w-0 truncate">
                            <strong className="font-semibold text-slate-900">{s.value}</strong>
-                           {s.naam && s.value !== s.naam && <span className="text-slate-400"> - {s.naam}</span>}
+                           {s.naam && s.value !== s.naam && <span className="text-slate-400"> ({s.naam})</span>}
                          </span>
                        </button>
                      ))}
@@ -6333,14 +6341,19 @@ const App: React.FC = () => {
 
             <div className="flex-grow overflow-y-auto p-6">
               {bulkVisitStep === 'input' ? (
-                <textarea
-                  value={bulkVisitText}
-                  onChange={e => setBulkVisitText(e.target.value)}
-                  placeholder={'Bouwbedrijf Kamphorst\nStudio LR\nOMA Rotterdam\nBTEC Bouw\n... (honderden regels mag ook)'}
-                  rows={14}
-                  autoFocus
-                  className="w-full border border-slate-200 rounded-sm px-3 py-2.5 text-sm focus:outline-none focus:border-[#009FE3] resize-none font-mono"
-                />
+                <div className="relative">
+                  <textarea
+                    value={bulkVisitText}
+                    onChange={e => setBulkVisitText(e.target.value)}
+                    placeholder={'Bouwbedrijf Kamphorst\nStudio LR\nOMA Rotterdam\nBTEC Bouw\n... (honderden regels mag ook)'}
+                    rows={14}
+                    autoFocus
+                    className="w-full border border-slate-200 rounded-sm pl-3 pr-10 py-2.5 text-sm focus:outline-none focus:border-[#009FE3] resize-none font-mono"
+                  />
+                  <div className="absolute right-2 top-2">
+                    <VoiceInputButton onResult={(text) => setBulkVisitText(v => [v.trim(), text].filter(Boolean).join('\n'))} />
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-2">
                   {/* Kolomkoppen: links wat jij typte, rechts waar het systeem het mee matcht */}
@@ -6399,17 +6412,25 @@ const App: React.FC = () => {
                               automatische top-5 stond, of als de match is afgekeurd. */}
                           {(row.searchMode || (!isMatched && !row.creatingNew)) && (
                             <div className="space-y-1.5">
-                              <input
-                                type="text"
-                                value={row.searchQuery || row.input}
-                                onChange={e => {
-                                  const q = e.target.value;
-                                  const matches = q.trim() ? findCompanyMatches(q, activeData) : [];
-                                  setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, searchQuery: q, matches, searchMode: true } : r));
-                                }}
-                                placeholder="Zoek handmatig op bedrijfsnaam..."
-                                className="w-full border border-[#009FE3]/40 rounded-sm px-2 py-1.5 text-xs focus:outline-none focus:border-[#009FE3]"
-                              />
+                              <div className="relative">
+                                <input
+                                  type="text"
+                                  value={row.searchQuery || row.input}
+                                  onChange={e => {
+                                    const q = e.target.value;
+                                    const matches = q.trim() ? findCompanyMatches(q, activeData) : [];
+                                    setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, searchQuery: q, matches, searchMode: true } : r));
+                                  }}
+                                  placeholder="Zoek handmatig op bedrijfsnaam..."
+                                  className="w-full border border-[#009FE3]/40 rounded-sm pl-2 pr-8 py-1.5 text-xs focus:outline-none focus:border-[#009FE3]"
+                                />
+                                <div className="absolute right-1 top-1/2 -translate-y-1/2">
+                                  <VoiceInputButton onResult={(text) => {
+                                    const matches = text.trim() ? findCompanyMatches(text, activeData) : [];
+                                    setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, searchQuery: text, matches, searchMode: true } : r));
+                                  }} />
+                                </div>
+                              </div>
                               {row.matches.length > 0 && (
                                 <div className="border border-slate-200 rounded-sm divide-y divide-slate-100 max-h-40 overflow-y-auto">
                                   {row.matches.map((m, mi) => (
@@ -6438,23 +6459,32 @@ const App: React.FC = () => {
                               ['provincie', 'Provincie'], ['telefoon', 'Telefoon'], ['email', 'Email'], ['website', 'Website'],
                               ['contactpersoon', 'Contactpersoon'],
                             ] as const).map(([field, label]) => (
-                              <input
-                                key={field}
-                                type="text"
-                                value={row[field]}
-                                onChange={e => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, [field]: e.target.value } : r))}
-                                placeholder={label}
-                                className="border border-slate-200 rounded-sm px-2 py-1.5 text-xs focus:outline-none focus:border-[#009FE3]"
-                              />
+                              <div key={field} className="relative">
+                                <input
+                                  type="text"
+                                  value={row[field]}
+                                  onChange={e => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, [field]: e.target.value } : r))}
+                                  placeholder={label}
+                                  className="w-full border border-slate-200 rounded-sm pl-2 pr-8 py-1.5 text-xs focus:outline-none focus:border-[#009FE3]"
+                                />
+                                <div className="absolute right-1 top-1/2 -translate-y-1/2">
+                                  <VoiceInputButton onResult={(text) => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, [field]: text } : r))} />
+                                </div>
+                              </div>
                             ))}
                           </div>
-                          <textarea
-                            value={row.notitie}
-                            onChange={e => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, notitie: e.target.value } : r))}
-                            placeholder="Notitie"
-                            rows={2}
-                            className="w-full border border-slate-200 rounded-sm px-2 py-1.5 text-xs focus:outline-none focus:border-[#009FE3] resize-none"
-                          />
+                          <div className="relative">
+                            <textarea
+                              value={row.notitie}
+                              onChange={e => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, notitie: e.target.value } : r))}
+                              placeholder="Notitie"
+                              rows={2}
+                              className="w-full border border-slate-200 rounded-sm pl-2 pr-8 py-1.5 text-xs focus:outline-none focus:border-[#009FE3] resize-none"
+                            />
+                            <div className="absolute right-1 top-1.5">
+                              <VoiceInputButton onResult={(text) => setBulkVisitRows(rows => rows.map((r, i) => i === idx ? { ...r, notitie: [r.notitie.trim(), text].filter(Boolean).join(' ') } : r))} />
+                            </div>
+                          </div>
                           {!isMatched && !row.creatingNew && (
                             <a
                               href={`https://www.google.com/search?q=${encodeURIComponent(row.naam || row.input)}`}
@@ -6681,7 +6711,7 @@ const App: React.FC = () => {
                     {addDuplicate && (
                       <div className="bg-amber-50 border border-amber-300 rounded-sm p-3 text-xs text-amber-800">
                         <p className="font-bold mb-1">⚠ Mogelijk al in database</p>
-                        <p className="mb-2">Gevonden: <span className="font-semibold">{addDuplicate.naam}</span>{addDuplicate.stad ? ` - ${addDuplicate.stad}` : ''}{addDuplicate.straat ? `, ${addDuplicate.straat}` : ''}</p>
+                        <p className="mb-2">Gevonden: <span className="font-semibold">{addDuplicate.naam}</span>{addDuplicate.stad ? `, ${addDuplicate.stad}` : ''}{addDuplicate.straat ? `, ${addDuplicate.straat}` : ''}</p>
                         <div className="flex gap-2">
                           <button onClick={() => { addCustomEntries([{ ...addForm, source: addForm.source || 'Web' }]); setAddDuplicate(null); setShowAddModal(false); }} className="flex-1 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-sm">Toch toevoegen</button>
                           <button onClick={() => setAddDuplicate(null)} className="flex-1 py-1.5 border border-amber-300 text-amber-700 font-bold rounded-sm hover:bg-amber-100">Annuleren</button>
@@ -6704,7 +6734,7 @@ const App: React.FC = () => {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <p className="text-xs text-slate-500 leading-relaxed">Plak bedrijfsgegevens - één bedrijf per alinea (of één per regel). Het systeem herkent automatisch namen, adressen, telefoonnummers, e-mailadressen en websites.</p>
+                    <p className="text-xs text-slate-500 leading-relaxed">Plak bedrijfsgegevens. Gebruik één bedrijf per alinea of per regel. Het systeem herkent namen, adressen, telefoonnummers, e-mailadressen en websites automatisch.</p>
                     <textarea
                       rows={10}
                       className="w-full border border-slate-200 rounded-sm px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-[#009FE3] font-mono resize-y"
@@ -6715,7 +6745,7 @@ const App: React.FC = () => {
                     {bulkParsed.length === 0 ? (
                       <button
                         disabled={!bulkText.trim()}
-                        onClick={() => { const p = parseBulkText(bulkText); setBulkParsed(p); setBulkMsg(`${p.length} bedrijf/bedrijven herkend - controleer en klik Importeren.`); }}
+                        onClick={() => { const p = parseBulkText(bulkText); setBulkParsed(p); setBulkMsg(`${p.length} bedrijf/bedrijven herkend. Controleer de gegevens en klik op Importeren.`); }}
                         className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold uppercase tracking-wider bg-slate-700 hover:bg-slate-900 disabled:opacity-40 text-white rounded-sm transition-all"
                       ><Search className="w-3.5 h-3.5"/>Verwerken</button>
                     ) : (
@@ -6903,13 +6933,19 @@ const App: React.FC = () => {
                             );
                           })}
                         </div>
-                        <textarea
-                          defaultValue={entry.note || ''}
-                          onBlur={e => updateCrm(b, { note: e.target.value })}
-                          placeholder="Notitie toevoegen..."
-                          rows={3}
-                          className="w-full border border-slate-200 rounded-sm px-2.5 py-2 text-sm text-slate-800 focus:outline-none focus:border-[#009FE3] resize-none"
-                        />
+                        <div className="relative">
+                          <textarea
+                            key={entry.note || ''}
+                            defaultValue={entry.note || ''}
+                            onBlur={e => updateCrm(b, { note: e.target.value })}
+                            placeholder="Notitie toevoegen..."
+                            rows={3}
+                            className="w-full border border-slate-200 rounded-sm pl-2.5 pr-9 py-2 text-sm text-slate-800 focus:outline-none focus:border-[#009FE3] resize-none"
+                          />
+                          <div className="absolute right-2 top-2">
+                            <VoiceInputButton onResult={(text) => updateCrm(b, { note: [entry.note?.trim() || '', text].filter(Boolean).join(' ') })} />
+                          </div>
+                        </div>
                       </div>
                     </div>
                   );

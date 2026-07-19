@@ -4,6 +4,7 @@ import { haversineKm, detectType, optimizeRoute, scoreInsertionCandidates, neare
 import { getDrivingDistancesKm, getRoutePolyline } from '../services/routingService';
 import { getClusterData, makeId } from '../services/geoclusterService';
 import { sourceColor } from '../utils/sourceColors';
+import VoiceInputButton from './VoiceInputButton';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -273,6 +274,12 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const [replaceStopId, setReplaceStopId] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
+
+  const openStartEditor = () => {
+    setEditStart(true);
+    setEditStartQuery(startLabel || homeAddress || '');
+    setStartError(null);
+  };
 
   // Beschikbare bronnen (bijv. Bouwgarant, Architectenweb, BNA, ...) voor het bronfilter —
   // afgeleid uit de echte data i.p.v. hardgecodeerd, zodat 'm altijd klopt met wat er is.
@@ -1079,19 +1086,24 @@ const RidePanel: React.FC<RidePanelProps> = ({
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Tussenstop invoegen {label}</span>
           <button onClick={closeInsertPanel} className="text-slate-400 hover:text-slate-700"><X className="w-3.5 h-3.5" /></button>
         </div>
-        <input
-          type="text"
-          value={insertQuery}
-          onChange={e => { setInsertQuery(e.target.value); setInsertError(null); }}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && insertQuery.trim().length >= 2) {
-              insertCandidates.length > 0 ? insertManualAt(after, insertCandidates[0]) : insertPlaceWaypointAt(after, insertQuery);
-            }
-          }}
-          autoFocus
-          placeholder="Bedrijf of plaatsnaam..."
-          className="w-full border border-slate-200 rounded-sm px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#E85E26] bg-white"
-        />
+        <div className="relative">
+          <input
+            type="text"
+            value={insertQuery}
+            onChange={e => { setInsertQuery(e.target.value); setInsertError(null); }}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && insertQuery.trim().length >= 2) {
+                insertCandidates.length > 0 ? insertManualAt(after, insertCandidates[0]) : insertPlaceWaypointAt(after, insertQuery);
+              }
+            }}
+            autoFocus
+            placeholder="Bedrijf of plaatsnaam..."
+            className="w-full border border-slate-200 rounded-sm pl-2.5 pr-8 py-1.5 text-xs focus:outline-none focus:border-[#E85E26] bg-white"
+          />
+          <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+            <VoiceInputButton onResult={(text) => { setInsertQuery(text); setInsertError(null); }} />
+          </div>
+        </div>
         {insertError && <p className="mt-1 text-[10px] text-red-500">{insertError}</p>}
         {insertQuery.trim().length >= 2 && (
           <div className="mt-1 border border-slate-200 rounded-sm divide-y divide-slate-100 max-h-44 overflow-y-auto bg-white">
@@ -1203,15 +1215,20 @@ const RidePanel: React.FC<RidePanelProps> = ({
               </div>
             ) : (
               <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={startQuery}
-                  onChange={e => { setStartQuery(e.target.value); setStartError(null); }}
-                  onKeyDown={e => e.key === 'Enter' && searchStart()}
-                  placeholder="Bijv. Rotterdam, of OMA Rotterdam"
-                  autoFocus
-                  className="flex-1 border border-slate-200 rounded-sm px-3 py-2.5 text-sm focus:outline-none focus:border-[#009FE3]"
-                />
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={startQuery}
+                    onChange={e => { setStartQuery(e.target.value); setStartError(null); }}
+                    onKeyDown={e => e.key === 'Enter' && searchStart()}
+                    placeholder="Bijv. Rotterdam, of OMA Rotterdam"
+                    autoFocus
+                    className="w-full border border-slate-200 rounded-sm pl-3 pr-9 py-2.5 text-sm focus:outline-none focus:border-[#009FE3]"
+                  />
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <VoiceInputButton onResult={(text) => { setStartQuery(text); setStartError(null); }} />
+                  </div>
+                </div>
                 <button
                   onClick={searchStart}
                   disabled={startLoading || !startQuery.trim()}
@@ -1226,8 +1243,8 @@ const RidePanel: React.FC<RidePanelProps> = ({
         ) : finished ? (
           <div className="p-8 text-center space-y-3">
             <Check className="w-10 h-10 text-green-500 mx-auto" />
-            <p className="text-sm font-bold text-slate-800">Rit afgerond - {chain.length} bezoeken gelogd{saveListName.trim() ? ` en opgeslagen als lijst "${saveListName.trim()}"` : ''}.</p>
-            <button onClick={resetRide} className="text-xs font-bold uppercase tracking-wider text-[#009FE3] hover:underline">Nieuwe rit starten</button>
+            <p className="text-sm font-bold text-slate-800">Rit afgerond. {chain.length} bezoek{chain.length !== 1 ? 'en' : ''} geregistreerd{saveListName.trim() ? ` en opgeslagen als lijst "${saveListName.trim()}"` : ''}.</p>
+            <button onClick={resetRide} className="text-xs font-bold uppercase tracking-wider text-[#009FE3] hover:underline">Nieuwe route starten</button>
           </div>
         ) : (
           <>
@@ -1251,15 +1268,20 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   <span className="w-5 h-5 rounded-full bg-slate-800 text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">S</span>
                   {editStart ? (
                     <div className="flex-1 flex gap-1.5">
-                      <input
-                        type="text"
-                        value={editStartQuery}
-                        onChange={e => { setEditStartQuery(e.target.value); setStartError(null); }}
-                        onKeyDown={e => e.key === 'Enter' && updateStartAddress(editStartQuery)}
-                        placeholder="Exact adres, bijv. Lansinkesweg 4 Hengelo"
-                        autoFocus
-                        className="flex-1 border border-slate-200 rounded-sm px-2 py-1 text-xs focus:outline-none focus:border-[#009FE3]"
-                      />
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          value={editStartQuery}
+                          onChange={e => { setEditStartQuery(e.target.value); setStartError(null); }}
+                          onKeyDown={e => e.key === 'Enter' && updateStartAddress(editStartQuery)}
+                          placeholder="Exact adres, bijv. Lansinkesweg 4 Hengelo"
+                          autoFocus
+                          className="w-full border border-slate-200 rounded-sm pl-2 pr-8 py-1 text-xs focus:outline-none focus:border-[#009FE3]"
+                        />
+                        <div className="absolute right-1 top-1/2 -translate-y-1/2">
+                          <VoiceInputButton onResult={(text) => { setEditStartQuery(text); setStartError(null); }} />
+                        </div>
+                      </div>
                       <button onClick={() => updateStartAddress(editStartQuery)} disabled={startLoading || !editStartQuery.trim()} className="px-2 bg-[#009FE3] disabled:opacity-50 text-white rounded-sm flex-shrink-0">
                         {startLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                       </button>
@@ -1267,14 +1289,21 @@ const RidePanel: React.FC<RidePanelProps> = ({
                     </div>
                   ) : (
                     <>
-                      <span className="text-slate-700 font-medium truncate flex-1">{startLabel || 'Startpunt'}</span>
+                      <button
+                        type="button"
+                        onClick={openStartEditor}
+                        title="Startlocatie aanpassen"
+                        className="text-left text-slate-700 font-medium truncate flex-1 hover:text-[#009FE3]"
+                      >
+                        {startLabel || 'Startpunt'}
+                      </button>
                       {/* Opnieuw via GPS: nodig zodra het startpunt al gezet is (bijv. een minder
                           precieze via-IP locatie) — zonder deze knop was er geen manier meer om
                           een verse GPS-poging te doen, alleen handmatig een adres typen. */}
                       <button onClick={useMyLocation} disabled={startLoading} title="Opnieuw via GPS" className="text-slate-400 hover:text-[#E85E26] disabled:opacity-50 flex-shrink-0">
                         {startLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Navigation className="w-3.5 h-3.5" />}
                       </button>
-                      <button onClick={() => { setEditStart(true); setEditStartQuery(''); }} title="Startlocatie aanpassen (exact adres)" className="text-slate-400 hover:text-[#009FE3] flex-shrink-0"><MapPin className="w-3.5 h-3.5" /></button>
+                      <button onClick={openStartEditor} title="Startlocatie aanpassen (exact adres)" className="text-slate-400 hover:text-[#009FE3] flex-shrink-0"><MapPin className="w-3.5 h-3.5" /></button>
                     </>
                   )}
                 </div>
@@ -1294,14 +1323,19 @@ const RidePanel: React.FC<RidePanelProps> = ({
                 {!destCoords && (
                   <div className="flex items-center gap-2">
                     <ArrowRight className="w-5 h-5 text-slate-300 flex-shrink-0" />
-                    <input
-                      type="text"
-                      value={destQuery}
-                      onChange={e => { setDestQuery(e.target.value); setDestError(null); }}
-                      onKeyDown={e => e.key === 'Enter' && applyDestination(destQuery)}
-                      placeholder="Naar… (plaats of adres, bijv. Amsterdam)"
-                      className="flex-1 min-w-0 border border-slate-200 rounded-sm px-2 py-1 text-xs focus:outline-none focus:border-[#009FE3]"
-                    />
+                    <div className="relative flex-1 min-w-0">
+                      <input
+                        type="text"
+                        value={destQuery}
+                        onChange={e => { setDestQuery(e.target.value); setDestError(null); }}
+                        onKeyDown={e => e.key === 'Enter' && applyDestination(destQuery)}
+                        placeholder="Naar... (plaats of adres, bijv. Amsterdam)"
+                        className="w-full border border-slate-200 rounded-sm pl-2 pr-8 py-1 text-xs focus:outline-none focus:border-[#009FE3]"
+                      />
+                      <div className="absolute right-1 top-1/2 -translate-y-1/2">
+                        <VoiceInputButton onResult={(text) => { setDestQuery(text); setDestError(null); }} />
+                      </div>
+                    </div>
                     {destQuery.trim() && (
                       <button onClick={() => applyDestination(destQuery)} disabled={destLoading} className="px-2 py-1 bg-[#009FE3] disabled:opacity-50 text-white rounded-sm flex-shrink-0">
                         {destLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
@@ -1547,7 +1581,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   {destCoords
                     ? `Beste op route vanaf ${chain.length > 0 ? chain[chain.length - 1].bedrijf.naam : (startLabel || 'startpunt')} richting ${destLabel || 'eindadres'}`
                     : `Dichtstbijzijnde vanaf ${chain.length > 0 ? chain[chain.length - 1].bedrijf.naam : (startLabel || 'startpunt')}`}
-                  {suggestTotal > 0 && <span className="normal-case font-normal text-slate-400"> - {suggestTotal} binnen bereik</span>}
+                  {suggestTotal > 0 && <span className="normal-case font-normal text-slate-400"> ({suggestTotal} binnen bereik)</span>}
                 </span>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {loadingSuggestions && <Loader2 className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
@@ -1557,7 +1591,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                       title={showAllSuggestions ? 'Alle getoonde bedrijven toevoegen aan de route' : 'Alle voorstellen op deze pagina toevoegen aan de route'}
                       className="text-[10px] font-bold uppercase tracking-wider text-green-600 hover:text-green-700 hover:underline flex items-center gap-1"
                     >
-                      <Check className="w-3 h-3" /> {showAllSuggestions ? 'Accepteer alles' : 'Accepteer pagina'} ({suggestions.length})
+                      <Check className="w-3 h-3" /> {showAllSuggestions ? 'Alles toevoegen' : 'Pagina toevoegen'} ({suggestions.length})
                     </button>
                   )}
                 </div>
@@ -1586,9 +1620,9 @@ const RidePanel: React.FC<RidePanelProps> = ({
                 const totalSuggestPages = Math.max(1, Math.ceil(suggestTotal / suggestCount));
                 return (
                   <div className="flex items-center justify-center gap-3 mt-2 pt-2 border-t border-slate-100">
-                    <button onClick={() => goToSuggestPage(suggestPage - 1)} disabled={suggestPage <= 1} className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] disabled:opacity-30 disabled:text-slate-400 hover:underline">← Vorige</button>
+                    <button onClick={() => goToSuggestPage(suggestPage - 1)} disabled={suggestPage <= 1} className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] disabled:opacity-30 disabled:text-slate-400 hover:underline">Vorige</button>
                     <span className="text-[10px] text-slate-400">Pagina {suggestPage} van {totalSuggestPages}</span>
-                    <button onClick={() => goToSuggestPage(suggestPage + 1)} disabled={suggestPage >= totalSuggestPages} className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] disabled:opacity-30 disabled:text-slate-400 hover:underline">Volgende →</button>
+                    <button onClick={() => goToSuggestPage(suggestPage + 1)} disabled={suggestPage >= totalSuggestPages} className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] disabled:opacity-30 disabled:text-slate-400 hover:underline">Volgende</button>
                     {/* Direct naar een paginanummer springen (bijv. "12"), zelfde patroon als de
                         Bedrijvendatabase-paginering. */}
                     <form
@@ -1620,14 +1654,19 @@ const RidePanel: React.FC<RidePanelProps> = ({
                   bestaan — anders kon je een plaats waar toevallig bedrijven zitten nooit als
                   losse tussenstop kiezen. */}
               <div className="mt-3">
-                <input
-                  type="text"
-                  value={manualQuery}
-                  onChange={e => { setManualQuery(e.target.value); setManualError(null); }}
-                  onKeyDown={e => { if (e.key === 'Enter' && manualCandidates.length === 0 && manualQuery.trim().length >= 2) addPlaceWaypoint(manualQuery); }}
-                  placeholder="Zoek bedrijf, of typ een plaatsnaam als tussenstop..."
-                  className="w-full border border-slate-200 rounded-sm px-3 py-2 text-xs focus:outline-none focus:border-[#009FE3]"
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={manualQuery}
+                    onChange={e => { setManualQuery(e.target.value); setManualError(null); }}
+                    onKeyDown={e => { if (e.key === 'Enter' && manualCandidates.length === 0 && manualQuery.trim().length >= 2) addPlaceWaypoint(manualQuery); }}
+                    placeholder="Zoek bedrijf, of typ een plaatsnaam als tussenstop..."
+                    className="w-full border border-slate-200 rounded-sm pl-3 pr-9 py-2 text-xs focus:outline-none focus:border-[#009FE3]"
+                  />
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <VoiceInputButton onResult={(text) => { setManualQuery(text); setManualError(null); }} />
+                  </div>
+                </div>
                 {manualError && <p className="mt-1 text-[10px] text-red-500">{manualError}</p>}
                 {manualQuery.trim().length >= 2 && (
                   <div className="mt-1 border border-slate-200 rounded-sm divide-y divide-slate-100 max-h-52 overflow-y-auto">
@@ -1655,18 +1694,23 @@ const RidePanel: React.FC<RidePanelProps> = ({
             {/* Rit afronden */}
             {chain.length > 0 && (
               <div className="px-6 pb-6 pt-2 border-t border-slate-100 space-y-2">
-                <input
-                  type="text"
-                  value={saveListName}
-                  onChange={e => setSaveListName(e.target.value)}
-                  placeholder="Naam voor deze rit als lijst (optioneel)"
-                  className="w-full border border-slate-200 rounded-sm px-3 py-2 text-xs focus:outline-none focus:border-[#009FE3]"
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={saveListName}
+                    onChange={e => setSaveListName(e.target.value)}
+                    placeholder="Lijstnaam voor deze route (optioneel)"
+                    className="w-full border border-slate-200 rounded-sm pl-3 pr-9 py-2 text-xs focus:outline-none focus:border-[#009FE3]"
+                  />
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <VoiceInputButton onResult={setSaveListName} />
+                  </div>
+                </div>
                 <button
                   onClick={finishRide}
                   className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold uppercase tracking-wider rounded-sm flex items-center justify-center gap-2"
                 >
-                  <Save className="w-4 h-4" /> Klaar voor vandaag - log {chain.length} bezoek{chain.length !== 1 ? 'en' : ''}
+                  <Save className="w-4 h-4" /> Bezoeken registreren ({chain.length})
                 </button>
               </div>
             )}
