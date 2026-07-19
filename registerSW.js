@@ -1,0 +1,1 @@
+if('serviceWorker' in navigator) {window.addEventListener('load', () => {navigator.serviceWorker.register('/Inncempro-markettool/sw.js', { scope: '/Inncempro-markettool/' })})}
