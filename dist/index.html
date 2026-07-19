@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- maximum-scale/user-scalable=no voorkomt dat de hele pagina meepinch-zoomt terwijl je
+         op de kaart aan het pinch-zoomen bent (dat gaf op iPhone een vervelende strijd tussen
+         Safari's eigen paginazoom en Leaflet's eigen kaartzoom, waardoor tikken/selecteren op
+         de kaart onbetrouwbaar werd). viewport-fit=cover zorgt dat de app, als "Zet op
+         beginscherm"-app zonder Safari-balken, netjes rekening houdt met de notch/homebalk. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Inncempro Market Tool</title>
+
+    <!-- App-icoon: favicon in de browser-tab, apple-touch-icon voor "Zet op beginscherm"
+         op iOS, en het manifest voor Android/Chrome zodat de PWA het scherpe logo gebruikt
+         in plaats van de automatische letter-fallback ("I"). -->
+    <link rel="icon" type="image/x-icon" href="favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#009FE3" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Inncempro" />
+
+    <!-- Tailwind draaide voorheen live vanaf een CDN-script (cdn.tailwindcss.com) — zonder
+         internet laadde dat script niet en bleef de hele app onopgemaakt. Nu wordt Tailwind
+         tijdens de build gecompileerd naar statische CSS (zie index.css, tailwind.config.js)
+         en gebundeld door Vite, dus die styling werkt ook zonder netwerk. -->
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;500;600;700&family=Oswald:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script type="module" crossorigin src="/Inncempro-markettool/assets/index-DsWe-xdf.js"></script>
+    <link rel="stylesheet" crossorigin href="/Inncempro-markettool/assets/index-HbCStd0y.css">
+  <script id="vite-plugin-pwa:register-sw" src="/Inncempro-markettool/registerSW.js"></script></head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
