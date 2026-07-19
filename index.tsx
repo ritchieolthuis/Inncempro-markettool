@@ -9,7 +9,11 @@ import './index.css';
 // keer herlaadde. Deze listener herlaadt de pagina automatisch, precies één keer, zodra een
 // nieuwe service worker het overneemt, zodat een nieuwe deploy altijd binnen één paginabezoek
 // zichtbaar wordt i.p.v. pas na een handmatige harde refresh of het wissen van site-data.
-if ('serviceWorker' in navigator) {
+if (import.meta.env.DEV && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations()
+    .then(registrations => registrations.forEach(registration => registration.unregister()))
+    .catch(() => {});
+} else if ('serviceWorker' in navigator) {
   let reloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (reloaded) return;

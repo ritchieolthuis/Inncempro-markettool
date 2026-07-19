@@ -20,6 +20,7 @@ export const SOURCE_COLOR: Record<string, string> = {
   bouwnu:                '#F59E0B', // amber
   Bedrijvenoverzicht:    '#65A30D', // limoen
   Web:                   '#94A3B8', // neutraal grijs (generieke webbron)
+  web:                   '#94A3B8', // neutraal grijs (generieke webbron)
   Onbekend:              '#64748B',
   Handmatig:             '#9333EA',
   Favorieten:            '#E11D48',
@@ -31,5 +32,12 @@ export const SOURCE_COLOR: Record<string, string> = {
 export const sourceColor = (source?: string): string =>
   (source && SOURCE_COLOR[source]) || SOURCE_COLOR.Web;
 
-export const sourceLabel = (source?: string): string =>
-  source === 'bouwnu' ? 'Bouwnu' : (source || 'Web');
+export const sourceLabel = (source?: string): string => {
+  if (!source) return 'Web';
+  const lowered = source.toLowerCase();
+  if (lowered === 'onbekend') return 'Web';
+  if (lowered === 'bedrijvenoverzicht') return 'Web';
+  if (lowered === 'bouwnu') return 'Bouwnu';
+  if (lowered === 'web') return 'Web';
+  return source.charAt(0).toUpperCase() + source.slice(1);
+};

@@ -19,7 +19,7 @@ import { priorityNominatim } from './services/nominatimQueue';
 import { SearchState, DiscoveredCompany, User, CompanyList } from './types';
 import { scoreInsertionCandidates } from './utils/dagbezoek';
 import { mergeEntries, isNederlandBedrijf, isPureInterieurBedrijf } from './utils/mergeBedrijven';
-import { sourceColor, sourceLabel } from './utils/sourceColors';
+import { sourceColor, sourceLabel, SOURCE_COLOR } from './utils/sourceColors';
 import { getDrivingDistancesKm } from './services/routingService';
 
 // Tijdelijk alle AI-agent-functionaliteit (floating chat-orb, chatpaneel, suggestieknoppen)
@@ -1101,6 +1101,7 @@ const DEFAULT_TAB_ORDER: ViewModeKey[] = ['search', 'favorites', 'lists', 'datab
 const TAB_LABELS: Record<ViewModeKey, string> = {
   search: 'Live Zoeken', favorites: 'Mijn Favorieten', lists: 'Lijsten', database: 'Bedrijvendatabase', map: 'Kaart', visits: 'Mijn bezoeken',
 };
+const APP_SOURCE_OPTIONS = ['Bouwgarant', 'BNA', 'Architectenweb', 'Archined', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Bouwcenter', 'Sweco', 'Van Wijnen', 'Plegt-Vos', 'Ter Steege Groep', 'Nijhuis', 'VolkerWessels', 'Bouwnu', 'Web'];
 
 // Fallback als de browser's eigen Geolocation API faalt (geweigerde toestemming, geen WiFi-
 // scan mogelijk, een VM/netwerk waar de browser geen positie kan bepalen, etc.) — een gratis,
@@ -1673,6 +1674,12 @@ const App: React.FC = () => {
     normalizeResultsPerPage(localStorage.getItem(uKey('inncempro_pref_db_rpp')), 50));
   const [prefRideResultsPerPage, setPrefRideResultsPerPage] = useState<number>(() =>
     normalizeResultsPerPage(localStorage.getItem(uKey('inncempro_pref_ride_rpp')), 10));
+  const [prefVisibleSources, setPrefVisibleSources] = useState<string[]>(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(uKey('inncempro_pref_visible_sources')) || 'null');
+      return Array.isArray(parsed) ? APP_SOURCE_OPTIONS.filter(src => parsed.includes(src)) : APP_SOURCE_OPTIONS;
+    } catch { return APP_SOURCE_OPTIONS; }
+  });
   const [prefCardFields, setPrefCardFields] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem(uKey('inncempro_pref_card')) || '{}'); } catch { return {}; }
   });
@@ -1700,6 +1707,17 @@ const App: React.FC = () => {
   const savePrefRpp = (v: number) => { const safe = normalizeResultsPerPage(v, 10); setPrefResultsPerPage(safe); setCurrentPage(1); saveUserPreference('inncempro_pref_rpp', String(safe)); };
   const savePrefDbRpp = (v: number) => { const safe = normalizeResultsPerPage(v, 50); setPrefDbResultsPerPage(safe); setDbPage(1); saveUserPreference('inncempro_pref_db_rpp', String(safe)); };
   const savePrefRideRpp = (v: number) => { const safe = normalizeResultsPerPage(v, 10); setPrefRideResultsPerPage(safe); saveUserPreference('inncempro_pref_ride_rpp', String(safe)); };
+  const savePrefVisibleSources = (sources: string[]) => {
+    const next = APP_SOURCE_OPTIONS.filter(src => sources.includes(src));
+    setPrefVisibleSources(next);
+    setSelectedBron(prev => prev.filter(src => next.includes(sourceLabel(src))));
+    saveUserPreference('inncempro_pref_visible_sources', JSON.stringify(next));
+  };
+  const togglePrefVisibleSource = (source: string) => {
+    savePrefVisibleSources(prefVisibleSources.includes(source)
+      ? prefVisibleSources.filter(src => src !== source)
+      : [...prefVisibleSources, source]);
+  };
   const toggleCardField = (key: string) => {
     const next = { ...cardFieldDefault, ...prefCardFields, [key]: !showField(key) };
     setPrefCardFields(next);
@@ -2344,7 +2362,7 @@ const App: React.FC = () => {
     // niet is ingelogd kan 'm dus ook nog als eigen startpunt overnemen.
     if (currentUser) {
       ['inncempro_pref_address', 'inncempro_pref_address_coords', 'inncempro_pref_sort', 'inncempro_pref_rpp',
-       'inncempro_pref_db_rpp', 'inncempro_pref_ride_rpp', 'inncempro_saved_routes',
+       'inncempro_pref_db_rpp', 'inncempro_pref_ride_rpp', 'inncempro_pref_visible_sources', 'inncempro_saved_routes',
        'inncempro_pref_card', 'inncempro_tab_order', 'inncempro_saved_filters', 'inncempro_recent_viewed',
        'inncempro_revisit_cycle'].forEach(base => {
         const scoped = uKey(base);
@@ -2364,6 +2382,10 @@ const App: React.FC = () => {
     setPrefResultsPerPage(readUserNumberPreference('inncempro_pref_rpp', 10));
     setPrefDbResultsPerPage(readUserNumberPreference('inncempro_pref_db_rpp', 50));
     setPrefRideResultsPerPage(readUserNumberPreference('inncempro_pref_ride_rpp', 10));
+    try {
+      const parsed = JSON.parse(localStorage.getItem(uKey('inncempro_pref_visible_sources')) || 'null');
+      setPrefVisibleSources(Array.isArray(parsed) ? APP_SOURCE_OPTIONS.filter(src => parsed.includes(src)) : APP_SOURCE_OPTIONS);
+    } catch { setPrefVisibleSources(APP_SOURCE_OPTIONS); }
     setSelectedIds(new Set());
     setSelectedRaws(new Map());
     try { setPrefCardFields(JSON.parse(localStorage.getItem(uKey('inncempro_pref_card')) || '{}')); } catch { setPrefCardFields({}); }
@@ -4063,18 +4085,24 @@ const App: React.FC = () => {
 
   const activeData = React.useMemo(
     () => {
+      const allowedSources = new Set(prefVisibleSources);
       const filtered = (bouwgarantData as any[]).filter(b =>
         isNederlandBedrijf(b) &&
         !isPureInterieurBedrijf(b) &&
         !deletedEntries.has(deleteKey(b.naam, b.straat)) &&
         !deletedEntries.has(b.naam)
       );
-      return mergeEntries(filtered);
+      return mergeEntries(filtered).map((b: any) => {
+        const sources = b._sources?.length ? b._sources : [b.source || 'Web'];
+        const visibleSources = sources.filter((src: string) => allowedSources.has(sourceLabel(src)));
+        if (visibleSources.length === 0) return null;
+        return { ...b, source: visibleSources[0] || 'Web', _sources: visibleSources };
+      }).filter(Boolean);
     },
     // Every action that mutates the underlying bouwgarantData array in place (add, address
     // correction, manual edit) must also appear here, or the change won't propagate to any
     // derived count/filter/list — same as deletedEntries already does.
-    [deletedEntries, customEntries, addressCorrections, manualEdits],
+    [deletedEntries, customEntries, addressCorrections, manualEdits, prefVisibleSources],
   );
 
   // Autocomplete voor de zoekbalk: suggesties op zowel bedrijfsnaam als straatadres door
@@ -4494,7 +4522,7 @@ const App: React.FC = () => {
 	                              </div>
 
 	                              {/* Resultaten per pagina — Bezoeken (Onderweg-voorstellen) */}
-	                              <div>
+                              <div>
                                   <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Resultaten per pagina <span className="text-slate-400 normal-case font-normal">(bezoeken)</span></label>
                                   <div className="flex gap-2 flex-wrap">
                                       {[10, 20, 50, 100].map(n => (
@@ -4507,6 +4535,37 @@ const App: React.FC = () => {
                                           className={`flex-1 py-2.5 text-xs font-bold border rounded-sm transition-colors ${prefRideResultsPerPage === RESULTS_PER_PAGE_ALL ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}>
                                           Alle
                                       </button>
+                                  </div>
+                              </div>
+
+                              {/* Bronnen */}
+                              <div>
+                                  <div className="flex items-center justify-between gap-3 mb-2">
+                                      <label className="text-xs font-bold text-slate-700 uppercase block">Bronnen tonen</label>
+                                      <button
+                                          onClick={() => savePrefVisibleSources(prefVisibleSources.length === APP_SOURCE_OPTIONS.length ? [] : APP_SOURCE_OPTIONS)}
+                                          className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] hover:underline"
+                                      >
+                                          {prefVisibleSources.length === APP_SOURCE_OPTIONS.length ? 'Deselecteer alles' : 'Selecteer alles'}
+                                      </button>
+                                  </div>
+                                  <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
+                                      {APP_SOURCE_OPTIONS.map(src => {
+                                          const checked = prefVisibleSources.includes(src);
+                                          const color = sourceColor(src);
+                                          return (
+                                              <label key={src} onClick={() => togglePrefVisibleSource(src)} className="flex items-center gap-3 cursor-pointer group p-2.5 rounded-sm hover:bg-slate-50 border border-slate-100">
+                                                  <div
+                                                      className="w-5 h-5 rounded-sm border-2 flex items-center justify-center flex-shrink-0 transition-colors"
+                                                      style={checked ? { backgroundColor: color, borderColor: color } : { backgroundColor: '#fff', borderColor: '#cbd5e1' }}
+                                                  >
+                                                      {checked && <Check className="w-3 h-3 text-white" />}
+                                                  </div>
+                                                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                                                  <span className={`text-sm flex-1 ${checked ? 'font-bold text-slate-900' : 'font-medium text-slate-500'}`}>{sourceLabel(src)}</span>
+                                              </label>
+                                          );
+                                      })}
                                   </div>
                               </div>
 
@@ -4641,11 +4700,7 @@ const App: React.FC = () => {
                  />
                  <CollapsibleFilterGroup title="Discipline" items={['Architecten', 'Bouwbedrijven', 'Aannemers', 'Bouwmaterialen']} selectedItems={selectedTypes} onToggleItem={(item) => toggleFilter(setSelectedTypes, item)} dataset={activeData} countFn={(item: string, b: any) => { const t = detectType(b); if (item === 'Architecten') return t === 'architect'; if (item === 'Bouwbedrijven') return t === 'bouwbedrijf'; if (item === 'Aannemers') return t === 'aannemer'; if (item === 'Bouwmaterialen') return t === 'materialen'; return false; }} />
                  <CollapsibleFilterGroup title="Werksoort" items={['Nieuwbouw', 'Renovatie', 'Verduurzaming', 'Restauratie', 'Onderhoud', 'Interieur', 'Utiliteitsbouw', 'Allround']} selectedItems={selectedWerksoort} onToggleItem={(item) => toggleFilter(setSelectedWerksoort, item)} dataset={activeData} countFn={(item: string, b: any) => { const specs = [b.spec1, b.spec2, b.spec3].filter(Boolean).join(' ').toLowerCase(); if (item === 'Nieuwbouw') return specs.includes('nieuwbouw'); if (item === 'Renovatie') return specs.includes('renovatie') || specs.includes('verbouw') || specs.includes('aanbouw') || specs.includes('transformatie'); if (item === 'Verduurzaming') return specs.includes('verduurzam') || specs.includes('isoler') || specs.includes('duurzaam') || specs.includes('energie') || specs.includes('warmtepomp') || specs.includes('zonnepanelen'); if (item === 'Restauratie') return specs.includes('restauratie') || specs.includes('monument'); if (item === 'Onderhoud') return specs.includes('onderhoud') || specs.includes('beheer') || specs.includes('service'); if (item === 'Interieur') return specs.includes('interieur') || specs.includes('afbouw') || specs.includes('binneninrichting'); if (item === 'Utiliteitsbouw') return specs.includes('utiliteit') || specs.includes('kantoor') || specs.includes('bedrijfsgebouw') || specs.includes('zakelijk'); if (item === 'Allround') return specs.includes('allround'); return false; }} />
-                 {/* 'bouwnu' (665 bedrijven), 'Ter Steege Groep', 'Archined', 'Nijhuis' en 'Bedrijvenoverzicht'
-                     stonden niet in deze lijst terwijl ze wél als source in de data voorkomen — die
-                     bedrijven waren dus onvindbaar via de Bron-filter. Aangevuld zodat alle bronnen
-                     die daadwerkelijk in bouwgarant_data.json voorkomen ook filterbaar zijn. */}
-                 <CollapsibleFilterGroup title="Bron" items={['Bouwgarant', 'BNA', 'Architectenweb', 'Archined', 'Stiho', 'Jongeneel', 'BouwPartner', 'PontMeyer', 'Bouwcenter', 'Sweco', 'Van Wijnen', 'Plegt-Vos', 'Ter Steege Groep', 'Nijhuis', 'VolkerWessels', 'bouwnu', 'Bedrijvenoverzicht', 'Web']} selectedItems={selectedBron} onToggleItem={(item) => toggleFilter(setSelectedBron, item)} dataset={activeData} colorFn={sourceColor} countFn={(item: string, b: any) => { const srcs = b._sources?.length ? b._sources : [b.source || 'Web']; return srcs.includes(item); }} />
+                 <CollapsibleFilterGroup title="Bron" items={APP_SOURCE_OPTIONS.filter(src => prefVisibleSources.includes(src))} selectedItems={selectedBron} onToggleItem={(item) => toggleFilter(setSelectedBron, item)} dataset={activeData} colorFn={sourceColor} countFn={(item: string, b: any) => { const srcs = (b._sources?.length ? b._sources : [b.source || 'Web']).map((s: string) => sourceLabel(s)); return srcs.includes(item); }} />
                  <CollapsibleFilterGroup title="Rechtsvorm" items={['B.V.', 'V.O.F.', 'Eenmanszaak', 'Stichting', 'N.V.']} selectedItems={selectedRechtsvorm} onToggleItem={(item) => toggleFilter(setSelectedRechtsvorm, item)} dataset={activeData} countFn={(item: string, b: any) => { const rv = (b.rechtsvorm || '').toLowerCase(); const naam = (b.naam || '').toLowerCase(); if (item === 'B.V.') return rv.includes('b.v') || rv.includes('bv') || naam.includes(' bv') || naam.endsWith(' b.v.') || naam.endsWith(' bv'); if (item === 'V.O.F.') return rv.includes('vof') || rv.includes('v.o.f') || naam.includes(' vof'); if (item === 'Eenmanszaak') return rv.includes('eenmanszaak') || rv.includes('zzp'); if (item === 'Stichting') return rv.includes('stichting') || naam.startsWith('stichting'); if (item === 'N.V.') return rv.includes('n.v') || rv.includes('nv') || naam.includes(' nv'); return false; }} />
                  <CollapsibleFilterGroup title="Contactgegevens" items={['Heeft telefoon', 'Heeft e-mail', 'Heeft website', 'Heeft KVK']} selectedItems={selectedContact} onToggleItem={(item) => toggleFilter(setSelectedContact, item)} dataset={activeData} countFn={(item: string, b: any) => { if (item === 'Heeft telefoon') return !!(b.telefoon || b.telefoon_sales || b.telefoon_admin); if (item === 'Heeft e-mail') return !!(b.email || b.email_sales || b.email_overig); if (item === 'Heeft website') return !!(b.website || b.url); if (item === 'Heeft KVK') return !!(b.kvk); return false; }} />
             </div>
@@ -5770,7 +5825,7 @@ const App: React.FC = () => {
                     vaste selectiebalk (die er dan overheen kwam te zweven en Leaflet's eigen
                     zoom-knoppen rechtsonder verborg). Vanaf md: (tablet/desktop, waar de balk
                     naast i.p.v. onder de content zit) mag de kaart weer de volle hoogte pakken. */}
-                <div className="w-full flex flex-col relative h-[60vh] md:h-[calc(100vh-120px)]">
+                <div className="w-full flex flex-col relative h-[78vh] md:h-[calc(100vh-40px)]">
                   {/* Selecteren-knop: expliciete opt-in, staat los van het bestaande hover/tik-
                       gedrag op de bolletjes (dat blijft precies zoals het was). Alleen als deze
                       aan staat, selecteert een klik op een bolletje het bedrijf i.p.v. niets.
@@ -5803,6 +5858,7 @@ const App: React.FC = () => {
                     selectionMode={mapSelectionMode}
                     selectedNames={selectedIds}
                     onToggleSelection={toggleMapSelection}
+                    allowedSources={prefVisibleSources}
                   />
                 </div>
 

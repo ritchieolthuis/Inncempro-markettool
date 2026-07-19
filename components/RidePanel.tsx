@@ -3,7 +3,7 @@ import { Navigation, MapPin, X, Loader2, Search, Check, RotateCcw, Save, Plus, G
 import { haversineKm, detectType, optimizeRoute, scoreInsertionCandidates, nearestPointOnRoute } from '../utils/dagbezoek';
 import { getDrivingDistancesKm, getRoutePolyline } from '../services/routingService';
 import { getClusterData, makeId } from '../services/geoclusterService';
-import { sourceColor } from '../utils/sourceColors';
+import { sourceColor, sourceLabel } from '../utils/sourceColors';
 import VoiceInputButton from './VoiceInputButton';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -29,17 +29,14 @@ function popupHtml(b: any, extra?: string): string {
       <a href="https://www.google.com/maps/search/?api=1&query=${mapsQuery}" target="_blank" rel="noopener" style="font-size:11px;color:#16a34a;border:1px solid #16a34a;padding:3px 8px;border-radius:4px;text-decoration:none">Google Maps →</a>
       ${website ? `<a href="${website}" target="_blank" rel="noopener" style="font-size:11px;color:#009FE3;border:1px solid #009FE3;padding:3px 8px;border-radius:4px;text-decoration:none">Website →</a>` : ''}
     </div>
-    ${b.source ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b">${b.source}</div>` : ''}
+    ${b.source ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b">${sourceLabel(b.source)}</div>` : ''}
   </div>`;
 }
 
 function makePin(color: string, label: number | string) {
   return L.divIcon({
-    html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36">
-      <path d="M12 0C5.4 0 0 5.4 0 12c0 7.5 12 24 12 24s12-16.5 12-24C24 5.4 18.6 0 12 0z" fill="${color}" stroke="white" stroke-width="1.5"/>
-      <text x="12" y="16" text-anchor="middle" fill="white" font-size="9" font-weight="700" font-family="system-ui">${label}</text>
-    </svg>`,
-    className: '', iconSize: [24, 36], iconAnchor: [12, 36], popupAnchor: [0, -38],
+    html: `<div style="width:22px;height:22px;border-radius:50%;background-color:${color};border:1.5px solid white;display:flex;align-items:center;justify-content:center;color:white;font-size:11px;font-weight:700;font-family:system-ui;box-shadow:0 1.5px 4px rgba(0,0,0,0.3);">${label}</div>`,
+    className: '', iconSize: [22, 22], iconAnchor: [11, 11], popupAnchor: [0, -11],
   });
 }
 
@@ -281,13 +278,35 @@ const RidePanel: React.FC<RidePanelProps> = ({
     setStartError(null);
   };
 
+  // Normaliseer rauwe bronwaarden: 'Onbekend' en 'Bedrijvenoverzicht' zijn allebei 'Web'.
+  const normalizeSource = (s?: string): string => {
+    const raw = s || 'Onbekend';
+    return (raw === 'Onbekend' || raw === 'Bedrijvenoverzicht') ? 'Web' : raw;
+  };
+
   // Beschikbare bronnen (bijv. Bouwgarant, Architectenweb, BNA, ...) voor het bronfilter —
   // afgeleid uit de echte data i.p.v. hardgecodeerd, zodat 'm altijd klopt met wat er is.
+  // 'Onbekend' en 'Bedrijvenoverzicht' worden samengevoegd als 'Web'.
   const availableSources = useMemo(() => {
     const set = new Set<string>();
-    for (const b of allData) set.add(b.source || 'Onbekend');
+    for (const b of allData) set.add(normalizeSource(b.source));
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'nl'));
   }, [allData]);
+  const activeSourceFilterCount = availableSources.length > 0 && availableSources.every(src => filterSources.has(src))
+    ? 0
+    : Math.max(0, availableSources.length - filterSources.size);
+  const previousAvailableSourcesRef = useRef<string[]>([]);
+  useEffect(() => {
+    const previousSources = previousAvailableSourcesRef.current;
+    previousAvailableSourcesRef.current = availableSources;
+    setFilterSources(prev => {
+      if (availableSources.length === 0) return new Set();
+      const previousHadAll = previousSources.length === 0 || previousSources.every(src => prev.has(src));
+      if (previousHadAll) return new Set(availableSources);
+      const nextAllowed = new Set(availableSources);
+      return new Set(Array.from(prev).filter(src => nextAllowed.has(src)));
+    });
+  }, [availableSources]);
 
   const currentPosition = (): Coords | null => {
     if (chain.length > 0) return chain[chain.length - 1].coords;
@@ -339,7 +358,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
       const naam = (b.naam || '').toLowerCase().trim();
       if (!naam || inChain.has(naam)) continue;
       if (filterTypes.size > 0 && !filterTypes.has(detectType(b) as any)) continue;
-      if (filterSources.size > 0 && !filterSources.has(b.source || 'Onbekend')) continue;
+      if (!filterSources.has(normalizeSource(b.source))) continue;
       if (onlyUnvisited && isVisitedCompany(b)) continue;
       const coords = coordsFor(b, cityCoords);
       if (!coords) continue;
@@ -621,7 +640,8 @@ const RidePanel: React.FC<RidePanelProps> = ({
 
     chain.forEach((s, i) => {
       chainLine.push([s.coords.lat, s.coords.lng]);
-      const stopMarker = L.marker([s.coords.lat, s.coords.lng], { icon: makePin('#E85E26', i + 1) })
+      const stopColor = sourceColor(s.bedrijf.source || 'Onbekend');
+        const stopMarker = L.marker([s.coords.lat, s.coords.lng], { icon: makePin(stopColor, i + 1) })
         .bindPopup(popupHtml(s.bedrijf, `Stop ${i + 1} van de route`), popupOpts)
         .addTo(markersLayerRef.current!);
       attachHoverZoom(stopMarker, map);
@@ -1455,8 +1475,8 @@ const RidePanel: React.FC<RidePanelProps> = ({
               >
                 <span className="flex items-center gap-2">
                   <Filter className="w-3.5 h-3.5" /> Filters
-                  {(filterTypes.size + filterSources.size) > 0 && (
-                    <span className="px-1.5 py-0.5 bg-[#E85E26] text-white rounded-full text-[10px]">{filterTypes.size + filterSources.size}</span>
+                  {(filterTypes.size + activeSourceFilterCount) > 0 && (
+                    <span className="px-1.5 py-0.5 bg-[#E85E26] text-white rounded-full text-[10px]">{filterTypes.size + activeSourceFilterCount}</span>
                   )}
                 </span>
                 <ChevronDown className="w-3.5 h-3.5" style={{ transform: showTypeSourceFilters ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }} />
@@ -1501,25 +1521,87 @@ const RidePanel: React.FC<RidePanelProps> = ({
               )}
               {/* Bronfilter (Bouwgarant, Architectenweb, BNA, ...) — alleen als er meer dan 1
                   bron in de data zit, anders heeft filteren geen zin. */}
-              {showTypeSourceFilters && availableSources.length > 1 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {availableSources.map(src => {
-                    const active = filterSources.has(src);
-                    const clr = sourceColor(src);
-                    return (
+              {showTypeSourceFilters && availableSources.length > 1 && (() => {
+                // Tel per bron hoeveel bedrijven er in allData zitten
+                // Gebruik normalizeSource zodat Onbekend + Bedrijvenoverzicht bij Web worden opgeteld.
+                const sourceCounts: Record<string, number> = {};
+                for (const b of allData) {
+                  const key = normalizeSource(b.source);
+                  sourceCounts[key] = (sourceCounts[key] || 0) + 1;
+                }
+                // Sorteer op count descending
+                const sortedSources = [...availableSources].sort(
+                  (a, b) => (sourceCounts[b] || 0) - (sourceCounts[a] || 0)
+                );
+                // Checkbox-semantiek: aangevinkt = zichtbaar. Geen enkele bron aangevinkt
+                // betekent dus ook echt nul bedrijven; alle bronnen aangevinkt toont alles.
+                const allSelected = availableSources.length > 0 && availableSources.every(src => filterSources.has(src));
+                return (
+                  <div className="space-y-0 border border-slate-100 rounded-sm overflow-hidden">
+                    {/* Header rij: BRON + SELECTEER/DESELECTEER ALLES */}
+                    <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-b border-slate-100">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Bron</span>
                       <button
-                        key={src}
-                        onClick={() => setFilterSources(prev => { const next = new Set(prev); next.has(src) ? next.delete(src) : next.add(src); return next; })}
-                        style={active ? { background: clr, borderColor: clr, color: '#fff' } : { borderColor: clr }}
-                        className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold rounded-full border bg-white text-slate-600 transition-colors"
+                        onClick={() => {
+                          if (allSelected) {
+                            setFilterSources(new Set());
+                          } else {
+                            setFilterSources(new Set(availableSources));
+                          }
+                        }}
+                        className="text-[10px] font-bold uppercase tracking-wider text-[#009FE3] hover:underline"
                       >
-                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: active ? '#fff' : clr }} />
-                        {src}
+                        {allSelected ? 'Deselecteer alles' : 'Selecteer alles'}
                       </button>
-                    );
-                  })}
-                </div>
-              )}
+                    </div>
+                    {/* Rijen per bron */}
+                    {sortedSources.map(src => {
+                      const checked = filterSources.has(src);
+                      const color = sourceColor(src);
+                      const count = sourceCounts[src] || 0;
+                      return (
+                        <button
+                          key={src}
+                          onClick={() => setFilterSources(prev => {
+                            const next = new Set(prev);
+                            if (next.has(src)) next.delete(src); else next.add(src);
+                            return next;
+                          })}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-b-0 transition-colors text-left"
+                        >
+                          {/* Checkbox */}
+                          <span
+                            className="w-3.5 h-3.5 rounded-sm border flex-shrink-0 flex items-center justify-center"
+                            style={{
+                              borderColor: checked ? color : '#cbd5e1',
+                              backgroundColor: checked ? color : '#fff',
+                            }}
+                          >
+                            {checked && (
+                              <svg className="w-2 h-2 text-white" viewBox="0 0 10 10" fill="none">
+                                <path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            )}
+                          </span>
+                          {/* Gekleurde dot */}
+                          <span
+                            className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                            style={{ backgroundColor: color }}
+                          />
+                          {/* Naam */}
+                          <span className="flex-1 text-xs font-medium text-slate-700 truncate">
+                            {sourceLabel(src)}
+                          </span>
+                          {/* Count */}
+                          <span className="text-[11px] text-slate-400 font-normal flex-shrink-0">
+                            {count.toLocaleString('nl')}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
               {/* Ook "Alleen nog niet bezocht", Sorteer, Per pagina en Toon alles zijn filter-/
                   weergave-instellingen — vallen daarom onder dezelfde inklapbare Filters-knop
                   i.p.v. altijd zichtbaar te zijn, voor minder ruis op telefoon. */}

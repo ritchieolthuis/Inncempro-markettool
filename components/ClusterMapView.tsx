@@ -7,7 +7,7 @@ import 'leaflet/dist/leaflet.css';
 import { MapPin, Loader2, Check, ChevronDown, ChevronRight, Search, X, Navigation } from 'lucide-react';
 import VoiceInputButton from './VoiceInputButton';
 import { fuzzyMatch } from '../utils/fuzzyMatch';
-import { SOURCE_COLOR as SRC_COLOR } from '../utils/sourceColors';
+import { SOURCE_COLOR as SRC_COLOR, sourceLabel } from '../utils/sourceColors';
 
 interface ProvGroup {
   provincie: string;
@@ -58,7 +58,7 @@ function popupHtml(entry: GeoEntry): string {
       <a href="https://www.google.com/maps/search/?api=1&query=${mapsQuery}" target="_blank" rel="noopener" style="font-size:11px;color:#16a34a;border:1px solid #16a34a;padding:3px 8px;border-radius:4px;text-decoration:none">Google Maps →</a>
       <button onclick="window._inncemMapNav('${naamEsc}')" style="font-size:11px;color:#1e293b;background:#f1f5f9;border:1px solid #cbd5e1;padding:3px 8px;border-radius:4px;cursor:pointer">Open in database →</button>
     </div>
-    <div style="margin-top:8px;padding-top:6px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b">${entry.source}</div>
+    <div style="margin-top:8px;padding-top:6px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b">${sourceLabel(entry.source)}</div>
   </div>`;
 }
 
@@ -66,6 +66,7 @@ interface ClusterMapViewProps {
   onOpenInDatabase?: (naam: string) => void;
   focusTarget?: { naam: string; straat: string; stad: string; provincie: string } | null;
   onFocusHandled?: () => void;
+  allowedSources?: string[];
   // Selectiemodus voor het bouwen van een route: staat deze uit (standaard), dan verandert er
   // niets aan het bestaande hover/tik-gedrag. Staat hij aan, dan selecteert een klik op een
   // bolletje het bedrijf (in plaats van er iets anders aan te veranderen) zodat er een route
@@ -75,7 +76,7 @@ interface ClusterMapViewProps {
   onToggleSelection?: (entry: GeoEntry) => void;
 }
 
-const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focusTarget, onFocusHandled, selectionMode, selectedNames, onToggleSelection }) => {
+const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focusTarget, onFocusHandled, allowedSources, selectionMode, selectedNames, onToggleSelection }) => {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
@@ -100,6 +101,18 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
 
   // Mijn Locatie state (zoeken in steden)
   const [myLocAddr, setMyLocAddr] = useState('');
+  const allowedSourceSet = useMemo(
+    () => allowedSources ? new Set(allowedSources) : null,
+    [allowedSources],
+  );
+  const mapEntries = useMemo(
+    () => !allowedSourceSet
+      ? allEntries
+      : allowedSourceSet.size === 0
+      ? []
+      : allEntries.filter(e => allowedSourceSet.has(sourceLabel(e.source || 'Onbekend'))),
+    [allEntries, allowedSourceSet],
+  );
 
   // Expose the "open in database" callback to the plain-HTML Leaflet popups
   useEffect(() => {
@@ -148,18 +161,31 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
     return () => { cancelled = true; clearTimeout(timeoutId); };
   }, []);
 
-  const locationGroups = useMemo(() => buildLocationGroups(allEntries), [allEntries]);
+  const locationGroups = useMemo(() => buildLocationGroups(mapEntries), [mapEntries]);
 
   const sourceGroups = useMemo(() => {
     const counts: Record<string, number> = {};
-    allEntries.forEach((e) => {
-      const src = e.source || 'Onbekend';
+    mapEntries.forEach((e) => {
+      const src = sourceLabel(e.source || 'Onbekend');
       counts[src] = (counts[src] || 0) + 1;
     });
     return Object.entries(counts)
       .map(([source, count]) => ({ source, count }))
       .sort((a, b) => b.count - a.count || a.source.localeCompare(b.source, 'nl'));
-  }, [allEntries]);
+  }, [mapEntries]);
+  const previousSourceKeysRef = useRef<string[]>([]);
+  useEffect(() => {
+    const nextKeys = sourceGroups.map(g => g.source);
+    const previousKeys = previousSourceKeysRef.current;
+    previousSourceKeysRef.current = nextKeys;
+    setSelectedSources(prev => {
+      if (nextKeys.length === 0) return new Set();
+      const previousHadAll = previousKeys.length === 0 || previousKeys.every(src => prev.has(src));
+      if (previousHadAll) return new Set(nextKeys);
+      const nextAllowed = new Set(nextKeys);
+      return new Set(Array.from(prev).filter(src => nextAllowed.has(src)));
+    });
+  }, [sourceGroups]);
 
   // Hoe verder ingezoomd, hoe groter de bolletjes (makkelijker te raken op mobiel) — maar
   // begrensd zodat bedrijven die dicht bij elkaar zitten (bijv. binnenstad Amsterdam) nooit
@@ -207,12 +233,13 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
   // Rebuild markers whenever entries change (including when background geocoding updates coords).
   // Clears old markers and rebuilds with latest coordinates.
   useEffect(() => {
-    if (!markersLayerRef.current || allEntries.length === 0) return;
+    if (!markersLayerRef.current) return;
 
     markersLayerRef.current.clearLayers();
+    if (mapEntries.length === 0) return;
     const startRadius = circleRadiusForZoom(mapRef.current?.getZoom() ?? CIRCLE_BASE_ZOOM);
 
-    allEntries.forEach((entry) => {
+    mapEntries.forEach((entry) => {
       const color = SRC_COLOR[entry.source] || '#64748B';
       const marker = L.circleMarker(entry.coords as [number, number], {
         radius: startRadius,
@@ -290,7 +317,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
       });
       marker.addTo(markersLayerRef.current!);
     });
-  }, [allEntries]);
+  }, [mapEntries]);
 
   // Geselecteerde bolletjes duidelijk markeren (dikkere, oranje rand) zodat je in
   // selectiemodus in één oogopslag ziet welke van de 1-10 je al hebt aangeklikt.
@@ -308,25 +335,16 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
   }, [selectedNames]);
 
   // Toggle visibility + zoom-to-fit whenever the region or bron selection changes.
-  // Both filters work independently: select REGION alone, BRON alone, or both.
-  // - No selection: nothing visible (prompt to select — expliciete keuze, geen verrassingen)
-  // - Region only: show those regions from all sources
-  // - Bron only: show those sources from all regions
-  // - Both: show intersection
+  // Bronnen gebruiken checkbox-semantiek: aangevinkt = zichtbaar. Geen bron aangevinkt
+  // betekent dus nul bedrijven, ook als er wel een regio gekozen is.
   useEffect(() => {
     if (!markersLayerRef.current) return;
     const bounds: L.LatLngExpression[] = [];
 
-    // Geen regio's EN geen bronnen geselecteerd = niets tonen (zie de "Selecteer een
-    // regio..." prompt hieronder). Zonder deze guard betekent selectedRegions.size===0
-    // hieronder per ongeluk "alle regio's matchen" — dus deselecteren van de laatste regio
-    // liet alsnog alle ~4750 bedrijven zien in plaats van weer niets.
-    const noSelection = selectedRegions.size === 0 && selectedSources.size === 0;
-
     markersLayerRef.current.eachLayer((layer: any) => {
       const matchRegion = selectedRegions.size === 0 || selectedRegions.has(layer._provKey) || selectedRegions.has(layer._cityKey);
-      const matchSource = selectedSources.size === 0 || selectedSources.has(layer._entry?.source || 'Onbekend');
-      const visible = !noSelection && matchRegion && matchSource;
+      const matchSource = selectedSources.has(sourceLabel(layer._entry?.source || 'Onbekend'));
+      const visible = matchRegion && matchSource;
       layer.setStyle({ opacity: visible ? 1 : 0, fillOpacity: visible ? 0.9 : 0 });
       // setStyle maakt 'm alleen onzichtbaar — de canvas-renderer test nog gewoon op de
       // (onzichtbare) cirkel-geometrie, dus zonder dit bleef je bij het overheen bewegen
@@ -344,13 +362,13 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
         mapRef.current.setView([52.1326, 5.2913], 7);
       }
     }
-    // allEntries hoort hier expliciet bij: de achtergrond-geocoding (poll elke ~3s) herbouwt
+    // mapEntries hoort hier expliciet bij: de achtergrond-geocoding (poll elke ~3s) herbouwt
     // periodiek ALLE markers zodra er preciezere coördinaten binnenkomen (zie de vorige
     // useEffect), en die nieuwe markers starten standaard onzichtbaar. Zonder allEntries hier
     // als dependency werd de zichtbaarheid dan niet opnieuw toegepast — de bolletjes vervielen
     // na een herbouw, en pas een filter aan/uit klikken (wat selectedRegions wijzigt) herstelde
     // het toevallig weer.
-  }, [selectedRegions, selectedSources, allEntries]);
+  }, [selectedRegions, selectedSources, mapEntries]);
 
   // Vanuit een bedrijfsprofiel elders in de app ("Bekijk op de KAART-tab"): selecteer
   // automatisch de bijbehorende stad (zelfde gedrag als handmatig aanvinken) en zoom
@@ -371,7 +389,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
     let timeoutId: ReturnType<typeof setTimeout>;
     const tryFocus = () => {
       attempts++;
-      const match = allEntries.find(e =>
+      const match = mapEntries.find(e =>
         norm(e.naam) === targetNaam &&
         (targetStraat ? norm(e.straat) === targetStraat : true) &&
         norm(e.stad) === targetStad
@@ -397,7 +415,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
     tryFocus();
 
     return () => clearTimeout(timeoutId);
-  }, [focusTarget, allEntries]);
+  }, [focusTarget, mapEntries]);
 
   const toggleRegion = (name: string) => {
     setSelectedRegions(prev => {
@@ -424,19 +442,19 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
   };
 
   const visibleCount = useMemo(() => {
-    return allEntries.filter(e => {
+    return mapEntries.filter(e => {
       const prov = e.provincie || 'Onbekend';
       const stad = e.stad || 'Onbekend';
       const matchRegion = selectedRegions.size === 0 || selectedRegions.has(provKey(prov)) || selectedRegions.has(cityKey(prov, stad));
-      const matchSource = selectedSources.size === 0 || selectedSources.has(e.source || 'Onbekend');
+      const matchSource = selectedSources.has(sourceLabel(e.source || 'Onbekend'));
       return matchRegion && matchSource;
     }).length;
-  }, [allEntries, selectedRegions, selectedSources]);
+  }, [mapEntries, selectedRegions, selectedSources]);
 
   const filterPanelBody = (
     <>
       <p className="text-[11px] text-slate-400 mb-3">
-        {allEntries.length.toLocaleString('nl-NL')} bedrijven geladen
+        {mapEntries.length.toLocaleString('nl-NL')} bedrijven geladen
         {(selectedRegions.size > 0 || selectedSources.size > 0) && ` · ${visibleCount.toLocaleString('nl-NL')} zichtbaar`}
       </p>
 
@@ -464,7 +482,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
           const query = myLocAddr.trim();
           const filteredCities = query.length >= 2
             ? Array.from(new Set(
-                allEntries
+                mapEntries
                   .filter(e => fuzzyMatch(e.stad || '', query))
                   .map(e => {
                     const prov = e.provincie || 'Onbekend';
@@ -579,17 +597,21 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
         })}
       </div>
 
-      {/* Bron sectie — extra verfijning bovenop de regio-selectie, geen vervanging.
-          Leeg (niets aangevinkt) = alle bronnen zichtbaar, net als bij Regio & Locatie. */}
+      {/* Bron sectie — aangevinkt = zichtbaar; niets aangevinkt = niets tonen. */}
       <div className="mt-4 pt-3 border-t border-slate-200">
         <div className="flex items-center justify-between mb-2">
           <label className="text-[10px] font-bold text-slate-700 uppercase tracking-wider">Bron</label>
+          {(() => {
+            const allSelected = sourceGroups.length > 0 && sourceGroups.every(g => selectedSources.has(g.source));
+            return (
           <button
-            onClick={() => setSelectedSources(new Set(sourceGroups.map(g => g.source)))}
+            onClick={() => setSelectedSources(allSelected ? new Set() : new Set(sourceGroups.map(g => g.source)))}
             className="text-[10px] font-bold text-[#009FE3] hover:underline uppercase tracking-wider"
           >
-            Selecteer alles
+            {allSelected ? 'Deselecteer alles' : 'Selecteer alles'}
           </button>
+            );
+          })()}
         </div>
         <div className="space-y-0.5 max-h-48 overflow-y-auto pr-1">
           {sourceGroups.map(({ source, count }) => {
@@ -604,7 +626,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
                   {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
                 </div>
                 <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-                <span className={`text-xs flex-1 ${isSelected ? 'font-bold text-slate-900' : 'text-slate-600'}`}>{source}</span>
+                <span className={`text-xs flex-1 ${isSelected ? 'font-bold text-slate-900' : 'text-slate-600'}`}>{sourceLabel(source)}</span>
                 <span className="text-[10px] text-slate-300 font-medium">{count}</span>
               </label>
             );
@@ -643,10 +665,10 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
             </div>
           </div>
         )}
-        {!loading && selectedRegions.size === 0 && selectedSources.size === 0 && (
+        {!loading && selectedSources.size === 0 && (
           <div className="absolute inset-x-0 top-4 z-10 flex justify-center pointer-events-none">
             <div className="bg-white/95 border border-slate-200 rounded-sm px-4 py-2 text-xs text-slate-500 shadow-sm text-center mx-4">
-              Selecteer een regio, bron, of beide om bedrijven op de kaart te zien
+              Selecteer minimaal één bron om bedrijven op de kaart te zien
             </div>
           </div>
         )}
