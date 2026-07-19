@@ -16,6 +16,7 @@ export const SOURCE_COLOR: Record<string, string> = {
   'Ter Steege Groep':    '#B45309', // amber-donker
   Nijhuis:               '#4F46E5', // indigo
   VolkerWessels:         '#334155', // donkergrijs-blauw
+  Bouwnu:                '#F59E0B', // amber
   bouwnu:                '#F59E0B', // amber
   Bedrijvenoverzicht:    '#65A30D', // limoen
   Web:                   '#94A3B8', // neutraal grijs (generieke webbron)
@@ -29,3 +30,6 @@ export const SOURCE_COLOR: Record<string, string> = {
 // Kleur voor een bron; valt terug op de generieke "Web"-grijstint voor onbekende bronnen.
 export const sourceColor = (source?: string): string =>
   (source && SOURCE_COLOR[source]) || SOURCE_COLOR.Web;
+
+export const sourceLabel = (source?: string): string =>
+  source === 'bouwnu' ? 'Bouwnu' : (source || 'Web');

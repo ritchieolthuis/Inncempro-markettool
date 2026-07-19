@@ -19,7 +19,7 @@ import { priorityNominatim } from './services/nominatimQueue';
 import { SearchState, DiscoveredCompany, User, CompanyList } from './types';
 import { scoreInsertionCandidates } from './utils/dagbezoek';
 import { mergeEntries, isNederlandBedrijf, isPureInterieurBedrijf } from './utils/mergeBedrijven';
-import { sourceColor } from './utils/sourceColors';
+import { sourceColor, sourceLabel } from './utils/sourceColors';
 import { getDrivingDistancesKm } from './services/routingService';
 
 // Tijdelijk alle AI-agent-functionaliteit (floating chat-orb, chatpaneel, suggestieknoppen)
@@ -1066,6 +1066,31 @@ const DEFAULT_ORIGIN = "Lansinkesweg 4, 7553 AE Hengelo";
 // Sentinel voor "Alle" bij Resultaten per pagina — een groot eindig getal i.p.v. Infinity,
 // want de bedrijvendatabase telt nooit meer dan een paar duizend rijen tegelijk.
 const RESULTS_PER_PAGE_ALL = 100000;
+const PAGE_SIZE_VALUES = new Set([10, 20, 25, 50, 100, RESULTS_PER_PAGE_ALL]);
+const normalizeResultsPerPage = (value: unknown, fallback: number): number => {
+  const n = Number(value);
+  return Number.isFinite(n) && PAGE_SIZE_VALUES.has(n) ? n : fallback;
+};
+
+class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('Inncempro UI crash opgevangen', error, info);
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white border border-slate-200 shadow-xl p-6 rounded-sm text-center space-y-3">
+          <h1 className="text-lg font-black text-slate-900 uppercase tracking-wider">Scherm hersteld</h1>
+          <p className="text-sm text-slate-500">Er ging iets mis bij deze klik. Herlaad de app en probeer het opnieuw.</p>
+          <button onClick={() => window.location.reload()} className="px-4 py-2 bg-[#009FE3] text-white text-xs font-bold uppercase tracking-wider rounded-sm">Herlaad app</button>
+        </div>
+      </div>
+    );
+  }
+}
 
 // Hoofdtabbladen (Live Zoeken, Favorieten, Lijsten, Database, Kaart, Bezoeken) — versleepbaar
 // in zowel de tabbalk zelf als bij Instellingen > Voorkeuren. Statische labels hier (geen
@@ -1643,11 +1668,11 @@ const App: React.FC = () => {
   const [prefSort, setPrefSort] = useState<'relevant' | 'az'>(() =>
     (localStorage.getItem(uKey('inncempro_pref_sort')) as 'relevant' | 'az') || 'relevant');
   const [prefResultsPerPage, setPrefResultsPerPage] = useState<number>(() =>
-    Number(localStorage.getItem(uKey('inncempro_pref_rpp'))) || 10);
+    normalizeResultsPerPage(localStorage.getItem(uKey('inncempro_pref_rpp')), 10));
   const [prefDbResultsPerPage, setPrefDbResultsPerPage] = useState<number>(() =>
-    Number(localStorage.getItem(uKey('inncempro_pref_db_rpp'))) || 50);
+    normalizeResultsPerPage(localStorage.getItem(uKey('inncempro_pref_db_rpp')), 50));
   const [prefRideResultsPerPage, setPrefRideResultsPerPage] = useState<number>(() =>
-    Number(localStorage.getItem(uKey('inncempro_pref_ride_rpp'))) || 10);
+    normalizeResultsPerPage(localStorage.getItem(uKey('inncempro_pref_ride_rpp')), 10));
   const [prefCardFields, setPrefCardFields] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem(uKey('inncempro_pref_card')) || '{}'); } catch { return {}; }
   });
@@ -1668,14 +1693,13 @@ const App: React.FC = () => {
     localStorage.setItem(uKey(base), value);
   };
   const readUserNumberPreference = (base: string, fallback: number) => {
-    const n = Number(localStorage.getItem(uKey(base)));
-    return Number.isFinite(n) && n > 0 ? n : fallback;
+    return normalizeResultsPerPage(localStorage.getItem(uKey(base)), fallback);
   };
 
   const savePrefSort = (v: 'relevant' | 'az') => { setPrefSort(v); setSortMode(v); saveUserPreference('inncempro_pref_sort', v); };
-  const savePrefRpp = (v: number) => { setPrefResultsPerPage(v); setCurrentPage(1); saveUserPreference('inncempro_pref_rpp', String(v)); };
-  const savePrefDbRpp = (v: number) => { setPrefDbResultsPerPage(v); setDbPage(1); saveUserPreference('inncempro_pref_db_rpp', String(v)); };
-  const savePrefRideRpp = (v: number) => { setPrefRideResultsPerPage(v); saveUserPreference('inncempro_pref_ride_rpp', String(v)); };
+  const savePrefRpp = (v: number) => { const safe = normalizeResultsPerPage(v, 10); setPrefResultsPerPage(safe); setCurrentPage(1); saveUserPreference('inncempro_pref_rpp', String(safe)); };
+  const savePrefDbRpp = (v: number) => { const safe = normalizeResultsPerPage(v, 50); setPrefDbResultsPerPage(safe); setDbPage(1); saveUserPreference('inncempro_pref_db_rpp', String(safe)); };
+  const savePrefRideRpp = (v: number) => { const safe = normalizeResultsPerPage(v, 10); setPrefRideResultsPerPage(safe); saveUserPreference('inncempro_pref_ride_rpp', String(safe)); };
   const toggleCardField = (key: string) => {
     const next = { ...cardFieldDefault, ...prefCardFields, [key]: !showField(key) };
     setPrefCardFields(next);
@@ -1969,7 +1993,7 @@ const App: React.FC = () => {
   const [dbCrmFilter, setDbCrmFilter] = useState<string[]>([]); // Multi-select CRM status filter
   const [showStatusFilter, setShowStatusFilter] = useState(false);
   const [dbPage, setDbPage] = useState(1);
-  const DB_PAGE_SIZE = prefDbResultsPerPage;
+  const DB_PAGE_SIZE = normalizeResultsPerPage(prefDbResultsPerPage, 50);
   const [favorites, setFavorites] = useState<DiscoveredCompany[]>([]);
   const [lists, setLists] = useState<CompanyList[]>([]);
   const [activeListId, setActiveListId] = useState<string | null>(null);
@@ -2076,7 +2100,7 @@ const App: React.FC = () => {
   const [profileHistory, setProfileHistory] = useState<any[]>([]);
   const openRelatedCompany = (v: any) => {
     setSelectedCompany(prev => { if (prev) setProfileHistory(h => [...h, prev]); return v; });
-    addToRecentViewed(v.naam);
+    addToRecentViewed(v?.naam);
     setEditMode(false);
   };
   const goBackInProfile = () => {
@@ -2096,12 +2120,13 @@ const App: React.FC = () => {
     try { return JSON.parse(localStorage.getItem(uKey('inncempro_recent_viewed')) || '[]'); } catch { return []; }
   });
 
-  const addToRecentViewed = (naam: string) => {
+  const addToRecentViewed = (naam?: string) => {
+    if (!naam?.trim()) return;
     const updated = recentViewed.filter(r => r.naam !== naam);
     updated.unshift({ naam, timestamp: Date.now() });
     const limited = updated.slice(0, 20); // max 20 recent
     setRecentViewed(limited);
-    localStorage.setItem(uKey('inncempro_recent_viewed'), JSON.stringify(limited));
+    try { localStorage.setItem(uKey('inncempro_recent_viewed'), JSON.stringify(limited)); } catch (e) { console.warn('Kon recent bekeken niet opslaan', e); }
   };
 
   const addVisit = async (bedrijf: any) => {
@@ -4447,12 +4472,29 @@ const App: React.FC = () => {
                                       <button onClick={() => savePrefRpp(RESULTS_PER_PAGE_ALL)}
                                           className={`flex-1 py-2.5 text-xs font-bold border rounded-sm transition-colors ${prefResultsPerPage === RESULTS_PER_PAGE_ALL ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}>
                                           Alle
-                                      </button>
-                                  </div>
-                              </div>
+	                                      </button>
+	                                  </div>
+	                              </div>
 
-                              {/* Resultaten per pagina — Bezoeken (Onderweg-voorstellen) */}
-                              <div>
+	                              {/* Resultaten per pagina — Database */}
+	                              <div>
+	                                  <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Resultaten per pagina <span className="text-slate-400 normal-case font-normal">(database)</span></label>
+	                                  <div className="flex gap-2 flex-wrap">
+	                                      {[10, 20, 50, 100].map(n => (
+	                                          <button key={n} onClick={() => savePrefDbRpp(n)}
+	                                              className={`flex-1 py-2.5 text-xs font-bold border rounded-sm transition-colors ${prefDbResultsPerPage === n ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}>
+	                                              {n}
+	                                          </button>
+	                                      ))}
+	                                      <button onClick={() => savePrefDbRpp(RESULTS_PER_PAGE_ALL)}
+	                                          className={`flex-1 py-2.5 text-xs font-bold border rounded-sm transition-colors ${prefDbResultsPerPage === RESULTS_PER_PAGE_ALL ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}>
+	                                          Alles
+	                                      </button>
+	                                  </div>
+	                              </div>
+
+	                              {/* Resultaten per pagina — Bezoeken (Onderweg-voorstellen) */}
+	                              <div>
                                   <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Resultaten per pagina <span className="text-slate-400 normal-case font-normal">(bezoeken)</span></label>
                                   <div className="flex gap-2 flex-wrap">
                                       {[10, 20, 50, 100].map(n => (
@@ -4821,11 +4863,12 @@ const App: React.FC = () => {
                  });
                  return matchSearch && matchSidebar && matchLijsten && matchBronSidebar && matchRvSidebar && matchTypeSidebar && matchWerksoortSidebar && matchContactSidebar && matchPostcode && matchCrmStatus;
                });
-               const totalPages = Math.ceil(filtered.length / DB_PAGE_SIZE);
-               const paged = filtered.slice((dbPage - 1) * DB_PAGE_SIZE, dbPage * DB_PAGE_SIZE);
-               const btnBase = "flex items-center justify-center gap-1.5 px-3 py-2 text-[10px] font-bold uppercase tracking-wider border transition-all flex-1 whitespace-nowrap rounded-sm";
-               return (
-                 <div className="max-w-4xl mx-auto w-full">
+	               const totalPages = Math.max(1, Math.ceil(filtered.length / DB_PAGE_SIZE));
+	               const visibleDbPage = Math.min(dbPage, totalPages);
+	               const paged = filtered.slice((visibleDbPage - 1) * DB_PAGE_SIZE, visibleDbPage * DB_PAGE_SIZE);
+	               const btnBase = "flex items-center justify-center gap-1.5 px-3 py-2 text-[10px] font-bold uppercase tracking-wider border transition-all flex-1 whitespace-nowrap rounded-sm";
+	               return (
+	                 <div className="max-w-4xl mx-auto w-full">
                    <div className="flex gap-2 sm:gap-3 mb-3 flex-wrap">
                      <div className="relative w-full">
                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
@@ -4911,8 +4954,8 @@ const App: React.FC = () => {
                      <div className="flex items-center gap-2">
                        <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">~{filtered.length} gevonden</span>
                        <button onClick={() => setImportModalOpen(true)} className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 rounded-sm text-[10px] font-bold uppercase tracking-wider transition-all"><Upload className="w-3 h-3"/>Importeren</button>
-                       <button onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', linkedin_url: '', twitter_handle: '', instagram_handle: '', source: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setShowAddModal(true); }} className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 rounded-sm text-[10px] font-bold uppercase tracking-wider transition-all"><Plus className="w-3 h-3"/>Toevoegen</button>
-                     </div>
+	                       <button onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', linkedin_url: '', twitter_handle: '', instagram_handle: '', source: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setShowAddModal(true); }} className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 rounded-sm text-[10px] font-bold uppercase tracking-wider transition-all"><Plus className="w-3 h-3"/>Toevoegen</button>
+	                     </div>
                      {(() => {
                        const pageNamen = paged.map((b: any) => b.naam as string);
                        const allPageSel = pageNamen.length > 0 && pageNamen.every(n => selectedIds.has(n));
@@ -4965,11 +5008,11 @@ const App: React.FC = () => {
                        >
                          <Columns className="w-3.5 h-3.5" /> Vergelijk ({selectedIds.size})
                        </button>
-                     )}
-                   </div>
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                     {paged.map((b: any, i: number) => (
-                       <div key={i} className={`bg-white border p-5 flex flex-col gap-3 transition-colors cursor-pointer ${selectedIds.has(b.naam) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`} onClick={() => { setSelectedCompany(b); setProfileHistory([]); addToRecentViewed(b.naam); }}>
+	                     )}
+	                   </div>
+	                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+	                     {paged.map((b: any, i: number) => (
+	                       <div key={i} style={{ contentVisibility: 'auto', containIntrinsicSize: '245px' }} className={`bg-white border p-5 flex flex-col gap-3 transition-colors cursor-pointer ${selectedIds.has(b.naam) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`} onClick={() => { setSelectedCompany(b); setProfileHistory([]); addToRecentViewed(b.naam); }}>
                          <div className="flex items-start justify-between gap-2">
                            <div className="flex-1 min-w-0">
                              <div className="flex items-center gap-2 flex-wrap">
@@ -5023,25 +5066,12 @@ const App: React.FC = () => {
                            </div>
                          </div>
                        </div>
-                     ))}
-                   </div>
-                   <div className="flex items-center justify-center gap-2 flex-wrap py-3 border-t border-slate-200 mt-4">
-                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Per pagina</span>
-                     {[10, 20, 50, 100].map(n => (
-                       <button key={n} onClick={() => savePrefDbRpp(n)}
-                         className={`px-2.5 py-1 text-[10px] font-bold border rounded-sm transition-colors ${prefDbResultsPerPage === n ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}>
-                         {n}
-                       </button>
-                     ))}
-                     <button onClick={() => savePrefDbRpp(RESULTS_PER_PAGE_ALL)}
-                       className={`px-2.5 py-1 text-[10px] font-bold border rounded-sm transition-colors ${prefDbResultsPerPage === RESULTS_PER_PAGE_ALL ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-500 border-slate-200 hover:border-[#009FE3]'}`}>
-                       Alles
-                     </button>
-                   </div>
-                   {totalPages > 1 && (
+	                     ))}
+	                   </div>
+	                   {totalPages > 1 && (
                    <div className="flex items-center gap-2 flex-wrap justify-center py-8 border-t border-slate-200 mt-4">
-                     <button onClick={() => setDbPage(1)} disabled={dbPage === 1} className="px-3 py-2 bg-slate-200 text-slate-700 text-xs font-bold disabled:opacity-40 hover:bg-slate-300 rounded-sm">«</button>
-                     <button onClick={() => setDbPage(p => Math.max(1, p-1))} disabled={dbPage === 1} className="px-4 py-2 bg-slate-200 text-slate-700 text-xs font-bold disabled:opacity-40 hover:bg-slate-300 rounded-sm">← Vorige</button>
+	                     <button onClick={() => setDbPage(1)} disabled={visibleDbPage === 1} className="px-3 py-2 bg-slate-200 text-slate-700 text-xs font-bold disabled:opacity-40 hover:bg-slate-300 rounded-sm">«</button>
+	                     <button onClick={() => setDbPage(p => Math.max(1, p-1))} disabled={visibleDbPage === 1} className="px-4 py-2 bg-slate-200 text-slate-700 text-xs font-bold disabled:opacity-40 hover:bg-slate-300 rounded-sm">← Vorige</button>
                      <div className="flex items-center gap-1">
                        {(() => {
                          const pages: (number|string)[] = [];
@@ -5049,23 +5079,23 @@ const App: React.FC = () => {
                          if (totalPages <= maxV) { for (let i=1;i<=totalPages;i++) pages.push(i); }
                          else {
                            pages.push(1);
-                           let s=Math.max(2,dbPage-1), e=Math.min(totalPages-1,dbPage+1);
-                           if (dbPage<=3){s=2;e=4;} if (dbPage>=totalPages-2){s=totalPages-3;e=totalPages-1;}
+	                           let s=Math.max(2,visibleDbPage-1), e=Math.min(totalPages-1,visibleDbPage+1);
+	                           if (visibleDbPage<=3){s=2;e=4;} if (visibleDbPage>=totalPages-2){s=totalPages-3;e=totalPages-1;}
                            if (s>2) pages.push('...');
                            for (let i=s;i<=e;i++) pages.push(i);
                            if (e<totalPages-1) pages.push('...');
                            pages.push(totalPages);
                          }
                          return pages.map((p,idx) => p==='...' ? <span key={`d${idx}`} className="px-2 text-slate-400">...</span> :
-                           <button key={`p${p}`} onClick={() => setDbPage(Number(p))} className={`w-8 h-8 flex items-center justify-center rounded-sm text-xs font-bold font-condensed transition-all ${dbPage===p ? 'bg-[#E85E26] text-white' : 'bg-white border border-slate-200 hover:border-[#E85E26] text-slate-700'}`}>{p}</button>
+	                           <button key={`p${p}`} onClick={() => setDbPage(Number(p))} className={`w-8 h-8 flex items-center justify-center rounded-sm text-xs font-bold font-condensed transition-all ${visibleDbPage===p ? 'bg-[#E85E26] text-white' : 'bg-white border border-slate-200 hover:border-[#E85E26] text-slate-700'}`}>{p}</button>
                          );
                        })()}
                      </div>
-                     <button onClick={() => setDbPage(p => Math.min(totalPages, p+1))} disabled={dbPage === totalPages} className="px-4 py-2 bg-slate-200 text-slate-700 text-xs font-bold disabled:opacity-40 hover:bg-slate-300 rounded-sm">Volgende →</button>
-                     <button onClick={() => setDbPage(totalPages)} disabled={dbPage === totalPages} className="px-3 py-2 bg-slate-200 text-slate-700 text-xs font-bold disabled:opacity-40 hover:bg-slate-300 rounded-sm">»</button>
+	                     <button onClick={() => setDbPage(p => Math.min(totalPages, p+1))} disabled={visibleDbPage === totalPages} className="px-4 py-2 bg-slate-200 text-slate-700 text-xs font-bold disabled:opacity-40 hover:bg-slate-300 rounded-sm">Volgende →</button>
+	                     <button onClick={() => setDbPage(totalPages)} disabled={visibleDbPage === totalPages} className="px-3 py-2 bg-slate-200 text-slate-700 text-xs font-bold disabled:opacity-40 hover:bg-slate-300 rounded-sm">»</button>
                      <span className="text-slate-300 mx-1">|</span>
                      <form onSubmit={e => { e.preventDefault(); const v = parseInt((e.currentTarget.elements.namedItem('pg') as HTMLInputElement).value); if (v >= 1 && v <= totalPages) setDbPage(v); }} className="flex items-center gap-1">
-                       <input name="pg" type="number" min={1} max={totalPages} defaultValue={dbPage} key={dbPage} placeholder="pag." className="w-14 text-center border border-slate-300 text-xs py-2 rounded-sm focus:outline-none focus:border-[#009FE3]" />
+	                       <input name="pg" type="number" min={1} max={totalPages} defaultValue={visibleDbPage} key={visibleDbPage} placeholder="pag." className="w-14 text-center border border-slate-300 text-xs py-2 rounded-sm focus:outline-none focus:border-[#009FE3]" />
                        <button type="submit" className="px-3 py-2 bg-[#009FE3] text-white text-[10px] font-bold rounded-sm hover:bg-[#008ac5]">→</button>
                      </form>
                    </div>
@@ -7760,7 +7790,7 @@ const CollapsibleFilterGroup: React.FC<any> = ({ title, items, selectedItems, on
                                 <label key={item} className="flex items-center gap-3 cursor-pointer group hover:opacity-80">
                                     <div className={`w-4 h-4 border flex-shrink-0 flex items-center justify-center rounded-sm ${isSelected ? 'bg-[#E85E26] border-[#E85E26]' : 'bg-white border-slate-300'}`}>{isSelected && <Check className="w-3 h-3 text-white" />}</div>
                                     {colorFn && <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: colorFn(item) }} />}
-                                    <span className={`text-sm flex-1 ${isSelected ? 'text-slate-900 font-bold' : 'text-slate-600 font-medium'}`}>{item}</span>
+                                    <span className={`text-sm flex-1 ${isSelected ? 'text-slate-900 font-bold' : 'text-slate-600 font-medium'}`}>{sourceLabel(item)}</span>
                                     {count !== null && <span className="text-[10px] text-slate-300 font-medium ml-auto">{count.toLocaleString('nl-NL')}</span>}
                                     <input type="checkbox" className="hidden" checked={isSelected} onChange={() => onToggleItem(item)} />
                                 </label>
@@ -7780,7 +7810,13 @@ const CollapsibleFilterGroup: React.FC<any> = ({ title, items, selectedItems, on
     );
 };
 
-export default App;
+const AppWithBoundary: React.FC = () => (
+  <AppErrorBoundary>
+    <App />
+  </AppErrorBoundary>
+);
+
+export default AppWithBoundary;
 
 // ADVANCED SEARCH PARSER
 const advancedQueryKey = (b: any) => `${b.naam || ''}||${b.straat || ''}||${b.stad || ''}`;
