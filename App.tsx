@@ -31,7 +31,7 @@ const AI_FEATURES_ENABLED = false;
 // standaard demo-gebruiker, zodat niemand live hoeft in te typen. Uitgezet, want dat botste
 // met "blijf ingelogd tenzij je zelf uitlogt" — na uitloggen sprong het anders na 3 seconden
 // weer terug naar het demo-account. Weer op true zetten voor een collega-demo indien nodig.
-const DEMO_AUTO_LOGIN = false;
+const DEMO_AUTO_LOGIN = true;
 
 // ── Plaatsnaam-normalisatie ──────────────────────────────────────────────────
 // Sommige bronnen leveren dezelfde plaats onder net iets andere spelling aan
