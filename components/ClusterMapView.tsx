@@ -209,15 +209,11 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
   useEffect(() => {
     if (!mapContainerRef.current) return;
     mapRef.current = L.map(mapContainerRef.current, { preferCanvas: true }).setView([52.1326, 5.2913], 7);
-    const googleMapsApiKey = 'AIzaSyDtsaBhb-Uq3xWvqE6mnmv3sXYM3dM3TUY';
-    // scale=2 vraagt Google's tile-server om dubbele pixeldichtheid op (256px logisch, 512px
-    // beeldmateriaal) — zonder dit worden de standaard 256px tiles opgerekt op elk retina/
-    // high-DPI scherm en oogt de kaart wazig t.o.v. Google Maps zelf.
-    L.tileLayer(`https://mt1.google.com/vt/lyrs=r&x={x}&y={y}&z={z}&scale=2&key=${googleMapsApiKey}`, {
-      attribution: '© Google Maps',
-      maxZoom: 20,
+    // Gebruik gratis OpenStreetMap-tegels; geen API-sleutel benodigd.
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 19,
       minZoom: 1,
-      tileSize: 256,
     }).addTo(mapRef.current);
     markersLayerRef.current = L.layerGroup().addTo(mapRef.current);
     const rescaleCircles = () => {

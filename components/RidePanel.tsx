@@ -571,9 +571,9 @@ const RidePanel: React.FC<RidePanelProps> = ({
     try {
       const map = L.map(mapDivRef.current, { preferCanvas: true }).setView([52.1326, 5.2913], 7);
       mapRef.current = map;
-      const googleMapsApiKey = 'AIzaSyDtsaBhb-Uq3xWvqE6mnmv3sXYM3dM3TUY';
-      const tileLayer = L.tileLayer(`https://mt1.google.com/vt/lyrs=r&x={x}&y={y}&z={z}&scale=2&key=${googleMapsApiKey}`, {
-        attribution: '© Google Maps', maxZoom: 20, minZoom: 1, tileSize: 256,
+      // Gebruik gratis OpenStreetMap-tegels; geen API-sleutel benodigd.
+      const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors', maxZoom: 19, minZoom: 1,
       }).addTo(map);
       tileLayerRef.current = tileLayer;
       // Zichtbaar maken in de console als Google's tegel-server een tegel weigert (bv.
