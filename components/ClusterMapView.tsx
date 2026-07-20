@@ -201,9 +201,8 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
   const circleRadiusForZoom = (zoom: number): number => {
     const scale = 1 + (zoom - CIRCLE_BASE_ZOOM) * 0.09;
     const factor = Math.max(0.65, Math.min(1.45, scale));
-    return isTouchDevice
-      ? Math.max(9, Math.min(16, 11 * factor))
-      : Math.max(3.5, Math.min(8, 5 * factor));
+    // Use desktop sizing for all devices so mobile markers match PC
+    return Math.max(3.5, Math.min(8, 5 * factor));
   };
 
   // Initialize map once
