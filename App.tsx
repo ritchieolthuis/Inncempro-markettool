@@ -6387,7 +6387,9 @@ const App: React.FC = () => {
                     ? 'fixed inset-0 z-[70] bg-[#F8FAFC]'
                     : 'route-panel-shell md:flex-1 min-w-0 h-[min(72dvh,620px)] min-h-[420px] md:h-full md:min-h-0 overflow-hidden border-l-0'}>
                     <RouteMapPanel
-                      companies={(Array.from(selectedRaws.values()) as any[]).map(r => ({ id: r.naam, name: r.naam, city: r.stad || '', _raw: r }))}
+                      companies={(Array.from(selectedRaws.values()) as any[]).length > 0
+                        ? (Array.from(selectedRaws.values()) as any[]).map(r => ({ id: r.naam, name: r.naam, city: r.stad || '', _raw: r }))
+                        : foundCompanies.map((c: any) => ({ id: c.id || c.name, name: c.name || c.naam, city: c.city || c.stad || '', _raw: c._raw || c }))}
                       allData={activeData}
                       autoOptimize={autoOptimizeRoute}
                       isFullscreen={routeMapFullscreen}
