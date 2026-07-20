@@ -288,15 +288,13 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return;
     mapRef.current = L.map(mapDiv.current, { center: [52.3, 5.3], zoom: 7 });
-    const googleMapsApiKey = 'AIzaSyDtsaBhb-Uq3xWvqE6mnmv3sXYM3dM3TUY';
-    // scale=2 vraagt Google's tile-server om dubbele pixeldichtheid op (256px logisch, 512px
-    // beeldmateriaal) — zonder dit worden de standaard 256px tiles opgerekt op elk retina/
-    // high-DPI scherm en oogt de kaart wazig t.o.v. Google Maps zelf.
-    L.tileLayer(`https://mt1.google.com/vt/lyrs=r&x={x}&y={y}&z={z}&scale=2&key=${googleMapsApiKey}`, {
-      attribution: '© Google Maps',
-      maxZoom: 20,
+    // Gebruik OpenStreetMap tiles (gratis, geen API key nodig). OpenStreetMap is
+    // permissief voor reasonable usage in client-side apps — heavier server-side
+    // tiling should use a tile proxy or paid provider.
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 19,
       minZoom: 1,
-      tileSize: 256,
     }).addTo(mapRef.current);
     const ro = new ResizeObserver(() => mapRef.current?.invalidateSize());
     ro.observe(mapDiv.current);
