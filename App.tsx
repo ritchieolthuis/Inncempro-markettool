@@ -3205,6 +3205,32 @@ const App: React.FC = () => {
       clearSelection();
   };
 
+  // Voeg de geselecteerde bedrijven toe aan 'Bezoeken' (bulk)
+  const addSelectionToVisits = async (companies: DiscoveredCompany[], openVisitsTab: boolean = true) => {
+      if (!currentUser || companies.length === 0) return;
+      const now = new Date().toISOString();
+      const newVisits = companies.map(c => {
+          const raw = (c as any)._raw || {};
+          return {
+              naam: c.name,
+              stad: c.city || '',
+              straat: raw.straat || '',
+              postcode: raw.postcode || '',
+              telefoon: raw.telefoon || '',
+              email: raw.email || '',
+              datum: now,
+              matched: true,
+              created_at: now,
+          } as any;
+      });
+
+      await authService.addVisits(currentUser.id, newVisits);
+      // Herlaad visits in state
+      setVisits(await authService.getVisits(currentUser.id));
+      clearSelection();
+      if (openVisitsTab) setViewMode('visits');
+  };
+
   const toggleFilter = (set: React.Dispatch<React.SetStateAction<string[]>>, item: string) => {
     set(prev => prev.includes(item) ? prev.filter(i => i !== item) : [...prev, item]);
   };
@@ -5035,7 +5061,7 @@ const App: React.FC = () => {
                        );
                      })()}
                      {selectedIds.size > 0 && (
-                       <div className="relative">
+                       <div className="relative flex items-center gap-2">
                          <button
                            onClick={() => {
                              const companies: DiscoveredCompany[] = (Array.from(selectedRaws.values()) as any[]).map(b => ({ id: `${b.naam}|${b.stad}`, name: b.naam, city: b.stad || '', discoveredAt: new Date().toISOString() }));
@@ -5048,6 +5074,16 @@ const App: React.FC = () => {
                            className="px-3 py-1.5 bg-[#009FE3] hover:bg-[#008ac5] text-white text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 transition-colors"
                          >
                            <List className="w-3.5 h-3.5" /> Voeg toe aan lijst ({selectedIds.size})
+                         </button>
+
+                         <button
+                           onClick={() => {
+                             const companies: DiscoveredCompany[] = (Array.from(selectedRaws.values()) as any[]).map(b => ({ id: `${b.naam}|${b.stad}`, name: b.naam, city: b.stad || '', discoveredAt: new Date().toISOString(), _raw: b }));
+                             addSelectionToVisits(companies);
+                           }}
+                           className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 transition-colors"
+                         >
+                           <MapPin className="w-3.5 h-3.5" /> Voeg toe aan bezoeken ({selectedIds.size})
                          </button>
                        </div>
                      )}
