@@ -1229,9 +1229,10 @@ async function getAddressFromCoords(lat: number, lng: number): Promise<{ address
     const street = data.address.road || data.address.street || '';
     const house = data.address.house_number || '';
     const address = [street, house].filter(Boolean).join(' ').trim();
+    const postcode = data.address.postcode || '';
     const city = data.address.town || data.address.city || data.address.village || '';
     if (!address || !city) return null;
-    return { address: `${address}, ${city}`, city, coords: { lat, lng } };
+    return { address: `${address}, ${[postcode, city].filter(Boolean).join(' ')}`, city, coords: { lat, lng } };
   } catch (err) {
     return null;
   }
@@ -1801,6 +1802,7 @@ const App: React.FC = () => {
   // account aan te passen" staat er letterlijk) en hoort dus stabiel te blijven tot de gebruiker
   // 'm zelf wijzigt, niet ambient met GPS mee te bewegen.
   useEffect(() => {
+    if (!currentUser || prefAddressCoords) return;
     if (!navigator.geolocation) return;
     // Geen reverse-geocode (Nominatim-call) meer nodig — die diende alleen om prefAddress te
     // vullen, en dat gebeurt hier bewust niet meer (zie toelichting hierboven). searchOriginCoords
@@ -1814,7 +1816,7 @@ const App: React.FC = () => {
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
     return () => navigator.geolocation.clearWatch(watchId);
-  }, []);
+  }, [currentUser?.id, !!prefAddressCoords]);
 
   // Eerste keer laden zonder gecachete coördinaten (bijv. na een update van de app): geocode
   // het (eventueel standaard) adres één keer automatisch. Overgeslagen als de effect hieronder
@@ -1823,7 +1825,7 @@ const App: React.FC = () => {
   // deze geocode faalde voor het STANDAARD Hengelo-adres, en zette een foutstatus die bleef
   // hangen nadat de fris-toestel-detectie hieronder allang een eigen, andere plaats had
   // gevonden).
-  const freshDeviceRef = useRef(!localStorage.getItem('inncempro_pref_address') || !localStorage.getItem('inncempro_pref_address_coords'));
+  const freshDeviceRef = useRef(false);
   useEffect(() => {
     if (freshDeviceRef.current) return;
     if (!prefAddressCoords && prefAddress.trim()) geocodeAddress(prefAddress.trim());
@@ -1856,7 +1858,8 @@ const App: React.FC = () => {
   // draait dus maar één keer per apparaat/browser, niet bij elke page load (in tegenstelling
   // tot de live-GPS-effect hierboven, die WEL bij elke load ververst).
   useEffect(() => {
-    if (!freshDeviceRef.current) return;
+    if (!currentUser || prefAddressCoords) return;
+    if (localStorage.getItem(uKey('inncempro_pref_address_coords'))) return;
     if (!navigator.geolocation) return;
 
     navigator.geolocation.getCurrentPosition(
@@ -1891,9 +1894,9 @@ const App: React.FC = () => {
         // omdat het toestel geen GPS-toestemming gaf (los van "fris toestel" of niet).
         if (prefAddress.trim()) geocodeAddress(prefAddress.trim());
       },
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 } // cache 5 min
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 } // cache 5 min
     );
-  }, []);
+  }, [currentUser?.id, !!prefAddressCoords]);
 
   // Start background preloading of all addresses for map clustering
   useEffect(() => {
@@ -5835,7 +5838,7 @@ const App: React.FC = () => {
                       de mobiele top-offset kwam deze knop daar bovenop te overlappen i.p.v. op de
                       kaart zelf. left-16 (i.p.v. left-3) blijft nodig zodra de kaart wél meteen
                       bovenaan begint, om Leaflet's eigen zoom-knoppen (+/-) linksboven te ontwijken. */}
-                  <div className="absolute top-16 left-3 md:top-3 md:left-16 z-[1000] flex items-center gap-2 max-w-[calc(100%-1.5rem)]">
+                  <div className="absolute top-16 left-3 md:top-3 md:left-28 z-[1000] flex items-center gap-2 max-w-[calc(100%-1.5rem)] md:max-w-[calc(100%-8rem)]">
                     <button
                       onClick={() => { setMapSelectionMode(v => !v); if (mapSelectionMode) clearSelection(); }}
                       className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-sm text-xs font-bold uppercase tracking-wider shadow-sm border transition-colors ${mapSelectionMode ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'bg-white text-slate-600 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]'}`}
