@@ -391,10 +391,10 @@ const RidePanel: React.FC<RidePanelProps> = ({
       candidates.sort((a, b) => {
         const aWindow = Math.floor((a.progress - minRouteProgress) / ROUTE_PICK_WINDOW_KM);
         const bWindow = Math.floor((b.progress - minRouteProgress) / ROUTE_PICK_WINDOW_KM);
-        return (aWindow - bWindow)
+        return (bWindow - aWindow)
           || (a.insertionDetour - b.insertionDetour)
           || (a.detour - b.detour)
-          || (a.progress - b.progress);
+          || (b.progress - a.progress);
       });
     } else {
       candidates.sort((a, b) => a.haversine - b.haversine);

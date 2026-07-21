@@ -5838,7 +5838,7 @@ const App: React.FC = () => {
                       de mobiele top-offset kwam deze knop daar bovenop te overlappen i.p.v. op de
                       kaart zelf. left-16 (i.p.v. left-3) blijft nodig zodra de kaart wél meteen
                       bovenaan begint, om Leaflet's eigen zoom-knoppen (+/-) linksboven te ontwijken. */}
-                  <div className="absolute top-16 left-3 md:top-3 md:left-28 z-[1000] flex items-center gap-2 max-w-[calc(100%-1.5rem)] md:max-w-[calc(100%-8rem)]">
+                  <div className="absolute top-16 left-14 md:top-3 md:left-14 z-[1000] flex items-center gap-2 max-w-[calc(100%-4rem)]">
                     <button
                       onClick={() => { setMapSelectionMode(v => !v); if (mapSelectionMode) clearSelection(); }}
                       className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-sm text-xs font-bold uppercase tracking-wider shadow-sm border transition-colors ${mapSelectionMode ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'bg-white text-slate-600 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]'}`}

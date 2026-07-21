@@ -342,7 +342,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
     const bounds: L.LatLngExpression[] = [];
 
     markersLayerRef.current.eachLayer((layer: any) => {
-      const matchRegion = selectedRegions.size === 0 || selectedRegions.has(layer._provKey) || selectedRegions.has(layer._cityKey);
+      const matchRegion = selectedRegions.size > 0 && (selectedRegions.has(layer._provKey) || selectedRegions.has(layer._cityKey));
       const matchSource = selectedSources.has(sourceLabel(layer._entry?.source || 'Onbekend'));
       const visible = matchRegion && matchSource;
       layer.setStyle({ opacity: visible ? 1 : 0, fillOpacity: visible ? 0.9 : 0 });
@@ -445,7 +445,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
     return mapEntries.filter(e => {
       const prov = e.provincie || 'Onbekend';
       const stad = e.stad || 'Onbekend';
-      const matchRegion = selectedRegions.size === 0 || selectedRegions.has(provKey(prov)) || selectedRegions.has(cityKey(prov, stad));
+      const matchRegion = selectedRegions.size > 0 && (selectedRegions.has(provKey(prov)) || selectedRegions.has(cityKey(prov, stad)));
       const matchSource = selectedSources.has(sourceLabel(e.source || 'Onbekend'));
       return matchRegion && matchSource;
     }).length;
@@ -665,10 +665,10 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
             </div>
           </div>
         )}
-        {!loading && selectedSources.size === 0 && (
+        {!loading && (selectedSources.size === 0 || selectedRegions.size === 0) && (
           <div className="absolute inset-x-0 top-4 z-10 flex justify-center pointer-events-none">
             <div className="bg-white/95 border border-slate-200 rounded-sm px-4 py-2 text-xs text-slate-500 shadow-sm text-center mx-4">
-              Selecteer minimaal één bron om bedrijven op de kaart te zien
+              Selecteer een regio en minimaal één bron om bedrijven op de kaart te zien
             </div>
           </div>
         )}
