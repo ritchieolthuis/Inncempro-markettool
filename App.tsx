@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Loader2, ArrowRight, X, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send, Clock, Eye, List, Linkedin, Navigation, GripVertical, Copy } from 'lucide-react';
+import { Search, Loader2, ArrowRight, ArrowRightCircle, X, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send, Clock, Eye, List, Linkedin, Navigation, GripVertical, Copy } from 'lucide-react';
 import Papa from 'papaparse';
 import bouwgarantData from './bouwgarant_data.json';
 import cityCoords from './city_coords.json';
