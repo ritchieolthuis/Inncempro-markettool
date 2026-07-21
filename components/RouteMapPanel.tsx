@@ -170,6 +170,7 @@ interface Props {
   onAddressCorrection?: (naam: string, correction: { straat: string; postcode: string; stad: string }) => void;
   onDeleteEntry?: (naam: string, straat?: string) => void;
   onNavigate?: (target: 'database' | 'search', naam: string) => void;
+  onAddVisit?: (naam: string) => void;
   onAddCompany?: () => void;
   autoOptimize?: boolean;
   isFullscreen?: boolean;
@@ -178,7 +179,7 @@ interface Props {
 
 const DEFAULT_START = 'Lansinkesweg 4, 7553 AE Hengelo';
 
-const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAddressCorrection, onDeleteEntry, onNavigate, onAddCompany, autoOptimize, isFullscreen, onToggleFullscreen }) => {
+const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAddressCorrection, onDeleteEntry, onNavigate, onAddVisit, onAddCompany, autoOptimize, isFullscreen, onToggleFullscreen }) => {
   const mapDiv   = useRef<HTMLDivElement>(null);
   const mapRef   = useRef<L.Map | null>(null);
   const stopsRef = useRef<Stop[]>([]);
@@ -331,6 +332,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
           `<div style="font-family:system-ui;min-width:180px">
             <b style="font-size:13px;color:#1e293b">${raw.naam || stop.company.name || ''}</b>
             <div style="color:#64748b;font-size:12px;margin-top:2px">${[raw.straat, raw.postcode, raw.stad].filter(Boolean).join(', ')}</div>
+            <button onclick="window._inncemRouteVisit('${(raw.naam || stop.company.name || '').replace(/'/g, "\\'")}')" style="margin-top:8px;font-size:11px;color:#7c3aed;background:#faf5ff;border:1px solid #a855f7;padding:3px 8px;border-radius:4px;cursor:pointer">Toevoegen →</button>
           </div>`,
           { maxWidth: 240 },
         ).addTo(mapRef.current!);
@@ -406,14 +408,21 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
     stopsRef.current.forEach(s => s.marker?.remove());
     ordered.forEach((s, i) => {
       if (!mapRef.current || !s.coords) return;
+      const raw = s.company._raw || s.company;
+      const naam = raw.naam || s.company.name || '';
       s.marker = L.marker(s.coords, { icon: makePin('#009FE3', i + 1) })
-        .bindPopup(`<b>${(s.company._raw || s.company).naam || s.company.name || ''}</b>`)
+        .bindPopup(`<div style="font-family:system-ui;min-width:180px"><b>${naam}</b><br/><button onclick="window._inncemRouteVisit('${naam.replace(/'/g, "\\'")}')" style="margin-top:8px;font-size:11px;color:#7c3aed;background:#faf5ff;border:1px solid #a855f7;padding:3px 8px;border-radius:4px;cursor:pointer">Toevoegen →</button></div>`)
         .addTo(mapRef.current!);
     });
     setOrderedStops(ordered);
     setRouteMode(true);
     setIsOptimising(false);
   };
+
+  useEffect(() => {
+    (window as any)._inncemRouteVisit = (naam: string) => onAddVisit?.(naam);
+    return () => { delete (window as any)._inncemRouteVisit; };
+  }, [onAddVisit]);
 
   useEffect(() => {
     const ready = stopsRef.current.filter(s => s.coords).length;
@@ -1023,6 +1032,12 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
                       className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-slate-600 transition-opacity" title="Zoek op Google">
                       <Search className="w-3 h-3" />
                     </a>
+                    <button
+                      onClick={e => { e.stopPropagation(); const nm = raw.naam || s.company.name; if (nm) onAddVisit?.(nm); }}
+                      className="opacity-0 group-hover:opacity-100 p-0.5 text-violet-500 hover:text-violet-700 transition-opacity"
+                      title="Toevoegen aan Mijn bezoeken">
+                      <CalendarDays className="w-3 h-3" />
+                    </button>
                     {!routeMode && (
                       <button onClick={e => { e.stopPropagation(); setStopMenuOpen(stopMenuOpen === s.id ? null : s.id); }}
                         className="p-0.5 text-slate-300 hover:text-slate-600 flex-shrink-0 transition-colors" title="Opties">

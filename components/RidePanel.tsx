@@ -269,6 +269,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
   const [mapGeneration, setMapGeneration] = useState(0);
   // Welke stop wordt nu vervangen (toont buurt-suggesties); null = geen.
   const [replaceStopId, setReplaceStopId] = useState<string | null>(null);
+  const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
 
@@ -548,6 +549,37 @@ const RidePanel: React.FC<RidePanelProps> = ({
     (window as any)._inncemRideLiveZoeken = (naam: string) => onOpenInLiveZoeken?.(naam);
     return () => { delete (window as any)._inncemRideNav; delete (window as any)._inncemRideLiveZoeken; };
   }, [onOpenInDatabase, onOpenInLiveZoeken]);
+
+  useEffect(() => {
+    if (!alertMessage) return;
+    const t = setTimeout(() => setAlertMessage(null), 2600);
+    return () => clearTimeout(t);
+  }, [alertMessage]);
+
+  const addStopByName = (naam: string) => {
+    const b = allData.find(x => (x.naam || '').toLowerCase() === (naam || '').toLowerCase());
+    if (!b) return;
+    const coords = coordsFor(b, cityCoords);
+    if (!coords) return;
+    const last = currentPosition();
+    const km = last ? haversineKm(last.lat, last.lng, coords.lat, coords.lng) : 0;
+    
+    setChain(prev => {
+      const exists = prev.some(x => (x.bedrijf.naam || '').toLowerCase() === (b.naam || '').toLowerCase());
+      if (exists) {
+        setAlertMessage("Staat al in Onderweg");
+        return prev;
+      } else {
+        setAlertMessage(`${b.naam} toegevoegd aan Onderweg`);
+        return [...prev, { id: `${b.naam}_${Date.now()}`, bedrijf: b, coords, km }];
+      }
+    });
+  };
+
+  useEffect(() => {
+    (window as any)._inncemRideAdd = (naam: string) => addStopByName(naam);
+    return () => { delete (window as any)._inncemRideAdd; };
+  }, [allData, cityCoords, chain]);
 
   // Bouwt de kaart (tegels + markerlaag) helemaal opnieuw op in de huidige mapDivRef-
   // container. Gebruikt bij het openklappen van dit paneel ÉN bij elke fullscreen-toggle:
@@ -1188,6 +1220,14 @@ const RidePanel: React.FC<RidePanelProps> = ({
             nog in de achtergrond gerenderd was. */}
         <div className={isFullscreen ? 'fixed inset-0 z-[9999] bg-white flex flex-col' : 'relative isolate border-b border-slate-100'}>
           <div ref={mapDivRef} className={isFullscreen ? 'flex-1 w-full bg-slate-200' : 'w-full h-72 sm:h-80 bg-slate-200'} />
+          {alertMessage && (
+            <div className="absolute top-2 left-2 z-[1000] bg-white/95 border border-emerald-200 shadow-lg rounded-sm px-3 py-2 flex items-center gap-2">
+              <span className="w-6 h-6 rounded-sm bg-emerald-500 flex items-center justify-center flex-shrink-0">
+                <Check className="w-3.5 h-3.5 text-white" />
+              </span>
+              <span className="text-xs font-bold text-slate-800">{alertMessage}</span>
+            </div>
+          )}
           <button
             onClick={() => setIsFullscreen(v => !v)}
             title={isFullscreen ? 'Verklein kaart' : 'Kaart volledig scherm'}

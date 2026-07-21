@@ -6359,6 +6359,10 @@ const App: React.FC = () => {
                       onClose={() => { setShowRouteMap(false); setAutoOptimizeRoute(false); setRouteMapFullscreen(false); }}
                       onAddressCorrection={handleAddressCorrection}
                       onDeleteEntry={handleDeleteEntry}
+                      onAddVisit={(naam) => {
+                        const b = activeData.find(x => x.naam === naam);
+                        if (b) addVisit(b);
+                      }}
                       onNavigate={(target, naam) => {
                         if (target === 'database') {
                           setDbSearch(naam); setDbPage(1); setViewMode('database');

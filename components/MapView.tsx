@@ -227,6 +227,7 @@ function makePopup(b: any, color: string, isFav: boolean, stopNum?: number, vest
     <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
       <button onclick="window._inncemNav('database','${naam}')" style="font-size:11px;color:#1e293b;background:#f1f5f9;border:1px solid #cbd5e1;padding:3px 8px;border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:4px"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>Database</button>
       <button onclick="window._inncemNav('search','${naam}')" style="font-size:11px;color:#E85E26;background:#fff7f5;border:1px solid #E85E26;padding:3px 8px;border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:4px"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>Live Zoeken</button>
+      <button onclick="window._inncemNav('visit','${naam}')" style="font-size:11px;color:#7c3aed;background:#faf5ff;border:1px solid #a855f7;padding:3px 8px;border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:4px"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>Toevoegen</button>
     </div>
     ${vestigingenHtml}
     <div style="margin-top:8px">${badge}</div>
@@ -364,12 +365,13 @@ interface Props {
   onDeleteEntry?: (naam: string, straat?: string) => void;
   onMarkerCountChange?: (count: number) => void;
   onAddCompany?: () => void;
+  onAddVisit?: (naam: string) => void;
 }
 
 const DEFAULT_START = 'Lansinkesweg 4, 7553 AE Hengelo';
 
 // ─── Component ────────────────────────────────────────────────────────────────
-const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], selectedIds = new Set(), selectedCompany, onToggleSelect, onClearSelection, bottomOffset = 0, onNavigate, onAddressCorrection, onDeleteEntry, onMarkerCountChange, onAddCompany }) => {
+const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], selectedIds = new Set(), selectedCompany, onToggleSelect, onClearSelection, bottomOffset = 0, onNavigate, onAddressCorrection, onDeleteEntry, onMarkerCountChange, onAddCompany, onAddVisit }) => {
   const hasSelection = selectedItems.length > 0;
   const [mapSearch, setMapSearch] = useState('');
   const searchResults = useMemo(() => {
@@ -738,8 +740,14 @@ const MapView: React.FC<Props> = ({ allData, favorites, selectedItems = [], sele
 
   // Keep global nav handler in sync with prop
   useEffect(() => {
-    (window as any)._inncemNav = (target: 'database' | 'search', naam: string) => onNavigate?.(target, naam);
-  }, [onNavigate]);
+    (window as any)._inncemNav = (target: 'database' | 'search' | 'visit', naam: string) => {
+      if (target === 'visit') {
+        onAddVisit?.(naam);
+        return;
+      }
+      onNavigate?.(target, naam);
+    };
+  }, [onNavigate, onAddVisit]);
 
   // Auto-select "Geselecteerde items" when items are provided and nothing is selected yet
   useEffect(() => {
