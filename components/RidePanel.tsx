@@ -279,6 +279,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
 
   const mapSelectionModeRef = useRef(mapSelectionMode);
   const toggleSelectSuggestionRef = useRef<(naam: string) => void>(() => {});
+  const suggestionMarkersRef = useRef<Array<{ marker: L.CircleMarker; naam: string; bedrijf: any; kmStr: string }>>([]);
 
   useEffect(() => { mapSelectionModeRef.current = mapSelectionMode; }, [mapSelectionMode]);
 
@@ -791,9 +792,11 @@ const RidePanel: React.FC<RidePanelProps> = ({
 
     // "Toon alles" toont alle bedrijven. Hover-zoom alleen voor eerste N bedrijven (performance).
     const MAX_HOVER_ZOOM_MARKERS = 300;
+    suggestionMarkersRef.current = [];
     suggestions.forEach((s, si) => {
       if (!s?.coords || typeof s.coords.lat !== 'number' || typeof s.coords.lng !== 'number') return;
       const isSelected = selectedSuggestionNames.has(s.bedrijf.naam);
+      const kmStr = `${(typeof s.km === 'number' ? s.km : 0).toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`;
       const bolletje = L.circleMarker([s.coords.lat, s.coords.lng], {
         radius: isSelected ? suggestionRadius + 3 : suggestionRadius,
         color: isSelected ? '#E85E26' : '#fff',
@@ -802,7 +805,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
         fillOpacity: 0.95,
         interactive: true,
       })
-        .bindPopup(popupHtml(s.bedrijf, `${(typeof s.km === 'number' ? s.km : 0).toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`, isSelected), popupOpts);
+        .bindPopup(popupHtml(s.bedrijf, kmStr, isSelected), popupOpts);
 
       bolletje.on('click', function () {
         if (mapSelectionModeRef.current) {
@@ -811,12 +814,14 @@ const RidePanel: React.FC<RidePanelProps> = ({
       });
 
       bolletje.addTo(markersLayerRef.current!);
+      suggestionMarkersRef.current.push({ marker: bolletje, naam: s.bedrijf.naam, bedrijf: s.bedrijf, kmStr });
+
       if (si >= MAX_HOVER_ZOOM_MARKERS) { bounds.push([s.coords.lat, s.coords.lng]); return; }
       // Zelfde hover-gedrag als de bolletjes op de Kaart-tab: even iets groter en geleidelijk
       // inzoomen zolang de muis erop blijft staan.
       attachHoverZoom(bolletje, map,
-        () => bolletje.setRadius(isSelected ? suggestionRadius + 5 : suggestionRadius + 3),
-        () => bolletje.setRadius(isSelected ? suggestionRadius + 3 : suggestionRadius),
+        () => bolletje.setRadius(selectedSuggestionNames.has(s.bedrijf.naam) ? suggestionRadius + 5 : suggestionRadius + 3),
+        () => bolletje.setRadius(selectedSuggestionNames.has(s.bedrijf.naam) ? suggestionRadius + 3 : suggestionRadius),
         () => mapSelectionModeRef.current
       );
       bounds.push([s.coords.lat, s.coords.lng]);
@@ -831,6 +836,22 @@ const RidePanel: React.FC<RidePanelProps> = ({
       mapRef.current.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [40, 40], maxZoom: 14 });
     }
   }, [startCoords, startLabel, chain, suggestions, destCoords, destLabel, routeLine, mapGeneration]);
+
+  // Update de stijlen (oranje cirkel) van ALLE geselecteerde bolletjes direct zodra selectedSuggestionNames
+  // verandert — zonder de kaart te re-renderen of fitBounds aan te roepen (kaart blijft stabiel!).
+  useEffect(() => {
+    const suggestionRadius = 6;
+    suggestionMarkersRef.current.forEach(({ marker, naam, bedrijf, kmStr }) => {
+      const isSelected = selectedSuggestionNames.has(naam);
+      marker.setStyle({
+        radius: isSelected ? suggestionRadius + 3 : suggestionRadius,
+        color: isSelected ? '#E85E26' : '#fff',
+        weight: isSelected ? 3 : 1.5,
+        fillOpacity: 0.95,
+      });
+      marker.setPopupContent(popupHtml(bedrijf, kmStr, isSelected));
+    });
+  }, [selectedSuggestionNames]);
 
   // Fullscreen togglet de containergrootte (klein <-> volledig scherm) in één keer, een veel
   // grotere sprong dan de geleidelijke resizes die de ResizeObserver hierboven normaal opvangt
