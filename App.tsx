@@ -2910,6 +2910,7 @@ const App: React.FC = () => {
                           id: 'inncempro_auto_user',
                           username: 'Inncempro',
                           email: 'info@inncempro.nl',
+                          avatarUrl: 'https://www.inncempro.nl/wp-content/uploads/2018/06/Logo-Inncempro-facebook.png',
                           createdAt: Date.now(),
                       };
                       await applyUser(fallbackUser);
@@ -6207,11 +6208,11 @@ const App: React.FC = () => {
                               </button>
                             </div>
                           )}
-                          <div className="grid sm:grid-cols-2 gap-3">
+                          <div className="grid sm:grid-cols-2 gap-3 min-w-0">
                             {active.companies.map((c, i) => (
                               <div
                                 key={i}
-                                className={`flex items-center gap-4 bg-white border rounded-xl px-5 py-4 transition-colors ${selectedListCompanyIndices.has(i) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`}
+                                className={`flex items-center gap-2.5 sm:gap-4 bg-white border rounded-xl px-3 sm:px-5 py-3 sm:py-4 overflow-hidden transition-colors ${selectedListCompanyIndices.has(i) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`}
                               >
                                 <input
                                   type="checkbox"
@@ -6226,17 +6227,17 @@ const App: React.FC = () => {
                                 />
                                 <button
                                   onClick={() => { setCity(c.name); setViewMode('search'); executeSearch(undefined, undefined, c.name); }}
-                                  className="flex items-center gap-4 flex-1 min-w-0 text-left"
+                                  className="flex items-center gap-2.5 sm:gap-4 flex-1 min-w-0 text-left overflow-hidden"
                                 >
-                                  <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
+                                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
                                     <Building className="w-4 h-4 text-slate-400" />
                                   </div>
-                                  <div className="min-w-0 flex-1">
-                                    <p className="font-bold text-slate-900 truncate">{c.name}</p>
+                                  <div className="min-w-0 flex-1 overflow-hidden">
+                                    <p className="font-bold text-slate-900 truncate text-xs sm:text-sm">{c.name}</p>
                                     {c.city && <p className="text-xs text-slate-400 truncate mt-0.5">{c.city}</p>}
                                   </div>
                                 </button>
-                                <button onClick={() => { if (confirm(`${c.name} uit deze lijst verwijderen?`)) removeCompanyFromList(active.id, i); }} className="flex-shrink-0 text-slate-300 hover:text-red-400">
+                                <button onClick={() => { if (confirm(`${c.name} uit deze lijst verwijderen?`)) removeCompanyFromList(active.id, i); }} className="flex-shrink-0 text-slate-300 hover:text-red-400 p-1">
                                   <X className="w-4 h-4" />
                                 </button>
                               </div>
