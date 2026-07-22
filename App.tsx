@@ -5841,6 +5841,12 @@ const App: React.FC = () => {
                           await authService.addVisits(currentUser.id, newVisits);
                           setVisits(await authService.getVisits(currentUser.id));
                         }}
+                        onSaveRoute={(route) => {
+                          const next = [...(savedRoutes || []), { ...route, id: String(Date.now()) }];
+                          setSavedRoutes(next);
+                          localStorage.setItem('inncempro_saved_routes', JSON.stringify(next));
+                          showToast(`✓ Route '${route.name}' opgeslagen in Mijn Bezoeken`);
+                        }}
                       />
                     </div>
                   )}

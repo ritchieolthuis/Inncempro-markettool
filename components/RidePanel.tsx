@@ -1846,12 +1846,6 @@ const RidePanel: React.FC<RidePanelProps> = ({
                     <VoiceInputButton onResult={setSaveListName} />
                   </div>
                 </div>
-                <button
-                  onClick={finishRide}
-                  className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold uppercase tracking-wider rounded-sm flex items-center justify-center gap-2"
-                >
-                  <Save className="w-4 h-4" /> Bezoeken registreren ({chain.length})
-                </button>
                 {onSaveRoute && (
                   <button
                     onClick={() => {
@@ -1867,6 +1861,12 @@ const RidePanel: React.FC<RidePanelProps> = ({
                     <Save className="w-4 h-4" /> Route opslaan
                   </button>
                 )}
+                <button
+                  onClick={finishRide}
+                  className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold uppercase tracking-wider rounded-sm flex items-center justify-center gap-2"
+                >
+                  <Save className="w-4 h-4" /> Bezoeken registreren ({chain.length})
+                </button>
               </div>
             )}
           </>
