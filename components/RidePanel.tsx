@@ -273,6 +273,12 @@ const RidePanel: React.FC<RidePanelProps> = ({
   // Welke stop wordt nu vervangen (toont buurt-suggesties); null = geen.
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [selectedSuggestionNames, setSelectedSuggestionNames] = useState<Set<string>>(new Set());
+  const [mapSelectionMode, setMapSelectionMode] = useState(false);
+
+  const mapSelectionModeRef = useRef(mapSelectionMode);
+  const toggleSelectSuggestionRef = useRef<(naam: string) => void>(() => {});
+
+  useEffect(() => { mapSelectionModeRef.current = mapSelectionMode; }, [mapSelectionMode]);
 
   const toggleSelectSuggestion = (naam: string) => {
     setSelectedSuggestionNames(prev => {
@@ -282,6 +288,8 @@ const RidePanel: React.FC<RidePanelProps> = ({
       return next;
     });
   };
+
+  useEffect(() => { toggleSelectSuggestionRef.current = toggleSelectSuggestion; }, [toggleSelectSuggestion]);
 
   const selectAllPageSuggestions = () => {
     setSelectedSuggestionNames(prev => {
@@ -765,8 +773,15 @@ const RidePanel: React.FC<RidePanelProps> = ({
         fillOpacity: 0.95,
         interactive: true,
       })
-        .bindPopup(popupHtml(s.bedrijf, `${(typeof s.km === 'number' ? s.km : 0).toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`, isSelected), popupOpts)
-        .addTo(markersLayerRef.current!);
+        .bindPopup(popupHtml(s.bedrijf, `${(typeof s.km === 'number' ? s.km : 0).toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`, isSelected), popupOpts);
+
+      bolletje.on('click', function () {
+        if (mapSelectionModeRef.current) {
+          toggleSelectSuggestionRef.current?.(s.bedrijf.naam);
+        }
+      });
+
+      bolletje.addTo(markersLayerRef.current!);
       if (si >= MAX_HOVER_ZOOM_MARKERS) { bounds.push([s.coords.lat, s.coords.lng]); return; }
       // Zelfde hover-gedrag als de bolletjes op de Kaart-tab: even iets groter en geleidelijk
       // inzoomen zolang de muis erop blijft staan.
@@ -1280,8 +1295,44 @@ const RidePanel: React.FC<RidePanelProps> = ({
             nog in de achtergrond gerenderd was. */}
         <div className={isFullscreen ? 'fixed inset-0 z-[9999] bg-white flex flex-col' : 'relative isolate border-b border-slate-100'}>
           <div ref={mapDivRef} className={isFullscreen ? 'flex-1 w-full bg-slate-200' : 'w-full h-72 sm:h-80 bg-slate-200'} />
+          
+          {/* Selecteren-knop op de kaart in Mijn Bezoeken (top-2 left-2) */}
+          <div className="absolute top-2 left-2 z-[1000] flex items-center gap-2 max-w-[calc(100%-4rem)]">
+            <button
+              onClick={() => { setMapSelectionMode(v => !v); if (mapSelectionMode) deselectAllPageSuggestions(); }}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-sm text-xs font-bold uppercase tracking-wider shadow-sm border transition-colors ${mapSelectionMode ? 'bg-[#E85E26] text-white border-[#E85E26]' : 'bg-white text-slate-600 border-slate-200 hover:border-[#E85E26] hover:text-[#E85E26]'}`}
+            >
+              <Check className="w-3.5 h-3.5" /> {mapSelectionMode ? 'Selecteren aan' : 'Selecteren'}
+            </button>
+            {mapSelectionMode && (
+              <span className="text-[10px] text-slate-500 bg-white/95 px-2 py-1 rounded-sm shadow-sm truncate hidden sm:inline">
+                Tik bolletjes op de kaart aan om te selecteren
+              </span>
+            )}
+          </div>
+
+          {/* Drijvende actiebalk voor geselecteerde items op de kaart */}
+          {selectedSuggestionNames.size > 0 && (
+            <div className="absolute bottom-3 left-3 z-[1000] flex items-center gap-2 bg-white/95 backdrop-blur-sm border border-[#E85E26] p-2 sm:px-3 sm:py-2 rounded-lg shadow-lg max-w-[calc(100%-2rem)]">
+              <span className="text-xs font-bold text-slate-800 flex-shrink-0">{selectedSuggestionNames.size} geselecteerd</span>
+              <button
+                onClick={advanceSelected}
+                className="px-3 py-1.5 bg-[#E85E26] hover:bg-[#d14d1b] text-white text-xs font-bold uppercase tracking-wider rounded-md flex items-center gap-1 shadow-sm transition-colors flex-shrink-0"
+              >
+                <Check className="w-3.5 h-3.5" /> Toevoegen aan bezoeken
+              </button>
+              <button
+                onClick={deselectAllPageSuggestions}
+                className="text-xs font-bold text-slate-400 hover:text-slate-600 p-1 flex-shrink-0"
+                title="Selectie wis"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {alertMessage && (
-            <div className="absolute top-2 left-2 z-[1000] bg-white/95 border border-emerald-200 shadow-lg rounded-sm px-3 py-2 flex items-center gap-2">
+            <div className="absolute top-12 left-2 z-[1000] bg-white/95 border border-emerald-200 shadow-lg rounded-sm px-3 py-2 flex items-center gap-2">
               <span className="w-6 h-6 rounded-sm bg-emerald-500 flex items-center justify-center flex-shrink-0">
                 <Check className="w-3.5 h-3.5 text-white" />
               </span>
