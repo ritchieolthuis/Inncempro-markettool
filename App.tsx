@@ -1830,35 +1830,18 @@ const App: React.FC = () => {
   // waarvoor ooit coördinaten waren opgehaald). "Mijn adres" is een per-account instelling ("Per
   // account aan te passen" staat er letterlijk) en hoort dus stabiel te blijven tot de gebruiker
   // 'm zelf wijzigt, niet ambient met GPS mee te bewegen.
-  useEffect(() => {
-    if (!currentUser || prefAddressCoords) return;
-    if (!navigator.geolocation) return;
-    // Geen reverse-geocode (Nominatim-call) meer nodig — die diende alleen om prefAddress te
-    // vullen, en dat gebeurt hier bewust niet meer (zie toelichting hierboven). searchOriginCoords
-    // heeft alleen lat/lng nodig, dus rechtstreeks vanaf de GPS-positie zetten.
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        setSearchOriginCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setActiveSearchOriginLabel('mijn locatie');
-      },
-      () => { /* geweigerd/fout: geen actie */ },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, [currentUser?.id, !!prefAddressCoords]);
+
 
   // Eerste keer laden zonder gecachete coördinaten (bijv. na een update van de app): geocode
-  // het (eventueel standaard) adres één keer automatisch. Overgeslagen als de effect hieronder
-  // toch al bezig is een fris-toestel-detectie te doen — anders kunnen beide tegelijk lopen en
-  // elkaars foutstatus overschrijven (was de kern van de "stad i.p.v. exacte locatie"-bug:
-  // deze geocode faalde voor het STANDAARD Hengelo-adres, en zette een foutstatus die bleef
-  // hangen nadat de fris-toestel-detectie hieronder allang een eigen, andere plaats had
-  // gevonden).
-  const freshDeviceRef = useRef(false);
+  // het (eventueel standaard) adres één keer automatisch.
+  // Geen automatische GPS-opvraging meer bij het openen van de app — dit voorkomt dat de browser
+  // bij elke herlaadbeurt opnieuw om locatie-permissie vraagt. Toestemming wordt pas gevraagd
+  // wanneer de gebruiker in de app bewust op een locatie-knop klikt.
   useEffect(() => {
-    if (freshDeviceRef.current) return;
-    if (!prefAddressCoords && prefAddress.trim()) geocodeAddress(prefAddress.trim());
-  }, []);
+    if (!prefAddressCoords && prefAddress.trim()) {
+      geocodeAddress(prefAddress.trim());
+    }
+  }, [prefAddressCoords, prefAddress]);
 
   // Instellingen > Mijn adres toonde soms "Adres niet gevonden" voor een adres dat prima
   // geocodeerbaar is (bijv. het standaard kantooradres) — niet omdat de opzoek FAALDE, maar
@@ -1880,51 +1863,10 @@ const App: React.FC = () => {
 
   // Dit account wordt door meerdere collega's op verschillende apparaten gebruikt — iedereen
   // stilzwijgend het gedeelde Hengelo-kantooradres laten gebruiken voor afstanden/relevantie
-  // klopt dan niet. Heeft dít specifieke apparaat/deze browser nog nooit zelf een adres
-  // ingesteld (fris toestel, geen 'inncempro_pref_address' in localStorage), vraag dan
-  // automatisch de locatie van het toestel op en gebruik die voortaan als uitgangspunt voor
-  // Instellingen > Mijn adres. Wie zelf al bewust iets instelde, wordt met rust gelaten —
-  // draait dus maar één keer per apparaat/browser, niet bij elke page load (in tegenstelling
-  // tot de live-GPS-effect hierboven, die WEL bij elke load ververst).
+  // klopt dan niet.
   useEffect(() => {
     if (!currentUser || prefAddressCoords) return;
     if (localStorage.getItem(uKey('inncempro_pref_address_coords'))) return;
-    if (!navigator.geolocation) return;
-
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-
-        // Reverse-geocode naar het EXACTE straatadres (niet alleen de dichtstbijzijnde
-        // plaatsnaam) — anders toont Instellingen straks bijv. "Amsterdam" terwijl de
-        // coördinaten (en dus de afstandsberekening) wél exact zijn, wat verwarrend
-        // oogt alsof afstand alleen op stad/dorp-niveau zou werken.
-        const reverse = await getAddressFromCoords(coords.lat, coords.lng);
-        const displayName = reverse?.address
-          || (findNearestCity(coords.lat, coords.lng) ? toDisplayCityName(findNearestCity(coords.lat, coords.lng)!.name) : 'Mijn locatie');
-
-        // Sla BEIDE op: het (liefst exacte) adres PLUS de exacte GPS-coördinaten. De coördinaten
-        // komen sowieso rechtstreeks van de GPS (dus altijd precies), ongeacht of de reverse-
-        // geocode voor de LEESBARE tekst lukte — dus GEEN foutstatus tonen als alleen de
-        // human-readable naam terugvalt op de plaatsnaam; de afstandsberekening zelf klopt.
-        setPrefAddressState(displayName);
-        localStorage.setItem(uKey('inncempro_pref_address'), displayName);
-        setPrefAddressCoords(coords);
-        setPrefAddressCoordsFor(displayName);
-        setPrefAddressGeocodeError(false);
-        setPrefAddressApproximate(false);
-        localStorage.setItem(uKey('inncempro_pref_address_coords'), JSON.stringify(coords));
-        localStorage.setItem(uKey('inncempro_pref_address_coords_for'), displayName);
-      },
-      (error) => {
-        // Geweigerd, timeout, of niet beschikbaar op dit toestel: val terug op het (eventueel
-        // standaard) adres via Nominatim, zodat er ALSNOG een poging tot precieze coördinaten
-        // gedaan wordt — zonder deze fallback bleef prefAddressCoords hier anders leeg, puur
-        // omdat het toestel geen GPS-toestemming gaf (los van "fris toestel" of niet).
-        if (prefAddress.trim()) geocodeAddress(prefAddress.trim());
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 } // cache 5 min
-    );
   }, [currentUser?.id, !!prefAddressCoords]);
 
   // Start background preloading of all addresses for map clustering
@@ -2936,7 +2878,7 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [searchState, setSearchState] = useState<SearchState>({ isLoading: false, data: null, error: null });
 
-  // INITIAL LOAD
+  // INITIAL LOAD & AUTO LOGIN
   useEffect(() => {
       let cancelled = false;
       const applyUser = async (user: User) => {
@@ -2953,12 +2895,26 @@ const App: React.FC = () => {
       (async () => {
           const user = await authService.getCurrentUser();
           if (user) { await applyUser(user); return; }
-          // TIJDELIJK voor demo aan collega's geweest, nu uitgezet (zie DEMO_AUTO_LOGIN-
-          // definitie bovenaan) zodat uitloggen ook echt uitgelogd blijft.
-          if (DEMO_AUTO_LOGIN) {
+
+          // Tenzij iemand expliciet is uitgelogd: toon het inlogscherm kort (2 seconden) en log automatisch in
+          const isLoggedOut = localStorage.getItem('inncempro_user_logged_out') === 'true';
+          if (!isLoggedOut) {
               setTimeout(async () => {
-                  try { await applyUser(await authService.login('Inncempro', 'inncempro')); } catch { /* negeren */ }
-              }, 3000);
+                  if (cancelled) return;
+                  try {
+                      const autoUser = await authService.login('Inncempro', 'inncempro');
+                      await applyUser(autoUser);
+                  } catch (e) {
+                      // Fallback voor offline / demo
+                      const fallbackUser: User = {
+                          id: 'inncempro_auto_user',
+                          username: 'Inncempro',
+                          email: 'info@inncempro.nl',
+                          createdAt: Date.now(),
+                      };
+                      await applyUser(fallbackUser);
+                  }
+              }, 2000);
           }
       })();
       return () => { cancelled = true; };
@@ -2987,6 +2943,7 @@ const App: React.FC = () => {
   };
 
   const finishLogin = async (user: User) => {
+      localStorage.removeItem('inncempro_user_logged_out');
       setCurrentUser(user);
       setFavorites(await authService.getFavorites(user.id));
       setLists(await authService.getLists(user.id));
@@ -2999,6 +2956,7 @@ const App: React.FC = () => {
   };
 
   const handleLogout = async () => {
+      localStorage.setItem('inncempro_user_logged_out', 'true');
       await authService.logout();
       setCurrentUser(null);
       setFoundCompanies([]);
