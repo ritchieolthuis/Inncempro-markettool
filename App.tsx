@@ -2006,7 +2006,7 @@ const App: React.FC = () => {
   // in beide tegelijk gesleept worden, dus scheelt dit dubbele state.
   const [tabDragIndex, setTabDragIndex] = useState<number | null>(null);
   const [tabDragOverIndex, setTabDragOverIndex] = useState<number | null>(null);
-  const [showRidePanel, setShowRidePanel] = useState(false);
+  const [showRidePanel, setShowRidePanel] = useState(true);
   // Onderweg-route hier opgetild i.p.v. in RidePanel zelf, zodat de opgebouwde route blijft
   // staan als je naar een ander tabblad gaat en terugkomt (RidePanel unmount dan wél, maar
   // App niet). Blijft in-memory: leeg bij paginarefresh of als je 'm expliciet reset.
