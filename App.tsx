@@ -6208,11 +6208,11 @@ const App: React.FC = () => {
                               </button>
                             </div>
                           )}
-                          <div className="grid sm:grid-cols-2 gap-3 min-w-0">
+                          <div className="grid sm:grid-cols-2 gap-3 min-w-0 w-full overflow-hidden">
                             {active.companies.map((c, i) => (
                               <div
                                 key={i}
-                                className={`flex items-center gap-2.5 sm:gap-4 bg-white border rounded-xl px-3 sm:px-5 py-3 sm:py-4 overflow-hidden transition-colors ${selectedListCompanyIndices.has(i) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`}
+                                className={`flex items-center gap-2 sm:gap-3 bg-white border rounded-xl px-2.5 sm:px-4 py-2.5 sm:py-3 w-full min-w-0 overflow-hidden transition-colors ${selectedListCompanyIndices.has(i) ? 'border-[#E85E26] ring-1 ring-[#E85E26]/30' : 'border-slate-200 hover:border-[#009FE3]'}`}
                               >
                                 <input
                                   type="checkbox"
@@ -6225,9 +6225,10 @@ const App: React.FC = () => {
                                   }}
                                   className="w-4 h-4 accent-[#009FE3] flex-shrink-0"
                                 />
-                                <button
+                                <div
+                                  role="button"
                                   onClick={() => { setCity(c.name); setViewMode('search'); executeSearch(undefined, undefined, c.name); }}
-                                  className="flex items-center gap-2.5 sm:gap-4 flex-1 min-w-0 text-left overflow-hidden"
+                                  className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0 text-left overflow-hidden cursor-pointer"
                                 >
                                   <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
                                     <Building className="w-4 h-4 text-slate-400" />
@@ -6236,7 +6237,7 @@ const App: React.FC = () => {
                                     <p className="font-bold text-slate-900 truncate text-xs sm:text-sm">{c.name}</p>
                                     {c.city && <p className="text-xs text-slate-400 truncate mt-0.5">{c.city}</p>}
                                   </div>
-                                </button>
+                                </div>
                                 <button onClick={() => { if (confirm(`${c.name} uit deze lijst verwijderen?`)) removeCompanyFromList(active.id, i); }} className="flex-shrink-0 text-slate-300 hover:text-red-400 p-1">
                                   <X className="w-4 h-4" />
                                 </button>
