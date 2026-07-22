@@ -6,7 +6,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
-      base: '/Inncempro-markettool/',
+      base: mode === 'development' ? '/' : '/Inncempro-markettool/',
       server: {
         port: parseInt(process.env.PORT || '5173'),
         host: '0.0.0.0',

@@ -25,7 +25,7 @@ function popupHtml(b: any, extra?: string): string {
     ${b.telefoon ? `<div style="margin-top:4px;color:#374151;font-size:12px">📞 ${b.telefoon}</div>` : ''}
     ${b.email ? `<div style="color:#374151;font-size:12px">✉️ ${b.email}</div>` : ''}
     <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-      <button onclick="window._inncemRideLiveZoeken('${naamEsc}')" style="font-size:11px;color:#E85E26;background:none;border:1px solid #E85E26;padding:3px 8px;border-radius:4px;cursor:pointer">Live Zoeken →</button>
+      <button onclick="window._inncemAddToOnderweg('${naamEsc}')" style="font-size:11px;color:#009FE3;background:#f0f9ff;border:1px solid #009FE3;padding:3px 8px;border-radius:4px;cursor:pointer">Toevoegen aan bezoeken →</button>
       <a href="https://www.google.com/maps/search/?api=1&query=${mapsQuery}" target="_blank" rel="noopener" style="font-size:11px;color:#16a34a;border:1px solid #16a34a;padding:3px 8px;border-radius:4px;text-decoration:none">Google Maps →</a>
       ${website ? `<a href="${website}" target="_blank" rel="noopener" style="font-size:11px;color:#009FE3;border:1px solid #009FE3;padding:3px 8px;border-radius:4px;text-decoration:none">Website →</a>` : ''}
     </div>
@@ -68,9 +68,10 @@ function attachHoverZoom(layer: L.Marker | L.CircleMarker, map: L.Map, onHover?:
       zoomInterval = setInterval(() => {
         const z = map.getZoom();
         if (z >= HOVER_ZOOM_MAX) { if (zoomInterval) clearInterval(zoomInterval); zoomInterval = null; return; }
-        map.setZoomAround(latlng, z + 1, { animate: true });
-      }, 900);
-    }, 400);
+        const nextZoom = Math.min(HOVER_ZOOM_MAX, z + 0.8);
+        map.setZoomAround(latlng, nextZoom, { animate: true, duration: 0.3 });
+      }, 350);
+    }, 350);
   });
   layer.on('mouseout', function () {
     if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
@@ -102,6 +103,7 @@ interface RidePanelProps {
   isVisitedCompany: (b: any) => boolean;
   onSaveAsList: (naam: string, bedrijven: any[]) => void;
   onLogVisits: (bedrijven: any[]) => void;
+  onSaveRoute?: (route: { name: string; stops: string[]; savedAt: string }) => void;
   onOpenInDatabase?: (naam: string) => void;
   // Zelfde "Zoeken in Live"-actie als de Bedrijvendatabase-kaartjes: zoekt dit bedrijf op in
   // Live Zoeken, dat (in tegenstelling tot de database) ook de rij-afstand in meters toont.
@@ -191,7 +193,7 @@ async function geocodeAddress(query: string): Promise<Coords | null> {
 }
 
 const RidePanel: React.FC<RidePanelProps> = ({
-  allData, cityCoords, isVisitedCompany, onSaveAsList, onLogVisits, onOpenInDatabase, onOpenInLiveZoeken,
+  allData, cityCoords, isVisitedCompany, onSaveAsList, onLogVisits, onSaveRoute, onOpenInDatabase, onOpenInLiveZoeken,
   startCoords, setStartCoords, startLabel, setStartLabel, chain, setChain,
   destCoords, setDestCoords, destLabel, setDestLabel, homeAddress, homeCoords,
   defaultSuggestCount, defaultShowAllSuggestions, liveLocationCoords, embedded,
@@ -310,13 +312,22 @@ const RidePanel: React.FC<RidePanelProps> = ({
   }, [availableSources]);
 
   const currentPosition = (): Coords | null => {
-    if (chain.length > 0) return chain[chain.length - 1].coords;
-    return startCoords;
+    if (chain.length > 0) {
+      const last = chain[chain.length - 1];
+      const c = last?.coords || (last?.bedrijf ? coordsFor(last.bedrijf, cityCoords) : null);
+      if (c && typeof c.lat === 'number' && typeof c.lng === 'number') return c;
+    }
+    if (startCoords && typeof startCoords.lat === 'number' && typeof startCoords.lng === 'number') return startCoords;
+    if (liveLocationCoords && typeof liveLocationCoords.lat === 'number' && typeof liveLocationCoords.lng === 'number') return liveLocationCoords;
+    if (homeCoords && typeof homeCoords.lat === 'number' && typeof homeCoords.lng === 'number') return homeCoords;
+    return { lat: 52.1326, lng: 5.2913 };
   };
 
   const currentRouteProgressKm = (): number => {
     if (!routeLine || routeLine.length < 2 || chain.length === 0) return 0;
-    const pos = nearestPointOnRoute(chain[chain.length - 1].coords.lat, chain[chain.length - 1].coords.lng, routeLine);
+    const posCoords = currentPosition();
+    if (!posCoords) return 0;
+    const pos = nearestPointOnRoute(posCoords.lat, posCoords.lng, routeLine);
     return pos.progressKm;
   };
 
@@ -671,13 +682,17 @@ const RidePanel: React.FC<RidePanelProps> = ({
     }
 
     chain.forEach((s, i) => {
-      chainLine.push([s.coords.lat, s.coords.lng]);
-      const stopColor = sourceColor(s.bedrijf.source || 'Onbekend');
-        const stopMarker = L.marker([s.coords.lat, s.coords.lng], { icon: makePin(stopColor, i + 1) })
-        .bindPopup(popupHtml(s.bedrijf, `Stop ${i + 1} van de route`), popupOpts)
+      const b = s?.bedrijf || s;
+      if (!b) return;
+      const coords = s?.coords || coordsFor(b, cityCoords) || startCoords || liveLocationCoords || homeCoords;
+      if (!coords || typeof coords.lat !== 'number' || typeof coords.lng !== 'number') return;
+      chainLine.push([coords.lat, coords.lng]);
+      const stopColor = sourceColor(b.source || 'Onbekend');
+      const stopMarker = L.marker([coords.lat, coords.lng], { icon: makePin(stopColor, i + 1) })
+        .bindPopup(popupHtml(b, `Stop ${i + 1} van de route`), popupOpts)
         .addTo(markersLayerRef.current!);
       attachHoverZoom(stopMarker, map);
-      bounds.push([s.coords.lat, s.coords.lng]);
+      bounds.push([coords.lat, coords.lng]);
     });
 
     // Bestemmingsmarker ("Naar", groene B-pin) zodat je ziet waar de route naartoe loopt.
@@ -697,15 +712,16 @@ const RidePanel: React.FC<RidePanelProps> = ({
 
     // Zelfde tikstraal-verruiming voor aanraakschermen als de Kaart-tab (ClusterMapView) —
     // een bolletje van een paar pixels is op een telefoon vrijwel onmogelijk precies te raken.
-    const suggestionRadius = isTouchDevice ? 11 : 6;
+    const suggestionRadius = 6;
 
     // "Toon alles" toont alle bedrijven. Hover-zoom alleen voor eerste N bedrijven (performance).
     const MAX_HOVER_ZOOM_MARKERS = 300;
     suggestions.forEach((s, si) => {
+      if (!s?.coords || typeof s.coords.lat !== 'number' || typeof s.coords.lng !== 'number') return;
       const bolletje = L.circleMarker([s.coords.lat, s.coords.lng], {
         radius: suggestionRadius, color: '#fff', weight: 1.5, fillColor: sourceColor(s.bedrijf.source), fillOpacity: 0.9, interactive: true,
       })
-        .bindPopup(popupHtml(s.bedrijf, `${s.km.toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`), popupOpts)
+        .bindPopup(popupHtml(s.bedrijf, `${(typeof s.km === 'number' ? s.km : 0).toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`), popupOpts)
         .addTo(markersLayerRef.current!);
       if (si >= MAX_HOVER_ZOOM_MARKERS) { bounds.push([s.coords.lat, s.coords.lng]); return; }
       // Zelfde hover-gedrag als de bolletjes op de Kaart-tab: even iets groter en geleidelijk
@@ -1434,7 +1450,9 @@ const RidePanel: React.FC<RidePanelProps> = ({
                     <GripVertical className="w-3.5 h-3.5 text-slate-300 cursor-grab active:cursor-grabbing flex-shrink-0" />
                     <span className="w-5 h-5 rounded-full bg-[#E85E26] text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
                     <span className="text-slate-800 font-medium truncate flex-1">{s.bedrijf.naam}</span>
-                    <span className="text-[10px] text-slate-400 flex-shrink-0 hidden sm:inline">{s.km.toFixed(1)} km</span>
+                    {typeof (s as any).km === 'number' && !isNaN((s as any).km) && (
+                      <span className="text-[10px] text-slate-400 flex-shrink-0 hidden sm:inline">{(s as any).km.toFixed(1)} km</span>
+                    )}
                     {/* Open dit bedrijf in Live Zoeken (waar de rij-afstand in meters staat). */}
                     {!s.bedrijf.isWaypoint && onOpenInLiveZoeken && (
                       <button onClick={() => onOpenInLiveZoeken(s.bedrijf.naam)} title="Open in Live Zoeken" className="text-slate-400 hover:text-[#E85E26] flex-shrink-0"><Search className="w-3.5 h-3.5" /></button>
@@ -1730,7 +1748,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
                       <Search className="w-3 h-3 text-slate-300 flex-shrink-0" />
                       <span className="min-w-0">
                         <p className="text-sm font-semibold text-slate-800 truncate">{s.bedrijf.naam}</p>
-                        <p className="text-[10px] text-slate-400">{s.bedrijf.stad} · {s.km.toFixed(1)} km{s.driving ? ' rijden' : ' (hemelsbreed)'}</p>
+                        <p className="text-[10px] text-slate-400">{s.bedrijf.stad}{typeof s.km === 'number' && !isNaN(s.km) ? ` · ${s.km.toFixed(1)} km${s.driving ? ' rijden' : ' (hemelsbreed)'}` : ''}</p>
                       </span>
                     </button>
                     <button onClick={() => advanceTo(s)} title="Accepteer als volgende stop" className="p-1.5 rounded-full text-green-600 hover:bg-green-50 flex-shrink-0"><Check className="w-4 h-4" /></button>
@@ -1834,6 +1852,21 @@ const RidePanel: React.FC<RidePanelProps> = ({
                 >
                   <Save className="w-4 h-4" /> Bezoeken registreren ({chain.length})
                 </button>
+                {onSaveRoute && (
+                  <button
+                    onClick={() => {
+                      const name = saveListName.trim() || `Route ${new Date().toLocaleDateString('nl-NL')}`;
+                      onSaveRoute({
+                        name,
+                        stops: chain.map(s => `${s.bedrijf.naam}|${s.bedrijf.stad || ''}|${s.coords.lat}|${s.coords.lng}`),
+                        savedAt: new Date().toISOString(),
+                      });
+                    }}
+                    className="w-full py-3 bg-[#009FE3] hover:bg-[#008ac5] text-white text-xs font-bold uppercase tracking-wider rounded-sm flex items-center justify-center gap-2"
+                  >
+                    <Save className="w-4 h-4" /> Route opslaan
+                  </button>
+                )}
               </div>
             )}
           </>

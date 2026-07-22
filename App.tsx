@@ -1,13 +1,14 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Loader2, ArrowRight, ArrowRightCircle, X, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send, Clock, Eye, List, Linkedin, Navigation, GripVertical, Copy } from 'lucide-react';
+import { Search, Loader2, ArrowRight, ArrowRightCircle, X, Building, Filter, Check, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, AlertTriangle, User as UserIcon, Users, Heart, LayoutGrid, LogIn, Mail, Lock, Plus, Save, Download, MapPin, Database, Globe, Phone, Pencil, Trash2, Bookmark, BookmarkCheck, Columns, Star, Repeat, Upload, Bot, Send, Clock, Eye, List, Linkedin, Navigation, GripVertical, Copy } from 'lucide-react';
 import Papa from 'papaparse';
 import bouwgarantData from './bouwgarant_data.json';
 import cityCoords from './city_coords.json';
 import Header from './components/Header';
 import MapView from './components/MapView';
 import ClusterMapView from './components/ClusterMapView';
+import ProfileMiniMap from './components/ProfileMiniMap';
 import RouteMapPanel from './components/RouteMapPanel';
 import AIAgentPanel, { AgentOrb, SUGGESTIONS } from './components/AIAgentPanel';
 import VoiceInputButton from './components/VoiceInputButton';
@@ -1084,8 +1085,18 @@ class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { 
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white border border-slate-200 shadow-xl p-6 rounded-sm text-center space-y-3">
           <h1 className="text-lg font-black text-slate-900 uppercase tracking-wider">Scherm hersteld</h1>
-          <p className="text-sm text-slate-500">Er ging iets mis bij deze klik. Herlaad de app en probeer het opnieuw.</p>
-          <button onClick={() => window.location.reload()} className="px-4 py-2 bg-[#009FE3] text-white text-xs font-bold uppercase tracking-wider rounded-sm">Herlaad app</button>
+          <p className="text-sm text-slate-500">Er ging iets mis bij deze weergave.</p>
+          {this.state.error?.message && (
+            <p className="text-xs text-red-600 bg-red-50 p-2 rounded border border-red-100 font-mono break-all text-left max-h-32 overflow-y-auto">
+              {this.state.error.message}
+            </p>
+          )}
+          <button
+            onClick={() => { this.setState({ error: null }); window.location.reload(); }}
+            className="px-4 py-2 bg-[#009FE3] hover:bg-[#008ac5] text-white text-xs font-bold uppercase tracking-wider rounded-sm transition-colors"
+          >
+            Herlaad app
+          </button>
         </div>
       </div>
     );
@@ -1242,8 +1253,10 @@ async function getAddressFromCoords(lat: number, lng: number): Promise<{ address
 // dichtstbijzijnde bekende plaats op in onze eigen city_coords.json (geen externe
 // geocoding-API nodig, werkt ook offline en kost geen API-kosten).
 function findNearestCity(lat: number, lng: number): { name: string; coords: { lat: number; lng: number }; km: number } | null {
+  if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) return null;
   let best: { name: string; coords: { lat: number; lng: number }; km: number } | null = null;
   for (const [name, coords] of Object.entries(cityCoords as Record<string, { lat: number; lng: number }>)) {
+    if (!coords || typeof coords.lat !== 'number' || typeof coords.lng !== 'number') continue;
     const km = haversineKm(lat, lng, coords.lat, coords.lng);
     if (!best || km < best.km) best = { name, coords, km };
   }
@@ -1684,6 +1697,22 @@ const App: React.FC = () => {
   const [prefCardFields, setPrefCardFields] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem(uKey('inncempro_pref_card')) || '{}'); } catch { return {}; }
   });
+  // Meldingen (toast) aan/uit voorkeur
+  const [prefToasts, setPrefToastsState] = useState<boolean>(() =>
+    localStorage.getItem(uKey('inncempro_pref_toasts')) !== 'false');
+  const savePrefToasts = (v: boolean) => { setPrefToastsState(v); localStorage.setItem(uKey('inncempro_pref_toasts'), String(v)); };
+  // Meerdere contactpersonen per bedrijf (key = naam bedrijf)
+  const [companyContacts, setCompanyContacts] = useState<Record<string, Array<{id:string;naam:string;functie:string;telefoon:string;email:string;rang:number;datum:string}>>>(() => {
+    try { return JSON.parse(localStorage.getItem('inncempro_company_contacts') || '{}'); } catch { return {}; }
+  });
+  const saveCompanyContacts = (next: Record<string, any[]>) => { setCompanyContacts(next); try { localStorage.setItem('inncempro_company_contacts', JSON.stringify(next)); } catch {} };
+  // Meerdere projecten per bedrijf (key = naam bedrijf)
+  const [companyProjects, setCompanyProjects] = useState<Record<string, Array<{id:string;naam:string;url:string;datum:string}>>>(() => {
+    try { return JSON.parse(localStorage.getItem('inncempro_company_projects') || '{}'); } catch { return {}; }
+  });
+  const saveCompanyProjects = (next: Record<string, any[]>) => { setCompanyProjects(next); try { localStorage.setItem('inncempro_company_projects', JSON.stringify(next)); } catch {} };
+  // Sortering contactpersonen in kaartdetail
+  const [contactSortMode, setContactSortMode] = useState<'az'|'datum'|'rang'>('rang');
 
   const cardFieldDefault: Record<string, boolean> = {
     afstand: true, specs: true, telefoon: true, email: true, rechtsvorm: true,
@@ -1942,11 +1971,13 @@ const App: React.FC = () => {
   const hqLabelSource = prefAddressCoordsFor || prefAddress;
   const hqShortLabel = hqLabelSource.split(',').pop()?.replace(/\b\d{4}\s?[A-Z]{2}\b/i, '').trim() || hqLabelSource;
 
-  // Zelfde prioriteit als bij het sorteren in executeSearch: live GPS > ingesteld adres > Hengelo.
-  // Wordt gebruikt voor de rijafstand-berekening zodat die niet stiekem toch Hengelo gebruikt
-  // terwijl de sortering al op je live locatie draait.
-  const distanceOrigin = searchOriginCoords || hqCoords;
-  const distanceOriginKey = `${distanceOrigin.lat.toFixed(3)},${distanceOrigin.lng.toFixed(3)}`;
+  const DEFAULT_ORIGIN_COORDS = { lat: 52.1326, lng: 5.2913 };
+  const distanceOrigin = (searchOriginCoords && typeof searchOriginCoords.lat === 'number')
+    ? searchOriginCoords
+    : (hqCoords && typeof hqCoords.lat === 'number')
+    ? hqCoords
+    : DEFAULT_ORIGIN_COORDS;
+  const distanceOriginKey = `${(distanceOrigin?.lat ?? 52.1326).toFixed(3)},${(distanceOrigin?.lng ?? 5.2913).toFixed(3)}`;
 
   // APP STATE
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -2114,6 +2145,8 @@ const App: React.FC = () => {
   // meteen de vraag versturen (ts erbij zodat twee keer dezelfde suggestie ook opnieuw triggert)
   const [agentPromptRequest, setAgentPromptRequest] = useState<{ text: string; ts: number } | null>(null);
   const [selectedCompany, setSelectedCompany] = useState<any | null>(null);
+  const [showAddContact, setShowAddContact] = useState(false);
+  const [showAddProject, setShowAddProject] = useState(false);
   // Kruimelpad binnen het bedrijfsprofiel-paneel: als je vanuit ERA Contour op een
   // zusterbedrijf/vestiging klikt, zie je meteen die volledige gegevens (niet alleen een
   // vinkje) — met een "Terug naar ERA Contour"-knop zodat je niet de hele zoekopdracht
@@ -2150,25 +2183,72 @@ const App: React.FC = () => {
     try { localStorage.setItem(uKey('inncempro_recent_viewed'), JSON.stringify(limited)); } catch (e) { console.warn('Kon recent bekeken niet opslaan', e); }
   };
 
-  const addVisit = async (bedrijf: any) => {
-    if (!currentUser) return;
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  // Wrapper die de voorkeur respecteert
+  const showToast = (msg: string, ms = 4000) => { if (prefToasts) { setToastMsg(msg); setTimeout(() => setToastMsg(null), ms); } };
+
+  const addToOnderweg = (bedrijf: any, suppressToast = false) => {
+    if (!bedrijf || (!bedrijf.naam && !bedrijf.name)) return;
+    const bNaam = bedrijf.naam || bedrijf.name || '';
+    const bObj = bedrijf._raw || bedrijf;
+    const coords = getBedrijfCoords(bObj) || prefAddressCoords || hqCoords || DEFAULT_ORIGIN_COORDS;
+    const stopItem = {
+      id: bObj.id || bNaam,
+      bedrijf: bObj,
+      coords,
+      note: bObj.notitie || '',
+      status: 'gepland',
+    };
+    setRideChain(prev => {
+      const exists = prev.some((s: any) => {
+        const itemBedrijf = s?.bedrijf || s;
+        const name = itemBedrijf?.naam || itemBedrijf?.name || '';
+        return name.toLowerCase().trim() === bNaam.toLowerCase().trim();
+      });
+      if (exists) return prev;
+      return [...prev, stopItem];
+    });
+    setShowRidePanel(true);
+    if (!suppressToast && viewMode !== 'visits') {
+      setToastMsg(`✓ "${bNaam}" toegevoegd aan Onderweg`);
+      setTimeout(() => setToastMsg(null), 4000);
+    }
+  };
+
+  const addVisit = async (bedrijf: any, suppressToast = false) => {
+    if (!bedrijf || (!bedrijf.naam && !bedrijf.name)) return;
+    const bNaam = bedrijf.naam || bedrijf.name || '';
+    const userId = currentUser?.id || 'demo';
     const newVisit = {
-      bedrijf_id: bedrijf.id || bedrijf.naam,
-      naam: bedrijf.naam,
+      bedrijf_id: bedrijf.id || bNaam,
+      naam: bNaam,
       stad: bedrijf.stad || '',
       straat: bedrijf.straat || '',
       postcode: bedrijf.postcode || '',
-      contactpersoon: '',
+      contactpersoon: bedrijf.contactpersoon || '',
       telefoon: bedrijf.telefoon || '',
       email: bedrijf.email || '',
-      notitie: '',
+      notitie: bedrijf.notitie || 'Bezoek geregistreerd',
       status: 'bezocht',
       datum: new Date().toISOString().split('T')[0],
+      created_at: new Date().toISOString(),
       matched: true,
     };
-    await authService.addVisit(currentUser.id, newVisit);
-    setVisits(await authService.getVisits(currentUser.id));
+    try {
+      await authService.addVisit(userId, newVisit);
+      const latestVisits = await authService.getVisits(userId);
+      setVisits(latestVisits);
+    } catch (e) {
+      console.warn('Bezoek opslaan via authService mislukt:', e);
+    }
+
+    if (!suppressToast && viewMode !== 'visits') {
+      setToastMsg(`✓ "${bNaam}" toegevoegd aan Bezoekhistorie`);
+      setTimeout(() => setToastMsg(null), 4000);
+    }
   };
+
+
 
   // Slaat de complete bulk-upload lijst (100+ rijen) in één keer op. Gebruikt bij het
   // toevoegen van bezoeken via het "+" icoon in Bezoekhistorie. Per rij drie uitkomsten:
@@ -2687,9 +2767,17 @@ const App: React.FC = () => {
   const autoSaveEdit = (naam: string, edits: Record<string, string>) => {
     const next = { ...manualEdits, [naam]: edits };
     setManualEdits(next);
-    localStorage.setItem(MANUAL_EDITS_KEY, JSON.stringify(next));
-    (bouwgarantData as any[]).filter(b => b.naam === naam).forEach(entry => Object.assign(entry, edits));
-    setSelectedCompany((prev: any) => prev ? { ...prev, ...edits } : prev);
+    try {
+      localStorage.setItem(MANUAL_EDITS_KEY, JSON.stringify(next));
+      localStorage.setItem(uKey(MANUAL_EDITS_KEY), JSON.stringify(next));
+    } catch (e) { console.warn('Kon handmatige bewerkingen niet opslaan:', e); }
+
+    (bouwgarantData as any[]).filter(b => (b.naam || '').toLowerCase() === (naam || '').toLowerCase()).forEach(entry => Object.assign(entry, edits));
+    setSelectedCompany((prev: any) => {
+      if (!prev) return prev;
+      const updatedRaw = prev._raw ? { ...prev._raw, ...edits } : undefined;
+      return { ...prev, ...edits, ...(updatedRaw ? { _raw: updatedRaw } : {}) };
+    });
     Object.entries(edits).forEach(([field, newValue]) => addAuditLog('Bedrijf bewerkt', naam, field, undefined, newValue));
   };
 
@@ -3735,10 +3823,10 @@ const App: React.FC = () => {
       // 20km van Rotterdam, maar toonde toch "198 km van Hengelo").
       const searchOrigin = (activeRadiusKm && radiusCenter)
         ? radiusCenter
-        : (liveLocationCoords || prefAddressCoords || hqCoords);
+        : (liveLocationCoords || prefAddressCoords || hqCoords || DEFAULT_ORIGIN_COORDS);
       const searchOriginLabel = (activeRadiusKm && radiusCenter)
         ? ((overrideCity ?? city).trim() || 'gekozen locatie')
-        : liveLocationCoords
+        : (liveLocationCoords && typeof liveLocationCoords.lat === 'number')
         ? (findNearestCity(liveLocationCoords.lat, liveLocationCoords.lng)?.name ? toDisplayCityName(findNearestCity(liveLocationCoords.lat, liveLocationCoords.lng)!.name) : 'mijn locatie')
         : hqShortLabel;
       setSearchOriginCoords(searchOrigin);
@@ -3783,7 +3871,7 @@ const App: React.FC = () => {
           const cached = hqDistCache.get(b);
           if (cached !== undefined) return cached;
           const coords = getBedrijfCoords(b);
-          const d = coords ? haversineKm(searchOrigin.lat, searchOrigin.lng, coords.lat, coords.lng) : Infinity;
+          const d = (coords && typeof coords.lat === 'number' && searchOrigin && typeof searchOrigin.lat === 'number') ? haversineKm(searchOrigin.lat, searchOrigin.lng, coords.lat, coords.lng) : Infinity;
           hqDistCache.set(b, d);
           return d;
         };
@@ -3803,7 +3891,7 @@ const App: React.FC = () => {
 
       const companies = results.map((b: any, i: number) => {
           const cityCoords = getBedrijfCoords(b);
-          const hqDist = cityCoords ? haversineKm(searchOrigin.lat, searchOrigin.lng, cityCoords.lat, cityCoords.lng) : undefined;
+          const hqDist = (cityCoords && typeof cityCoords.lat === 'number' && searchOrigin && typeof searchOrigin.lat === 'number') ? haversineKm(searchOrigin.lat, searchOrigin.lng, cityCoords.lat, cityCoords.lng) : undefined;
           // Toon dezelfde precieze rijafstand die (indien opgehaald) ook voor de sortering is
           // gebruikt — zo kan de getoonde km nooit een andere volgorde suggereren dan wat er
           // écht is gesorteerd.
@@ -3956,7 +4044,7 @@ const App: React.FC = () => {
 
   const replaceFoundCompany = (id: string, raw: any) => {
     const cityCoords = getBedrijfCoords(raw);
-    const hqDist = cityCoords ? haversineKm(hqCoords.lat, hqCoords.lng, cityCoords.lat, cityCoords.lng) : undefined;
+    const hqDist = (cityCoords && typeof cityCoords.lat === 'number' && hqCoords && typeof hqCoords.lat === 'number') ? haversineKm(hqCoords.lat, hqCoords.lng, cityCoords.lat, cityCoords.lng) : undefined;
     setFoundCompanies(prev => prev.map(c => c.id !== id ? c : ({
       id: c.id,
       name: raw.naam,
@@ -4108,6 +4196,37 @@ const App: React.FC = () => {
     [deletedEntries, customEntries, addressCorrections, manualEdits, prefVisibleSources],
   );
 
+  // Register window global functions for Leaflet map popups
+  useEffect(() => {
+    (window as any)._inncemAddToOnderweg = (naam: string) => {
+      const normName = (naam || '').toLowerCase().trim();
+      const match = activeData.find((b: any) => (b.naam || b.name || '').toLowerCase().trim() === normName);
+      if (match) {
+        addToOnderweg(match);
+      } else {
+        addToOnderweg({ naam, stad: '', straat: '' });
+      }
+    };
+    (window as any)._inncemMapNav = (naam: string) => {
+      setDbSearch(naam);
+      setDbPage(1);
+      setViewMode('database');
+    };
+    (window as any)._inncemNav = (target: string, naam: string) => {
+      if (target === 'database') {
+        setDbSearch(naam);
+        setDbPage(1);
+        setViewMode('database');
+      } else if (target === 'search') {
+        setCity(naam);
+        executeSearch(undefined, undefined, naam);
+        setViewMode('search');
+      } else if (target === 'map') {
+        setViewMode('map');
+      }
+    };
+  }, [activeData, currentUser?.id, viewMode]);
+
   // Autocomplete voor de zoekbalk: suggesties op zowel bedrijfsnaam als straatadres door
   // elkaar, zoals typen "Wena" -> "Weena-Zuid 158, Rotterdam" tonen (en evengoed "Weena-Zuid
   // 16" als dat ook bestaat) — niet alleen bedrijven laten matchen, ook losse adressen, want
@@ -4142,18 +4261,29 @@ const App: React.FC = () => {
   // naar een selectie en opent 'm meteen fullscreen — hergebruikt dezelfde route-machinerie
   // als de AI-knop, dus geen aparte "bekijk opgeslagen route"-weergave nodig.
   const viewSavedRoute = (route: any) => {
-    const matched = new Map<string, any>();
-    (route.stops || []).forEach((s: string) => {
+    const chainItems: any[] = [];
+    const matchedMap = new Map<string, any>();
+    (route?.stops || []).forEach((s: string) => {
       const naam = (s || '').split('|')[0];
-      const b = activeData.find((x: any) => (x.naam || '').toLowerCase() === naam.toLowerCase());
-      if (b) matched.set(b.naam, b);
+      if (!naam) return;
+      const b = activeData.find((x: any) => (x.naam || x.name || '').toLowerCase().trim() === naam.toLowerCase().trim());
+      const bObj = b ? (b._raw || b) : { naam, stad: (s || '').split('|')[1] || '' };
+      const coords = getBedrijfCoords(bObj) || prefAddressCoords || hqCoords || DEFAULT_ORIGIN_COORDS;
+      chainItems.push({
+        id: bObj.id || bObj.naam || String(Math.random()),
+        bedrijf: bObj,
+        coords,
+        note: bObj.notitie || '',
+        status: 'gepland',
+      });
+      if (bObj.naam) matchedMap.set(bObj.naam, bObj);
     });
-    if (matched.size === 0) return;
-    setSelectedRaws(matched);
-    setViewMode('search');
-    setShowRouteMap(true);
-    setRouteMapFullscreen(true);
-    setAutoOptimizeRoute(true);
+    if (chainItems.length > 0) {
+      setRideChain(chainItems);
+      setShowRidePanel(true);
+      setSelectedRaws(matchedMap);
+      setViewMode('visits');
+    }
   };
 
   const filteredFavorites = sidebarRegionsActive.length === 0 ? favorites : favorites.filter(fav => {
@@ -4196,7 +4326,7 @@ const App: React.FC = () => {
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentItemsKey, distanceOrigin.lat, distanceOrigin.lng]);
+  }, [currentItemsKey, distanceOrigin?.lat, distanceOrigin?.lng]);
 
   const getPageNumbers = () => {
     const pages = [];
@@ -4595,6 +4725,22 @@ const App: React.FC = () => {
                                           </label>
                                       ))}
                                   </div>
+
+                               {/* Meldingen (toast-pop-ups) */}
+                               <div>
+                                   <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Pop-up meldingen</label>
+                                   <p className="text-[10px] text-slate-400 mb-2">Toon korte bevestigingsmeldingen na acties (bijv. Toegevoegd aan Onderweg).</p>
+                                   <div className="flex border border-slate-200 rounded-sm overflow-hidden">
+                                       <button onClick={() => savePrefToasts(true)}
+                                           className={`flex-1 py-2.5 text-xs font-bold transition-colors ${prefToasts ? 'bg-[#009FE3] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                                           Aan
+                                       </button>
+                                       <button onClick={() => savePrefToasts(false)}
+                                           className={`flex-1 py-2.5 text-xs font-bold border-l border-slate-200 transition-colors ${!prefToasts ? 'bg-[#009FE3] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                                           Uit
+                                       </button>
+                                   </div>
+                               </div>
                               </div>
                           </div>
                       )}
@@ -5698,6 +5844,56 @@ const App: React.FC = () => {
                   )}
                 </div>
 
+                {/* Opgeslagen Routes — in Mijn Bezoeken onder Onderweg */}
+                {Array.isArray(savedRoutes) && savedRoutes.filter(r => r && typeof r === 'object').length > 0 && (
+                  <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden p-6">
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                      <div>
+                        <h2 className="text-lg font-bold text-slate-900">Opgeslagen Routes</h2>
+                        <p className="text-xs text-slate-400">{savedRoutes.length} {savedRoutes.length === 1 ? 'route' : 'routes'} opgeslagen</p>
+                      </div>
+                    </div>
+                    <div className="grid gap-3">
+                      {savedRoutes.filter(r => r && typeof r === 'object').map((route: any, idx: number) => {
+                        const routeId = route.id || `route-${idx}`;
+                        const routeName = route.name || route.title || 'Opgeslagen route';
+                        const rawStops = Array.isArray(route.stops) ? route.stops : Array.isArray(route.points) ? route.points : [];
+                        const stopNamen = rawStops.map((s: any) => (typeof s === 'string' ? s.split('|')[0] : (s?.naam || s?.name || '')));
+                        return (
+                          <div key={routeId} className="bg-slate-50 border border-slate-200 rounded-md p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <h4 className="font-bold text-slate-900 text-sm truncate">{routeName}</h4>
+                              <p className="text-xs text-slate-500 mt-0.5">
+                                {route.savedAt ? new Date(route.savedAt).toLocaleString('nl-NL') : ''} • {stopNamen.length} bedrijven: {stopNamen.slice(0, 4).join(', ')}{stopNamen.length > 4 ? '...' : ''}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <button
+                                onClick={() => viewSavedRoute(route)}
+                                className="px-3 py-1.5 bg-[#009FE3] hover:bg-[#008ac5] text-white text-xs font-bold rounded-sm flex items-center gap-1.5 transition-colors"
+                              >
+                                <Navigation className="w-3.5 h-3.5" /> Laad in Onderweg
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const next = savedRoutes.filter((r: any) => r && (r.id ? r.id !== routeId : r !== route));
+                                  setSavedRoutes(next);
+                                  localStorage.setItem('inncempro_saved_routes', JSON.stringify(next));
+                                  localStorage.setItem(uKey('inncempro_saved_routes'), JSON.stringify(next));
+                                }}
+                                className="text-slate-400 hover:text-red-500 p-1.5 rounded transition-colors"
+                                title="Verwijderen"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
                   <div className="p-6 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
                     <div className="flex items-center gap-3">
@@ -6106,18 +6302,30 @@ const App: React.FC = () => {
                                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{viewMode === 'favorites' ? `${favorites.length} opgeslagen` : `~${totalMatches} gevonden`}</p>
                              </div>
                              <div className="flex items-center gap-2 flex-wrap">
-                                 {viewMode === 'search' && <button
-                                     onClick={() => { setShowRouteMap(v => !v); setRouteMapFullscreen(false); }}
-                                     className={`px-3 py-1.5 sm:px-4 sm:py-2 text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 sm:gap-2 transition-colors border ${showRouteMap ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-[#009FE3] border-[#009FE3] hover:bg-[#f0f9ff]'}`}
-                                 >
-                                     <MapPin className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> {showRouteMap ? 'Kaart sluiten' : 'Route Kaart'}
-                                 </button>}
-                                 <button
-                                     onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', linkedin_url: '', twitter_handle: '', instagram_handle: '', source: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setAddTab('bulk'); setShowAddModal(true); }}
-                                     className="px-3 py-1.5 sm:px-4 sm:py-2 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 sm:gap-2 transition-colors"
-                                 >
-                                     <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Toevoegen
-                                 </button>
+                                  {viewMode === 'search' && (
+                                    <>
+                                      <button
+                                        onClick={() => {
+                                          const itemsToAdd = (Array.from(selectedRaws.values()).filter(Boolean) as any[]);
+                                          if (itemsToAdd.length === 0) return;
+                                          for (const b of itemsToAdd) {
+                                            addToOnderweg(b, true);
+                                          }
+                                          setToastMsg(`✓ ${itemsToAdd.length} ${itemsToAdd.length === 1 ? 'bedrijf' : 'bedrijven'} toegevoegd aan Onderweg`);
+                                          setTimeout(() => setToastMsg(null), 4000);
+                                        }}
+                                        className="px-3 py-1.5 sm:px-4 sm:py-2 bg-[#009FE3] hover:bg-[#008ac5] text-white text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 sm:gap-2 transition-colors shadow-sm"
+                                      >
+                                        <Navigation className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Toevoegen aan Onderweg ({selectedRaws.size})
+                                      </button>
+                                    </>
+                                  )}
+                                  <button
+                                      onClick={() => { setAddForm({ naam: '', straat: '', postcode: '', stad: '', provincie: '', telefoon: '', email: '', website: '', spec1: '', spec2: '', spec3: '', rechtsvorm: '', kvk: '', linkedin_url: '', twitter_handle: '', instagram_handle: '', source: '' }); setBulkText(''); setBulkParsed([]); setBulkMsg(''); setAddDuplicate(null); setAddTab('bulk'); setShowAddModal(true); }}
+                                      className="px-3 py-1.5 sm:px-4 sm:py-2 bg-white border border-slate-300 hover:border-[#009FE3] hover:text-[#009FE3] text-slate-600 text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-sm flex items-center gap-1.5 sm:gap-2 transition-colors"
+                                  >
+                                      <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Toevoegen
+                                  </button>
                              </div>
                         </div>
                         {(viewMode === 'search' || viewMode === 'favorites') && (() => {
@@ -6269,7 +6477,7 @@ const App: React.FC = () => {
                                       <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wide leading-tight">{b.naam || company.name}</h3>
                                       {crmData[crmKey(b)]?.status && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm border flex-shrink-0 ${CRM_COLORS[crmData[crmKey(b)]!.status!]}`}>{CRM_LABELS[crmData[crmKey(b)]!.status!]}</span>}
                                       {isNew(b) && <span className="text-[9px] bg-green-500 text-white px-1.5 py-0.5 font-bold rounded-sm flex-shrink-0">Nieuw</span>}
-                                      {distKm !== undefined && showField('afstand') && <span title={distIsDriving ? 'Rijafstand over de weg' : 'Hemelsbrede schatting - rijafstand wordt geladen...'} className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`} van {(company as any)._hqLabel || hqShortLabel}{!distIsDriving && ' *'}</span>}
+                                      {distKm !== undefined && typeof distKm === 'number' && !isNaN(distKm) && showField('afstand') && <span title={distIsDriving ? 'Rijafstand over de weg' : 'Hemelsbrede schatting - rijafstand wordt geladen...'} className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#009FE3]/10 text-[#009FE3] flex-shrink-0">{distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`} van {(company as any)._hqLabel || hqShortLabel}{!distIsDriving && ' *'}</span>}
                                     </div>
                                     {(b.straat || b.postcode || b.stad || company.city) && (
                                       <p className="text-slate-500 text-xs mt-1 flex items-start gap-1 flex-wrap">
@@ -6351,7 +6559,12 @@ const App: React.FC = () => {
                     ? 'fixed inset-0 z-[70] bg-[#F8FAFC]'
                     : 'route-panel-shell md:flex-1 min-w-0 h-[min(72dvh,620px)] min-h-[420px] md:h-full md:min-h-0 overflow-hidden border-l-0'}>
                     <RouteMapPanel
-                      companies={(Array.from(selectedRaws.values()) as any[]).map(r => ({ id: r.naam, name: r.naam, city: r.stad || '', _raw: r }))}
+                      companies={(Array.from(selectedRaws.values()).filter(Boolean) as any[]).map(r => ({
+                        id: r?.naam || r?.name || 'Onbekend',
+                        name: r?.naam || r?.name || 'Onbekend',
+                        city: r?.stad || r?.city || '',
+                        _raw: r
+                      }))}
                       allData={activeData}
                       autoOptimize={autoOptimizeRoute}
                       isFullscreen={routeMapFullscreen}
@@ -6873,7 +7086,7 @@ const App: React.FC = () => {
 
       {selectedCompany && (() => {
         const b = selectedCompany;
-        const hasContact = b.telefoon || b.telefoon_sales || b.telefoon_admin || b.email || b.email_sales || b.email_overig;
+        const hasContact = b.telefoon || b.telefoon_sales || b.telefoon_admin || b.email || b.email_sales || b.email_overig || b.contactpersoon || b.contactpersoon_telefoon || b.contactpersoon_email || b.linkedin_url;
         const hasAddress = b.straat || b.stad;
         const hasSpec = b.spec1 || b.spec2 || b.spec3;
         const hasBedrijf = b.rechtsvorm || b.kvk;
@@ -6903,7 +7116,7 @@ const App: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-1 ml-2 flex-shrink-0">
-                  <button onClick={() => { setEditDraft({ naam: b.naam||'', straat: b.straat||'', postcode: b.postcode||'', stad: b.stad||'', provincie: b.provincie||'', telefoon: b.telefoon||'', telefoon_sales: b.telefoon_sales||'', telefoon_admin: b.telefoon_admin||'', email: b.email||'', email_sales: b.email_sales||'', email_overig: b.email_overig||'', website: b.website||'', spec1: b.spec1||'', spec2: b.spec2||'', spec3: b.spec3||'', rechtsvorm: b.rechtsvorm||'', kvk: b.kvk||'', source: b.source||'Web' }); setEditMode(true); }} title="Bewerken" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-[#009FE3]"><Pencil className="w-4 h-4" /></button>
+                  <button onClick={() => { setEditDraft({ naam: b.naam||'', straat: b.straat||'', postcode: b.postcode||'', stad: b.stad||'', provincie: b.provincie||'', telefoon: b.telefoon||'', telefoon_sales: b.telefoon_sales||'', telefoon_admin: b.telefoon_admin||'', email: b.email||'', email_sales: b.email_sales||'', email_overig: b.email_overig||'', website: b.website||'', linkedin_url: b.linkedin_url||'', contactpersoon: b.contactpersoon||'', contactpersoon_telefoon: b.contactpersoon_telefoon||'', contactpersoon_email: b.contactpersoon_email||'', beschrijving: b.beschrijving||'', projecten_url: b.projecten_url||'', spec1: b.spec1||'', spec2: b.spec2||'', spec3: b.spec3||'', rechtsvorm: b.rechtsvorm||'', kvk: b.kvk||'', source: b.source||'Web' }); setEditMode(true); }} title="Bewerken" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-[#009FE3]"><Pencil className="w-4 h-4" /></button>
                   <button onClick={() => { if (window.confirm(`"${b.naam}"${b.straat ? ` (${b.straat})` : ''} verwijderen?`)) { handleDeleteEntry(b.naam, b.straat); setSelectedCompany(null); setProfileHistory([]); setEditMode(false); } }} title="Verwijderen" className="p-2 hover:bg-slate-100 text-slate-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
                   <button onClick={() => { setSelectedCompany(null); setProfileHistory([]); setEditMode(false); }} className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-900"><X className="w-5 h-5" /></button>
                 </div>
@@ -6948,6 +7161,116 @@ const App: React.FC = () => {
                           {field('email_sales', 'Email sales')}
                           {field('email_overig', 'Email overig')}
                           {field('website', 'Website')}
+                          {field('linkedin_url', 'LinkedIn URL')}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Contactpersonen & Management</p>
+                          <button
+                            type="button"
+                            onClick={() => setShowAddContact(!showAddContact)}
+                            className="text-[10px] font-bold bg-[#009FE3] text-white px-2 py-0.5 rounded hover:bg-[#0080b8] transition-colors flex items-center gap-1"
+                          >
+                            <Plus className="w-3 h-3" /> Contact toevoegen
+                          </button>
+                        </div>
+                        <div className="bg-white border border-slate-200 p-3 rounded-sm space-y-3">
+                          {field('contactpersoon', 'Hoofdcontact')}
+                          {field('contactpersoon_telefoon', 'Tel. hoofdcontact')}
+                          {field('contactpersoon_email', 'Email hoofdcontact')}
+
+                          {/* Extra contactpersonen beheren */}
+                          {(() => {
+                            const extra = companyContacts[b.naam] || [];
+                            if (extra.length === 0 && !showAddContact) return null;
+                            return (
+                              <div className="pt-2 border-t border-slate-100 space-y-2">
+                                <p className="text-[10px] font-bold uppercase text-slate-500">Extra contactpersonen ({extra.length})</p>
+                                {extra.map((c: any) => (
+                                  <div key={c.id} className="flex items-center justify-between text-xs bg-slate-50 p-2 rounded">
+                                    <div>
+                                      <span className="font-bold text-slate-800">{c.naam}</span>
+                                      {c.functie && <span className="ml-1.5 text-[10px] text-slate-500 font-semibold">({c.functie})</span>}
+                                      <div className="text-[10px] text-slate-400 flex gap-2 mt-0.5">
+                                        {c.telefoon && <span>Tel: {c.telefoon}</span>}
+                                        {c.email && <span>Email: {c.email}</span>}
+                                      </div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const next = (companyContacts[b.naam] || []).filter((x: any) => x.id !== c.id);
+                                        saveCompanyContacts({ ...companyContacts, [b.naam]: next });
+                                        showToast('Contactpersoon verwijderd');
+                                      }}
+                                      className="text-slate-400 hover:text-red-500 p-1"
+                                      title="Verwijderen"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+
+                          {showAddContact && (
+                            <form
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                const form = e.target as any;
+                                const naam = form.c_naam.value.trim();
+                                if (!naam) return;
+                                const newC = {
+                                  id: Date.now().toString(),
+                                  naam,
+                                  functie: form.c_functie.value.trim(),
+                                  telefoon: form.c_telefoon.value.trim(),
+                                  email: form.c_email.value.trim(),
+                                  rang: Number(form.c_rang.value) || 2,
+                                  datum: new Date().toISOString()
+                                };
+                                const existing = companyContacts[b.naam] || [];
+                                saveCompanyContacts({ ...companyContacts, [b.naam]: [...existing, newC] });
+                                setShowAddContact(false);
+                                showToast(`Contactpersoon '${naam}' toegevoegd`);
+                              }}
+                              className="pt-3 border-t border-slate-200 space-y-2 bg-slate-50 p-3 rounded-sm text-xs"
+                            >
+                              <p className="font-bold text-slate-700 uppercase text-[10px]">Nieuwe contactpersoon toevoegen</p>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <input name="c_naam" required placeholder="Naam (bijv. Jan Jansen)" className="p-1.5 border border-slate-200 rounded text-xs bg-white" />
+                                <input name="c_functie" placeholder="Functie (bijv. Directeur / Architect)" className="p-1.5 border border-slate-200 rounded text-xs bg-white" />
+                                <input name="c_telefoon" placeholder="Telefoonnummer" className="p-1.5 border border-slate-200 rounded text-xs bg-white" />
+                                <input name="c_email" type="email" placeholder="E-mailadres" className="p-1.5 border border-slate-200 rounded text-xs bg-white" />
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-slate-500 font-bold uppercase">Functieniveau:</span>
+                                <select name="c_rang" defaultValue="2" className="p-1 border border-slate-200 rounded text-xs bg-white">
+                                  <option value="1">Management / Directie (Top)</option>
+                                  <option value="2">Senior / Projectleider (Midden)</option>
+                                  <option value="3">Medewerker / Operationeel</option>
+                                </select>
+                              </div>
+                              <div className="flex justify-end gap-2 pt-1">
+                                <button type="button" onClick={() => setShowAddContact(false)} className="px-2.5 py-1 text-slate-500 hover:text-slate-700 font-bold">Annuleren</button>
+                                <button type="submit" className="px-3 py-1 bg-[#009FE3] text-white font-bold rounded hover:bg-[#0080b8]">Toevoegen</button>
+                              </div>
+                            </form>
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Beschrijving</p>
+                        <div className="bg-white border border-slate-200 p-3 rounded-sm space-y-2">
+                          <textarea
+                            className="w-full border border-slate-200 rounded-sm p-2 text-sm text-slate-800 focus:outline-none focus:border-[#009FE3]"
+                            rows={3}
+                            placeholder="Beschrijving van het bedrijf..."
+                            value={editDraft.beschrijving ?? ''}
+                            onChange={e => setEditDraft(d => ({ ...d, beschrijving: e.target.value }))}
+                          />
                         </div>
                       </div>
                       <div>
@@ -6971,8 +7294,8 @@ const App: React.FC = () => {
                               <option value="BouwPartner">BouwPartner</option>
                               <option value="PontMeyer">PontMeyer</option>
                               <option value="Van Wijnen">Van Wijnen</option>
-                        <option value="Plegt-Vos">Plegt-Vos</option>
-                        <option value="VolkerWessels">VolkerWessels</option>
+                              <option value="Plegt-Vos">Plegt-Vos</option>
+                              <option value="VolkerWessels">VolkerWessels</option>
                             </select>
                           </div>
                         </div>
@@ -6983,6 +7306,84 @@ const App: React.FC = () => {
                           {field('spec1', 'Spec. 1')}
                           {field('spec2', 'Spec. 2')}
                           {field('spec3', 'Spec. 3')}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Projecten & Links</p>
+                          <button
+                            type="button"
+                            onClick={() => setShowAddProject(!showAddProject)}
+                            className="text-[10px] font-bold bg-[#009FE3] text-white px-2 py-0.5 rounded hover:bg-[#0080b8] transition-colors flex items-center gap-1"
+                          >
+                            <Plus className="w-3 h-3" /> Project toevoegen
+                          </button>
+                        </div>
+                        <div className="bg-white border border-slate-200 p-3 rounded-sm space-y-3">
+                          {field('projecten_url', 'Hoofd projecten URL')}
+
+                          {/* Extra projecten beheren */}
+                          {(() => {
+                            const cProjects = companyProjects[b.naam] || [];
+                            if (cProjects.length === 0 && !showAddProject) return null;
+                            return (
+                              <div className="pt-2 border-t border-slate-100 space-y-2">
+                                <p className="text-[10px] font-bold uppercase text-slate-500">Toegevoegde projecten ({cProjects.length})</p>
+                                {cProjects.map((cp: any) => (
+                                  <div key={cp.id} className="flex items-center justify-between text-xs bg-slate-50 p-2 rounded">
+                                    <div>
+                                      <span className="font-bold text-slate-800">{cp.naam}</span>
+                                      {cp.url && <span className="ml-1.5 text-[10px] text-[#009FE3]">{cp.url}</span>}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const next = (companyProjects[b.naam] || []).filter((x: any) => x.id !== cp.id);
+                                        saveCompanyProjects({ ...companyProjects, [b.naam]: next });
+                                        showToast('Project verwijderd');
+                                      }}
+                                      className="text-slate-400 hover:text-red-500 p-1"
+                                      title="Verwijderen"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+
+                          {showAddProject && (
+                            <form
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                const form = e.target as any;
+                                const pNaam = form.p_naam.value.trim();
+                                if (!pNaam) return;
+                                const newP = {
+                                  id: Date.now().toString(),
+                                  naam: pNaam,
+                                  url: form.p_url.value.trim(),
+                                  datum: new Date().toISOString()
+                                };
+                                const existing = companyProjects[b.naam] || [];
+                                saveCompanyProjects({ ...companyProjects, [b.naam]: [...existing, newP] });
+                                setShowAddProject(false);
+                                showToast(`Project '${pNaam}' toegevoegd`);
+                              }}
+                              className="pt-3 border-t border-slate-200 space-y-2 bg-slate-50 p-3 rounded-sm text-xs"
+                            >
+                              <p className="font-bold text-slate-700 uppercase text-[10px]">Nieuw project / URL toevoegen</p>
+                              <div className="space-y-2">
+                                <input name="p_naam" required placeholder="Projectnaam (bijv. Residentie Parkzicht)" className="w-full p-1.5 border border-slate-200 rounded text-xs bg-white" />
+                                <input name="p_url" type="url" placeholder="Project URL (bijv. https://project.nl/parkzicht)" className="w-full p-1.5 border border-slate-200 rounded text-xs bg-white" />
+                              </div>
+                              <div className="flex justify-end gap-2 pt-1">
+                                <button type="button" onClick={() => setShowAddProject(false)} className="px-2.5 py-1 text-slate-500 hover:text-slate-700 font-bold">Annuleren</button>
+                                <button type="submit" className="px-3 py-1 bg-[#009FE3] text-white font-bold rounded hover:bg-[#0080b8]">Toevoegen</button>
+                              </div>
+                            </form>
+                          )}
                         </div>
                       </div>
                       <div className="flex gap-2 pt-1">
@@ -7094,25 +7495,71 @@ const App: React.FC = () => {
                 {hasAddress && (
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5"><MapPin className="w-3 h-3"/> Adres</p>
-                    <div className="bg-white border border-slate-200 p-4 rounded-sm">
-                      {b.straat && <p className="text-slate-800 font-medium text-sm">{b.straat}</p>}
-                      {(b.postcode || b.stad) && <p className="text-slate-700 text-sm">{[b.postcode, b.stad].filter(Boolean).join('  ')}</p>}
-                      {b.provincie && <p className="text-slate-500 text-xs mt-0.5">{b.provincie}</p>}
+                    <div className="bg-white border border-slate-200 p-4 rounded-sm space-y-3">
+                      <div>
+                        {b.straat && <p className="text-slate-800 font-medium text-sm">{b.straat}</p>}
+                        {(b.postcode || b.stad) && <p className="text-slate-700 text-sm">{[b.postcode, b.stad].filter(Boolean).join('  ')}</p>}
+                        {b.provincie && <p className="text-slate-500 text-xs mt-0.5">{b.provincie}</p>}
+                      </div>
 
-                      {/* Kaart info - klikbare link naar KAART tab */}
-                      {(b.stad) && (
-                        <button
-                          onClick={() => {
-                            setMapFocusTarget({ naam: b.naam || '', straat: b.straat || '', stad: b.stad || '', provincie: b.provincie || '' });
-                            setViewMode('map');
-                            setSelectedCompany(null);
-                          }}
-                          className="w-full mt-4 pt-4 border-t border-slate-100 text-center hover:bg-[#009FE3]/5 transition-colors rounded-sm py-2 cursor-pointer"
-                        >
-                          <p className="text-sm font-medium text-[#009FE3] hover:text-[#0088c8]">📍 Bekijk op de KAART-tab</p>
-                          <p className="text-[10px] text-slate-400 mt-1">{b.stad}{b.straat ? `, ${b.straat}` : ''}</p>
-                        </button>
-                      )}
+                      {/* Embedded Interactive Mini Map — uses same Leaflet + Google Maps tiles as KAART tab */}
+                      {(() => {
+                        const coords = getBedrijfCoords(b);
+                        if (coords) {
+                          return (
+                            <div className="rounded-md border border-slate-200 overflow-hidden shadow-sm">
+                              <ProfileMiniMap
+                                lat={coords.lat}
+                                lng={coords.lng}
+                                naam={b.naam || ''}
+                                straat={b.straat}
+                                postcode={b.postcode}
+                                stad={b.stad}
+                                telefoon={b.telefoon}
+                                email={b.email}
+                                website={b.website}
+                                source={b.source}
+                                onOpenInKaartTab={() => {
+                                  setMapFocusTarget({ naam: b.naam || '', straat: b.straat || '', stad: b.stad || '', provincie: b.provincie || '' });
+                                  setViewMode('map');
+                                  setSelectedCompany(null);
+                                }}
+                              />
+                              <div className="p-2.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
+                                <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
+                                  <MapPin className="w-3.5 h-3.5 text-[#009FE3]" />
+                                  {b.stad}{b.straat ? `, ${b.straat}` : ''}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setMapFocusTarget({ naam: b.naam || '', straat: b.straat || '', stad: b.stad || '', provincie: b.provincie || '' });
+                                    setViewMode('map');
+                                    setSelectedCompany(null);
+                                  }}
+                                  className="text-xs font-bold text-[#009FE3] hover:text-[#0088c8] hover:underline flex items-center gap-1"
+                                >
+                                  Open op grote KAART-tab →
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        }
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMapFocusTarget({ naam: b.naam || '', straat: b.straat || '', stad: b.stad || '', provincie: b.provincie || '' });
+                              setViewMode('map');
+                              setSelectedCompany(null);
+                            }}
+                            className="w-full mt-2 pt-3 border-t border-slate-100 text-center hover:bg-[#009FE3]/5 transition-colors rounded-sm py-2 cursor-pointer"
+                          >
+                            <p className="text-sm font-medium text-[#009FE3] hover:text-[#0088c8]">📍 Bekijk op de KAART-tab</p>
+                            <p className="text-[10px] text-slate-400 mt-1">{b.stad}{b.straat ? `, ${b.straat}` : ''}</p>
+                          </button>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
@@ -7196,30 +7643,98 @@ const App: React.FC = () => {
                   );
                 })()}
 
-                {/* Contactgegevens */}
-                {hasContact && (
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Contact</p>
-                    <div className="bg-white border border-slate-200 p-3 sm:p-4 rounded-sm space-y-2">
-                      {b.telefoon && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Algemeen</span><a href={`tel:${b.telefoon}`} className="text-slate-800 font-medium flex items-center gap-1.5 hover:text-[#009FE3]"><Phone className="w-3 h-3 text-slate-400 flex-shrink-0" />{b.telefoon}</a></div>}
-                      {b.telefoon_sales && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Sales</span><a href={`tel:${b.telefoon_sales}`} className="text-slate-800 flex items-center gap-1.5 hover:text-[#009FE3]"><Phone className="w-3 h-3 text-slate-400 flex-shrink-0" />{b.telefoon_sales}</a></div>}
-                      {b.telefoon_admin && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Administratie</span><a href={`tel:${b.telefoon_admin}`} className="text-slate-800 flex items-center gap-1.5 hover:text-[#009FE3]"><Phone className="w-3 h-3 text-slate-400 flex-shrink-0" />{b.telefoon_admin}</a></div>}
-                      {b.email && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Algemeen</span><a href={`mailto:${b.email}`} className="text-[#009FE3] hover:underline flex items-center gap-1.5 break-all"><Mail className="w-3 h-3 flex-shrink-0" />{b.email}</a></div>}
-                      {b.email_sales && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Sales</span><a href={`mailto:${b.email_sales}`} className="text-[#009FE3] hover:underline flex items-center gap-1.5 break-all"><Mail className="w-3 h-3 flex-shrink-0" />{b.email_sales}</a></div>}
-                      {b.email_overig && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Overig</span><a href={`mailto:${b.email_overig}`} className="text-[#009FE3] hover:underline flex items-center gap-1.5 break-all"><Mail className="w-3 h-3 flex-shrink-0" />{b.email_overig}</a></div>}
-                      {b.contactpersoon && (
-                        <div className="pt-2 mt-2 border-t border-slate-100 space-y-1.5">
-                          <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm">
-                            <span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Contactpersoon</span>
-                            <span className="text-slate-800 font-semibold">{b.contactpersoon}</span>
-                          </div>
-                          {b.contactpersoon_telefoon && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0" /><a href={`tel:${b.contactpersoon_telefoon}`} className="text-slate-800 flex items-center gap-1.5 hover:text-[#009FE3]"><Phone className="w-3 h-3 text-slate-400 flex-shrink-0" />{b.contactpersoon_telefoon}</a></div>}
-                          {b.contactpersoon_email && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0" /><a href={`mailto:${b.contactpersoon_email}`} className="text-[#009FE3] hover:underline flex items-center gap-1.5 break-all"><Mail className="w-3 h-3 flex-shrink-0" />{b.contactpersoon_email}</a></div>}
-                        </div>
-                      )}
+                {/* Contactgegevens & Contactpersonen */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                      <Users className="w-3 h-3" /> Contactgegevens & Contactpersonen
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={contactSortMode}
+                        onChange={(e: any) => setContactSortMode(e.target.value as any)}
+                        className="text-[10px] font-bold bg-slate-100 border border-slate-200 rounded px-1.5 py-0.5 text-slate-600 focus:outline-none"
+                      >
+                        <option value="rang">Relevantie</option>
+                        <option value="az">A – Z</option>
+                        <option value="datum">Meest recent</option>
+                      </select>
                     </div>
                   </div>
-                )}
+
+                  <div className="bg-white border border-slate-200 p-3 sm:p-4 rounded-sm space-y-3">
+                    {b.telefoon && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Algemeen</span><a href={`tel:${b.telefoon}`} className="text-slate-800 font-medium flex items-center gap-1.5 hover:text-[#009FE3]"><Phone className="w-3 h-3 text-slate-400 flex-shrink-0" />{b.telefoon}</a></div>}
+                    {b.telefoon_sales && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Sales</span><a href={`tel:${b.telefoon_sales}`} className="text-slate-800 flex items-center gap-1.5 hover:text-[#009FE3]"><Phone className="w-3 h-3 text-slate-400 flex-shrink-0" />{b.telefoon_sales}</a></div>}
+                    {b.telefoon_admin && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Administratie</span><a href={`tel:${b.telefoon_admin}`} className="text-slate-800 flex items-center gap-1.5 hover:text-[#009FE3]"><Phone className="w-3 h-3 text-slate-400 flex-shrink-0" />{b.telefoon_admin}</a></div>}
+                    {b.email && <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 text-sm"><span className="text-slate-400 text-xs sm:w-24 sm:flex-shrink-0">Algemeen</span><a href={`mailto:${b.email}`} className="text-[#009FE3] hover:underline flex items-center gap-1.5 break-all"><Mail className="w-3 h-3 flex-shrink-0" />{b.email}</a></div>}
+
+                    {/* Contactpersonen lijst (Standaard + Extra toegevoegd) */}
+                    {(() => {
+                      const cList: any[] = [];
+                      if (b.contactpersoon) {
+                        cList.push({
+                          id: 'default',
+                          naam: b.contactpersoon,
+                          functie: 'Hoofdcontactpersoon',
+                          telefoon: b.contactpersoon_telefoon || '',
+                          email: b.contactpersoon_email || '',
+                          rang: 1,
+                          datum: '1970-01-01'
+                        });
+                      }
+                      const extra = companyContacts[b.naam] || [];
+                      const combined = [...cList, ...extra];
+
+                      // Sortering
+                      combined.sort((a, b) => {
+                        if (contactSortMode === 'az') return a.naam.localeCompare(b.naam);
+                        if (contactSortMode === 'datum') return (b.datum || '').localeCompare(a.datum || '');
+                        return (a.rang || 9) - (b.rang || 9);
+                      });
+
+                      if (combined.length === 0 && !showAddContact) {
+                        return <p className="text-xs text-slate-400 italic pt-1">Nog geen contactpersonen toegevoegd.</p>;
+                      }
+
+                      return (
+                        <div className="pt-2 border-t border-slate-100 divide-y divide-slate-100 space-y-2">
+                          {combined.map((c: any, ci: number) => (
+                            <div key={c.id || ci} className="pt-2 flex items-start justify-between gap-2 text-sm">
+                              <div className="space-y-0.5 min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-bold text-slate-800">{c.naam}</span>
+                                  {c.functie && <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-semibold">{c.functie}</span>}
+                                  {c.rang === 1 && <span className="text-[9px] bg-amber-100 text-amber-800 font-black uppercase px-1 rounded">Management</span>}
+                                  {c.rang === 2 && <span className="text-[9px] bg-blue-100 text-blue-800 font-black uppercase px-1 rounded">Senior / Lead</span>}
+                                </div>
+                                <div className="flex items-center gap-3 text-xs text-slate-600 flex-wrap">
+                                  {c.telefoon && <a href={`tel:${c.telefoon}`} className="hover:text-[#009FE3] flex items-center gap-1"><Phone className="w-3 h-3 text-slate-400" />{c.telefoon}</a>}
+                                  {c.email && <a href={`mailto:${c.email}`} className="text-[#009FE3] hover:underline flex items-center gap-1 break-all"><Mail className="w-3 h-3" />{c.email}</a>}
+                                </div>
+                              </div>
+                              {c.id !== 'default' && editMode && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const next = (companyContacts[b.naam] || []).filter((x: any) => x.id !== c.id);
+                                    saveCompanyContacts({ ...companyContacts, [b.naam]: next });
+                                    showToast('Contactpersoon verwijderd');
+                                  }}
+                                  className="text-slate-300 hover:text-red-500 p-1 transition-colors"
+                                  title="Verwijderen"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+
+
+                  </div>
+                </div>
 
                 {/* Bedrijfsinfo */}
                 {hasBedrijf && (
@@ -7242,20 +7757,80 @@ const App: React.FC = () => {
                   </div>
                 )}
 
-                {/* Bekende projecten */}
-                {Array.isArray(b.projecten) && b.projecten.length > 0 && (
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5"><Building className="w-3 h-3"/> Bekende projecten</p>
-                    <div className="bg-white border border-slate-200 rounded-sm divide-y divide-slate-100">
-                      {b.projecten.map((p: string, i: number) => (
-                        <div key={i} className="px-4 py-2.5 text-sm text-slate-700 flex items-start gap-2">
-                          <span className="text-[#009FE3] mt-0.5">•</span>
-                          <span>{p}</span>
-                        </div>
-                      ))}
-                    </div>
+                {/* Bekende projecten & Custom projecten */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                      <Building className="w-3 h-3"/> Projecten & Referenties
+                    </p>
                   </div>
-                )}
+
+                  <div className="bg-white border border-slate-200 rounded-sm p-3 space-y-3">
+                    {b.projecten_url && (
+                      <a
+                        href={toUrl(b.projecten_url)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white border-2 border-[#009FE3] text-[#009FE3] hover:bg-[#009FE3] hover:text-white font-bold text-xs uppercase tracking-wider rounded-sm transition-all shadow-sm"
+                      >
+                        <Globe className="w-4 h-4 flex-shrink-0" />
+                        BELANGRIJKSTE PROJECTEN VAN {b.naam ? b.naam.toUpperCase() : 'DIT BEDRIJF'}
+                      </a>
+                    )}
+
+                    {/* Standaard projecten van scraper/database */}
+                    {Array.isArray(b.projecten) && b.projecten.length > 0 && (
+                      <div className="divide-y divide-slate-100 border-t border-slate-100 pt-2">
+                        {b.projecten.map((p: string, i: number) => (
+                          <div key={i} className="px-2 py-1.5 text-sm text-slate-700 flex items-start gap-2 font-medium">
+                            <span className="text-[#009FE3] mt-0.5">•</span>
+                            <span>{p}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Handmatig toegevoegde projecten met custom naam & URL */}
+                    {(() => {
+                      const cProjects = companyProjects[b.naam] || [];
+                      if (cProjects.length === 0 && (!Array.isArray(b.projecten) || b.projecten.length === 0) && !b.projecten_url && !showAddProject) {
+                        return <p className="text-xs text-slate-400 italic">Geen projecten vastgelegd voor dit bedrijf.</p>;
+                      }
+                      if (cProjects.length === 0) return null;
+                      return (
+                        <div className="divide-y divide-slate-100 border-t border-slate-100 pt-2 space-y-1.5">
+                          {cProjects.map((cp: any) => (
+                            <div key={cp.id} className="pt-2 flex items-center justify-between gap-2 text-sm">
+                              <div className="min-w-0 flex-1 flex items-center gap-2">
+                                <span className="text-[#E85E26] font-bold">•</span>
+                                <span className="font-bold text-slate-800 truncate">{cp.naam}</span>
+                                {cp.url && (
+                                  <a href={toUrl(cp.url)} target="_blank" rel="noreferrer" className="text-xs text-[#009FE3] font-medium hover:underline flex items-center gap-1 flex-shrink-0">
+                                    <Globe className="w-3 h-3" /> Bekijk
+                                  </a>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const next = (companyProjects[b.naam] || []).filter((x: any) => x.id !== cp.id);
+                                  saveCompanyProjects({ ...companyProjects, [b.naam]: next });
+                                  showToast('Project verwijderd');
+                                }}
+                                className="text-slate-300 hover:text-red-500 p-1 transition-colors"
+                                title="Verwijderen"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+
+
+                  </div>
+                </div>
 
                 {/* Specialisaties */}
                 {hasSpec && (
@@ -7417,10 +7992,15 @@ const App: React.FC = () => {
         onAddNote={(naam, notitie) => { const b = activeData.find((x: any) => (x.naam || '').toLowerCase() === naam.toLowerCase()); if (b) updateCrm(b, { note: notitie }); }}
         onCreateRoute={(bedrijven) => {
           const matched = bedrijven
-            .map((b: any) => activeData.find((x: any) => (x.naam || '').toLowerCase() === (b.naam || '').toLowerCase()))
+            .map((b: any) => activeData.find((x: any) => (x.naam || '').toLowerCase() === (b?.naam || b?.name || '').toLowerCase()) || b)
             .filter(Boolean) as any[];
           if (matched.length === 0) return;
-          setSelectedRaws(new Map(matched.map((r: any) => [r.naam, r])));
+          const validMap = new Map<string, any>();
+          matched.forEach((r: any) => {
+            const nm = r?.naam || r?.name;
+            if (nm) validMap.set(nm, r);
+          });
+          setSelectedRaws(validMap);
           setAutoOptimizeRoute(true);
           setShowRouteMap(true);
           setViewMode('search');
@@ -7429,6 +8009,23 @@ const App: React.FC = () => {
         openRequest={agentPromptRequest}
         onOpenRequestHandled={() => setAgentPromptRequest(null)}
       />
+      )}
+
+      {/* Floating Toast Notification */}
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-[9999] bg-slate-900 text-white px-4 py-3 rounded-lg shadow-2xl flex items-center gap-3 border border-slate-700">
+          <Check className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+          <span className="text-xs sm:text-sm font-semibold">{toastMsg}</span>
+          {viewMode !== 'visits' && (
+            <button
+              type="button"
+              onClick={() => setViewMode('visits')}
+              className="ml-2 px-3 py-1 bg-[#009FE3] hover:bg-[#008ac5] text-white text-xs font-bold rounded-sm transition-colors flex-shrink-0"
+            >
+              Bekijk in Bezoeken →
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -7868,7 +8465,6 @@ const CollapsibleFilterGroup: React.FC<any> = ({ title, items, selectedItems, on
                     )}
                 </div>
             )}
-
         </div>
     );
 };

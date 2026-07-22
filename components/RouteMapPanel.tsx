@@ -332,7 +332,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
           `<div style="font-family:system-ui;min-width:180px">
             <b style="font-size:13px;color:#1e293b">${raw.naam || stop.company.name || ''}</b>
             <div style="color:#64748b;font-size:12px;margin-top:2px">${[raw.straat, raw.postcode, raw.stad].filter(Boolean).join(', ')}</div>
-            <button onclick="window._inncemRouteVisit('${(raw.naam || stop.company.name || '').replace(/'/g, "\\'")}')" style="margin-top:8px;font-size:11px;color:#7c3aed;background:#faf5ff;border:1px solid #a855f7;padding:3px 8px;border-radius:4px;cursor:pointer">Toevoegen →</button>
+            <button onclick="window._inncemAddToOnderweg('${(raw.naam || stop.company.name || '').replace(/'/g, "\\'")}')" style="margin-top:8px;font-size:11px;color:#7c3aed;background:#faf5ff;border:1px solid #a855f7;padding:3px 8px;border-radius:4px;cursor:pointer">Toevoegen aan bezoeken</button>
           </div>`,
           { maxWidth: 240 },
         ).addTo(mapRef.current!);
@@ -411,7 +411,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
       const raw = s.company._raw || s.company;
       const naam = raw.naam || s.company.name || '';
       s.marker = L.marker(s.coords, { icon: makePin('#009FE3', i + 1) })
-        .bindPopup(`<div style="font-family:system-ui;min-width:180px"><b>${naam}</b><br/><button onclick="window._inncemRouteVisit('${naam.replace(/'/g, "\\'")}')" style="margin-top:8px;font-size:11px;color:#7c3aed;background:#faf5ff;border:1px solid #a855f7;padding:3px 8px;border-radius:4px;cursor:pointer">Toevoegen →</button></div>`)
+        .bindPopup(`<div style="font-family:system-ui;min-width:180px"><b>${naam}</b><br/><button onclick="window._inncemAddToOnderweg('${naam.replace(/'/g, "\\'")}')" style="margin-top:8px;font-size:11px;color:#009FE3;background:#f0f9ff;border:1px solid #009FE3;padding:3px 8px;border-radius:4px;cursor:pointer">Toevoegen aan bezoeken →</button></div>`)
         .addTo(mapRef.current!);
     });
     setOrderedStops(ordered);
@@ -1251,7 +1251,7 @@ const RouteMapPanel: React.FC<Props> = ({ companies, allData = [], onClose, onAd
               <button onClick={clearDrawArea} className="text-slate-400 hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
             </div>
             <div>
-              <p className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1">Straal: {(drawRadiusM / 1000).toFixed(1)} km</p>
+              <p className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1">Straal: {((drawRadiusM || 0) / 1000).toFixed(1)} km</p>
               <input
                 type="range"
                 min={1}

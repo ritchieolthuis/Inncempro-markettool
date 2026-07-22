@@ -32,6 +32,10 @@ function buildLocationGroups(entries: GeoEntry[]): ProvGroup[] {
     provMap[prov][stad] = (provMap[prov][stad] || 0) + 1;
   });
   return Object.entries(provMap)
+    // Filter 'Onbekend' uit de provincies — dat is geen echte provincie en hoort
+    // niet in de sidebar. De bijbehorende markers zijn nog steeds bereikbaar via
+    // de bronfilter.
+    .filter(([provincie]) => provincie !== 'Onbekend')
     .map(([provincie, steden]) => ({
       provincie,
       count: Object.values(steden).reduce((a, c) => a + c, 0),
@@ -57,6 +61,7 @@ function popupHtml(entry: GeoEntry): string {
       ${website ? `<a href="${website}" target="_blank" rel="noopener" style="font-size:11px;color:#009FE3;border:1px solid #009FE3;padding:3px 8px;border-radius:4px;text-decoration:none">Website →</a>` : ''}
       <a href="https://www.google.com/maps/search/?api=1&query=${mapsQuery}" target="_blank" rel="noopener" style="font-size:11px;color:#16a34a;border:1px solid #16a34a;padding:3px 8px;border-radius:4px;text-decoration:none">Google Maps →</a>
       <button onclick="window._inncemMapNav('${naamEsc}')" style="font-size:11px;color:#1e293b;background:#f1f5f9;border:1px solid #cbd5e1;padding:3px 8px;border-radius:4px;cursor:pointer">Open in database →</button>
+      <button onclick="window._inncemAddToOnderweg('${naamEsc}')" style="font-size:11px;color:#009FE3;background:#f0f9ff;border:1px solid #009FE3;padding:3px 8px;border-radius:4px;cursor:pointer">Toevoegen aan bezoeken →</button>
     </div>
     <div style="margin-top:8px;padding-top:6px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b">${sourceLabel(entry.source)}</div>
   </div>`;
@@ -198,9 +203,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
   const circleRadiusForZoom = (zoom: number): number => {
     const scale = 1 + (zoom - CIRCLE_BASE_ZOOM) * 0.09;
     const factor = Math.max(0.65, Math.min(1.45, scale));
-    return isTouchDevice
-      ? Math.max(9, Math.min(16, 11 * factor))
-      : Math.max(3.5, Math.min(8, 5 * factor));
+    return Math.max(3.5, Math.min(8, 5 * factor));
   };
 
   // Initialize map once
@@ -251,8 +254,8 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
         // markers waren dus wel te zien maar nooit klikbaar, dus je zag nergens een titel.
         interactive: true,
       }).bindPopup(popupHtml(entry));
-      const prov = entry.provincie || 'Onbekend';
-      const stad = entry.stad || 'Onbekend';
+      const prov = (entry.provincie || 'Onbekend').trim();
+      const stad = (entry.stad || 'Onbekend').trim();
       (marker as any)._provKey = provKey(prov);
       (marker as any)._cityKey = cityKey(prov, stad);
       (marker as any)._entry = entry;
@@ -276,14 +279,17 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
       // over en vloog IK naar weer een andere plek — vandaar het heen-en-weer "wegvliegen".
       let hoverTimer: ReturnType<typeof setTimeout> | null = null;
       let zoomInterval: ReturnType<typeof setInterval> | null = null;
-      const HOVER_ZOOM_MAX = 16;
+      let popupCloseTimer: ReturnType<typeof setTimeout> | null = null;
+      let clickedOpen = false;
+
+      const HOVER_ZOOM_MAX = 15;
       marker.on('mouseover', function (this: L.CircleMarker) {
-        // Op touch blijft dit ongebruikt: mouseout vuurt daar niet betrouwbaar af na een tik,
-        // waardoor het bolletje anders "vergroot" blijft staan. Touch-schermen hebben door
-        // circleRadiusForZoom hierboven toch al een ruimere straal, dus geen extra nodig.
         if (isTouchDevice) return;
+        if (popupCloseTimer) { clearTimeout(popupCloseTimer); popupCloseTimer = null; }
         this.setRadius(this.getRadius() + 3);
-        if (!selectionModeRef.current) this.openPopup();
+        if (!selectionModeRef.current && !this.isPopupOpen()) {
+          this.openPopup();
+        }
         const latlng = this.getLatLng();
         hoverTimer = setTimeout(() => {
           if (!mapRef.current) return;
@@ -291,26 +297,53 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
             if (!mapRef.current) return;
             const z = mapRef.current.getZoom();
             if (z >= HOVER_ZOOM_MAX) { if (zoomInterval) clearInterval(zoomInterval); zoomInterval = null; return; }
-            mapRef.current.setZoomAround(latlng, z + 1, { animate: true });
-          }, 900);
-        }, 400);
+            const nextZoom = Math.min(HOVER_ZOOM_MAX, z + 0.8);
+            mapRef.current.setZoomAround(latlng, nextZoom, { animate: true, duration: 0.3 });
+          }, 350);
+        }, 350);
       });
+
       marker.on('mouseout', function (this: L.CircleMarker) {
         if (isTouchDevice) return;
         if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
         if (zoomInterval) { clearInterval(zoomInterval); zoomInterval = null; }
         if (mapRef.current) this.setRadius(circleRadiusForZoom(mapRef.current.getZoom()));
-        this.closePopup();
+        if (clickedOpen) return;
+
+        popupCloseTimer = setTimeout(() => {
+          const popupEl = this.getPopup()?.getElement();
+          if (popupEl && (popupEl.matches(':hover') || popupEl.contains(document.activeElement))) return;
+          this.closePopup();
+        }, 400);
       });
-      // Alleen actief als selectiemodus expliciet aan staat (zie de toggle-knop in App.tsx) —
-      // staat hij uit, dan verandert een klik hier niets, en blijft alleen de hover-info
-      // hierboven (die daardoor identiek blijft aan hoe het al werkte). Op touch is dit de
-      // enige interactie (geen aparte hover-stap), en de vergrote tikstraal hierboven maakt
-      // dit nu ook echt goed te raken.
+
+      marker.on('popupopen', function (this: L.CircleMarker) {
+        const popupEl = this.getPopup()?.getElement();
+        if (popupEl) {
+          popupEl.addEventListener('mouseenter', () => {
+            if (popupCloseTimer) { clearTimeout(popupCloseTimer); popupCloseTimer = null; }
+          });
+          popupEl.addEventListener('mouseleave', () => {
+            if (!clickedOpen) {
+              popupCloseTimer = setTimeout(() => {
+                this.closePopup();
+              }, 300);
+            }
+          });
+        }
+      });
+
       marker.on('click', function (this: L.CircleMarker) {
-        if (isTouchDevice && !selectionModeRef.current) this.openPopup();
+        if (popupCloseTimer) { clearTimeout(popupCloseTimer); popupCloseTimer = null; }
+        clickedOpen = true;
+        this.openPopup();
+        if (isTouchDevice && !selectionModeRef.current) return;
         if (!selectionModeRef.current) return;
         onToggleSelectionRef.current?.(entry);
+      });
+
+      marker.on('popupclose', function () {
+        clickedOpen = false;
       });
       marker.addTo(markersLayerRef.current!);
     });
@@ -332,21 +365,30 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
   }, [selectedNames]);
 
   // Toggle visibility + zoom-to-fit whenever the region or bron selection changes.
-  // Bronnen gebruiken checkbox-semantiek: aangevinkt = zichtbaar. Geen bron aangevinkt
-  // betekent dus nul bedrijven, ook als er wel een regio gekozen is.
+  // Filters werken onafhankelijk: als je alleen provincies selecteert worden alle
+  // bronnen getoond binnen die provincies, en andersom. Beide leeg = niets zichtbaar.
+  // Beide gevuld = AND (alleen bedrijven die aan beide filters voldoen).
   useEffect(() => {
     if (!markersLayerRef.current) return;
     const bounds: L.LatLngExpression[] = [];
+    const hasRegionFilter = selectedRegions.size > 0;
+    const hasSourceFilter = selectedSources.size > 0;
 
     markersLayerRef.current.eachLayer((layer: any) => {
+      // Beide leeg → niets tonen
+      if (!hasRegionFilter && !hasSourceFilter) {
+        layer.setStyle({ opacity: 0, fillOpacity: 0 });
+        layer.options.interactive = false;
+        if (layer.isPopupOpen?.()) layer.closePopup();
+        return;
+      }
       const matchRegion = selectedRegions.has(layer._provKey) || selectedRegions.has(layer._cityKey);
       const matchSource = selectedSources.has(sourceLabel(layer._entry?.source || 'Onbekend'));
-      const visible = matchRegion && matchSource;
+      // Als maar één filter actief is, negeer de andere
+      const visible = hasRegionFilter && hasSourceFilter
+        ? matchRegion && matchSource
+        : hasRegionFilter ? matchRegion : matchSource;
       layer.setStyle({ opacity: visible ? 1 : 0, fillOpacity: visible ? 0.9 : 0 });
-      // setStyle maakt 'm alleen onzichtbaar — de canvas-renderer test nog gewoon op de
-      // (onzichtbare) cirkel-geometrie, dus zonder dit bleef je bij het overheen bewegen
-      // met je muis alsnog de popup/naam van een verborgen bedrijf zien terwijl er niets
-      // te zien was om te hoveren. interactive: false schakelt ook de hit-test zelf uit.
       layer.options.interactive = visible;
       if (!visible && layer.isPopupOpen?.()) layer.closePopup();
       if (visible) bounds.push(layer.getLatLng());
@@ -359,12 +401,6 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
         mapRef.current.setView([52.1326, 5.2913], 7);
       }
     }
-    // mapEntries hoort hier expliciet bij: de achtergrond-geocoding (poll elke ~3s) herbouwt
-    // periodiek ALLE markers zodra er preciezere coördinaten binnenkomen (zie de vorige
-    // useEffect), en die nieuwe markers starten standaard onzichtbaar. Zonder allEntries hier
-    // als dependency werd de zichtbaarheid dan niet opnieuw toegepast — de bolletjes vervielen
-    // na een herbouw, en pas een filter aan/uit klikken (wat selectedRegions wijzigt) herstelde
-    // het toevallig weer.
   }, [selectedRegions, selectedSources, mapEntries]);
 
   // Vanuit een bedrijfsprofiel elders in de app ("Bekijk op de KAART-tab"): selecteer
@@ -402,9 +438,11 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
         // dan pas verder inzoomen op dit specifieke bedrijf.
         timeoutId = setTimeout(() => {
           mapRef.current?.flyTo(targetMarker.getLatLng(), 15, { duration: 0.8 });
-          targetMarker.openPopup();
-          onFocusHandled?.();
-        }, 500);
+          setTimeout(() => {
+            targetMarker.openPopup();
+            onFocusHandled?.();
+          }, 850);
+        }, 300);
         return;
       }
       if (attempts < 10) timeoutId = setTimeout(tryFocus, 300);
@@ -439,12 +477,17 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
   };
 
   const visibleCount = useMemo(() => {
+    const hasRegionFilter = selectedRegions.size > 0;
+    const hasSourceFilter = selectedSources.size > 0;
+    if (!hasRegionFilter && !hasSourceFilter) return 0;
     return mapEntries.filter(e => {
-      const prov = e.provincie || 'Onbekend';
-      const stad = e.stad || 'Onbekend';
+      const prov = (e.provincie || 'Onbekend').trim();
+      const stad = (e.stad || 'Onbekend').trim();
       const matchRegion = selectedRegions.has(provKey(prov)) || selectedRegions.has(cityKey(prov, stad));
       const matchSource = selectedSources.has(sourceLabel(e.source || 'Onbekend'));
-      return matchRegion && matchSource;
+      return hasRegionFilter && hasSourceFilter
+        ? matchRegion && matchSource
+        : hasRegionFilter ? matchRegion : matchSource;
     }).length;
   }, [mapEntries, selectedRegions, selectedSources]);
 
@@ -532,12 +575,29 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
           <VoiceInputButton onResult={setCitySearch} className="p-1 rounded-full text-slate-400 hover:text-[#009FE3] hover:bg-[#009FE3]/10 transition-colors" />
         </div>
       </div>
-      <button
-        onClick={() => setSelectedRegions(prev => new Set([...prev, ...locationGroups.map(g => provKey(g.provincie))]))}
-        className="text-[10px] font-bold text-[#009FE3] hover:underline uppercase tracking-wider mb-3"
-      >
-        Selecteer alle provincies
-      </button>
+      {(() => {
+        const allProvKeys = locationGroups.map(g => provKey(g.provincie.trim()));
+        const allProvSelected = allProvKeys.length > 0 && allProvKeys.every(k => selectedRegions.has(k));
+        return (
+          <button
+            onClick={() => {
+              if (allProvSelected) {
+                // Deselecteer alle provincies (verwijder provKeys maar behoud eventuele city-keys)
+                setSelectedRegions(prev => {
+                  const next = new Set(prev);
+                  allProvKeys.forEach(k => next.delete(k));
+                  return next;
+                });
+              } else {
+                setSelectedRegions(prev => new Set([...prev, ...allProvKeys]));
+              }
+            }}
+            className="text-[10px] font-bold text-[#009FE3] hover:underline uppercase tracking-wider mb-3"
+          >
+            {allProvSelected ? 'Deselecteer alle provincies' : 'Selecteer alle provincies'}
+          </button>
+        );
+      })()}
 
       <div className="space-y-0.5 max-h-[calc(100vh-380px)] overflow-y-auto pr-1">
         {locationGroups.map(({ provincie, count, steden }) => {
@@ -558,7 +618,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
             <div key={provincie}>
               <div className="flex items-center gap-1 group">
                 <div
-                  onClick={() => toggleRegion(provKey(provincie))}
+                  onClick={() => toggleRegion(provKey(provincie.trim()))}
                   className={`w-4 h-4 border flex items-center justify-center rounded-sm flex-shrink-0 cursor-pointer ${provSelected ? 'bg-[#009FE3] border-[#009FE3]' : 'bg-white border-slate-300'}`}
                 >
                   {provSelected && <Check className="w-3 h-3 text-white" />}
