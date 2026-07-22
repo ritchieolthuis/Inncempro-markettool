@@ -2013,6 +2013,7 @@ const App: React.FC = () => {
   const [rideStartCoords, setRideStartCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [rideStartLabel, setRideStartLabel] = useState('');
   const [rideChain, setRideChain] = useState<any[]>([]);
+  const [activeRideRouteId, setActiveRideRouteId] = useState<string | null>(null);
   // Bestemming ("Naar") voor de Van→Naar-richtingmodus in Onderweg — ook hier opgetild zodat
   // de gekozen richting/route blijft staan bij tabwissel.
   const [rideDestCoords, setRideDestCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -4280,6 +4281,7 @@ const App: React.FC = () => {
     });
     if (chainItems.length > 0) {
       setRideChain(chainItems);
+      setActiveRideRouteId(route.id || null);
       setShowRidePanel(true);
       setSelectedRaws(matchedMap);
       setViewMode('visits');
@@ -5842,7 +5844,14 @@ const App: React.FC = () => {
                           setVisits(await authService.getVisits(currentUser.id));
                         }}
                         onSaveRoute={(route) => {
-                          const next = [...(savedRoutes || []), { ...route, id: String(Date.now()) }];
+                          const routeId = activeRideRouteId || String(Date.now());
+                          let next;
+                          if (activeRideRouteId) {
+                            next = (savedRoutes || []).map(r => r.id === activeRideRouteId ? { ...r, ...route, savedAt: new Date().toISOString() } : r);
+                          } else {
+                            next = [...(savedRoutes || []), { ...route, id: routeId }];
+                            setActiveRideRouteId(routeId);
+                          }
                           setSavedRoutes(next);
                           localStorage.setItem('inncempro_saved_routes', JSON.stringify(next));
                           showToast(`✓ Route '${route.name}' opgeslagen in Mijn Bezoeken`);
