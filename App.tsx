@@ -7995,7 +7995,7 @@ const App: React.FC = () => {
 
       {/* Floating Toast Notification */}
       {toastMsg && (
-        <div className="fixed bottom-6 right-6 z-[9999] bg-slate-900 text-white px-4 py-3 rounded-lg shadow-2xl flex items-center gap-3 border border-slate-700">
+        <div className="fixed top-20 right-4 sm:top-20 sm:right-6 z-[9999] bg-slate-900 text-white px-4 py-3 rounded-lg shadow-2xl flex items-center gap-3 border border-slate-700 max-w-[calc(100vw-2rem)]">
           <Check className="w-5 h-5 text-emerald-400 flex-shrink-0" />
           <span className="text-xs sm:text-sm font-semibold">{toastMsg}</span>
           {viewMode !== 'visits' && (
