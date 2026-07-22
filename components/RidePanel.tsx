@@ -271,6 +271,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
   // opnieuw moet tekenen.
   const [mapGeneration, setMapGeneration] = useState(0);
   // Welke stop wordt nu vervangen (toont buurt-suggesties); null = geen.
+  const [replaceStopId, setReplaceStopId] = useState<string | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [selectedSuggestionNames, setSelectedSuggestionNames] = useState<Set<string>>(new Set());
   const [mapSelectionMode, setMapSelectionMode] = useState(false);
@@ -308,14 +309,41 @@ const RidePanel: React.FC<RidePanelProps> = ({
   };
 
   const advanceSelected = () => {
-    const selectedList = suggestions.filter(s => selectedSuggestionNames.has(s.bedrijf.naam));
-    if (selectedList.length === 0) return;
-    setChain(prev => [
-      ...prev,
-      ...selectedList.map((s, i) => ({ id: `${(s.bedrijf.naam || '')}_${Date.now()}_${i}`, bedrijf: s.bedrijf, coords: s.coords, km: s.km })),
-    ]);
-    setAlertMessage(`${selectedList.length} geselecteerde bedrijven toegevoegd`);
-    deselectAllPageSuggestions();
+    if (selectedSuggestionNames.size === 0) return;
+    const names = Array.from(selectedSuggestionNames);
+    const itemsToAdd: RideStop[] = [];
+
+    names.forEach((naam, i) => {
+      const sugg = suggestions.find(s => (s.bedrijf.naam || '').toLowerCase() === naam.toLowerCase());
+      if (sugg) {
+        itemsToAdd.push({ id: `${(sugg.bedrijf.naam || '')}_${Date.now()}_${i}`, bedrijf: sugg.bedrijf, coords: sugg.coords, km: sugg.km });
+      } else {
+        const b = allData.find((x: any) => (x.naam || '').toLowerCase() === naam.toLowerCase());
+        if (b) {
+          const coords = coordsFor(b, cityCoords);
+          if (coords) {
+            const last = currentPosition();
+            const km = last ? haversineKm(last.lat, last.lng, coords.lat, coords.lng) : 0;
+            itemsToAdd.push({ id: `${(b.naam || '')}_${Date.now()}_${i}`, bedrijf: b, coords, km });
+          }
+        }
+      }
+    });
+
+    if (itemsToAdd.length === 0) return;
+
+    setChain(prev => {
+      const existingNames = new Set(prev.map(x => (x.bedrijf.naam || '').toLowerCase()));
+      const newStops = itemsToAdd.filter(x => !existingNames.has((x.bedrijf.naam || '').toLowerCase()));
+      if (newStops.length === 0) {
+        setAlertMessage("Staan al in Onderweg");
+        return prev;
+      }
+      setAlertMessage(`${newStops.length} geselecteerde bedrijven toegevoegd`);
+      return [...prev, ...newStops];
+    });
+
+    setSelectedSuggestionNames(new Set());
   };
 
   const requestIdRef = useRef(0);
