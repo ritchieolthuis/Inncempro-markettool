@@ -13,11 +13,11 @@ type Coords = { lat: number; lng: number };
 // Zelfde popup-opzet (naam, adres, telefoon, email) als op de Kaart-tab
 // (components/ClusterMapView.tsx popupHtml), met drie link/knoppen: Live Zoeken (voor de
 // rij-afstand in meters), Google Maps en Website.
-function popupHtml(b: any, extra?: string): string {
+function popupHtml(b: any, extra?: string, isSelected?: boolean): string {
   const website = b.website ? (/^https?:\/\//i.test(b.website) ? b.website : `https://${b.website}`) : '';
   const naamEsc = (b.naam || '').replace(/'/g, "\\'");
   const mapsQuery = encodeURIComponent([b.naam, b.straat, b.postcode, b.stad].filter(Boolean).join(', '));
-  return `<div style="font-family:system-ui;font-size:13px;min-width:210px">
+  return `<div style="font-family:system-ui;font-size:13px;min-width:220px">
     ${extra ? `<div style="font-size:10px;font-weight:700;color:#E85E26;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:2px">${extra}</div>` : ''}
     <b style="color:#1e293b">${b.naam || ''}</b><br/>
     <span style="color:#64748b;font-size:12px">${b.straat || ''}</span><br/>
@@ -25,7 +25,8 @@ function popupHtml(b: any, extra?: string): string {
     ${b.telefoon ? `<div style="margin-top:4px;color:#374151;font-size:12px">📞 ${b.telefoon}</div>` : ''}
     ${b.email ? `<div style="color:#374151;font-size:12px">✉️ ${b.email}</div>` : ''}
     <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-      <button onclick="window._inncemAddToOnderweg('${naamEsc}')" style="font-size:11px;color:#009FE3;background:#f0f9ff;border:1px solid #009FE3;padding:3px 8px;border-radius:4px;cursor:pointer">Toevoegen aan bezoeken →</button>
+      <button onclick="window._inncemRideAdd('${naamEsc}')" style="font-size:11px;color:#009FE3;background:#f0f9ff;border:1px solid #009FE3;padding:3px 8px;border-radius:4px;cursor:pointer">+ 1-Klik toevoegen</button>
+      <button onclick="window._inncemRideToggleSelect('${naamEsc}')" style="font-size:11px;color:${isSelected ? '#E85E26' : '#475569'};background:${isSelected ? '#fff7ed' : '#f8fafc'};border:1px solid ${isSelected ? '#E85E26' : '#cbd5e1'};padding:3px 8px;border-radius:4px;cursor:pointer;font-weight:${isSelected ? '700' : '500'}">${isSelected ? '✓ Geselecteerd' : '☐ Selecteren'}</button>
       <a href="https://www.google.com/maps/search/?api=1&query=${mapsQuery}" target="_blank" rel="noopener" style="font-size:11px;color:#16a34a;border:1px solid #16a34a;padding:3px 8px;border-radius:4px;text-decoration:none">Google Maps →</a>
       ${website ? `<a href="${website}" target="_blank" rel="noopener" style="font-size:11px;color:#009FE3;border:1px solid #009FE3;padding:3px 8px;border-radius:4px;text-decoration:none">Website →</a>` : ''}
     </div>
@@ -270,8 +271,44 @@ const RidePanel: React.FC<RidePanelProps> = ({
   // opnieuw moet tekenen.
   const [mapGeneration, setMapGeneration] = useState(0);
   // Welke stop wordt nu vervangen (toont buurt-suggesties); null = geen.
-  const [replaceStopId, setReplaceStopId] = useState<string | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const [selectedSuggestionNames, setSelectedSuggestionNames] = useState<Set<string>>(new Set());
+
+  const toggleSelectSuggestion = (naam: string) => {
+    setSelectedSuggestionNames(prev => {
+      const next = new Set(prev);
+      if (next.has(naam)) next.delete(naam);
+      else next.add(naam);
+      return next;
+    });
+  };
+
+  const selectAllPageSuggestions = () => {
+    setSelectedSuggestionNames(prev => {
+      const next = new Set(prev);
+      suggestions.forEach(s => next.add(s.bedrijf.naam));
+      return next;
+    });
+  };
+
+  const deselectAllPageSuggestions = () => {
+    setSelectedSuggestionNames(prev => {
+      const next = new Set(prev);
+      suggestions.forEach(s => next.delete(s.bedrijf.naam));
+      return next;
+    });
+  };
+
+  const advanceSelected = () => {
+    const selectedList = suggestions.filter(s => selectedSuggestionNames.has(s.bedrijf.naam));
+    if (selectedList.length === 0) return;
+    setChain(prev => [
+      ...prev,
+      ...selectedList.map((s, i) => ({ id: `${(s.bedrijf.naam || '')}_${Date.now()}_${i}`, bedrijf: s.bedrijf, coords: s.coords, km: s.km })),
+    ]);
+    setAlertMessage(`${selectedList.length} geselecteerde bedrijven toegevoegd`);
+    deselectAllPageSuggestions();
+  };
 
   const requestIdRef = useRef(0);
 
@@ -589,7 +626,8 @@ const RidePanel: React.FC<RidePanelProps> = ({
 
   useEffect(() => {
     (window as any)._inncemRideAdd = (naam: string) => addStopByName(naam);
-    return () => { delete (window as any)._inncemRideAdd; };
+    (window as any)._inncemRideToggleSelect = (naam: string) => toggleSelectSuggestion(naam);
+    return () => { delete (window as any)._inncemRideAdd; delete (window as any)._inncemRideToggleSelect; };
   }, [allData, cityCoords, chain]);
 
   // Bouwt de kaart (tegels + markerlaag) helemaal opnieuw op in de huidige mapDivRef-
@@ -718,17 +756,23 @@ const RidePanel: React.FC<RidePanelProps> = ({
     const MAX_HOVER_ZOOM_MARKERS = 300;
     suggestions.forEach((s, si) => {
       if (!s?.coords || typeof s.coords.lat !== 'number' || typeof s.coords.lng !== 'number') return;
+      const isSelected = selectedSuggestionNames.has(s.bedrijf.naam);
       const bolletje = L.circleMarker([s.coords.lat, s.coords.lng], {
-        radius: suggestionRadius, color: '#fff', weight: 1.5, fillColor: sourceColor(s.bedrijf.source), fillOpacity: 0.9, interactive: true,
+        radius: isSelected ? suggestionRadius + 3 : suggestionRadius,
+        color: isSelected ? '#E85E26' : '#fff',
+        weight: isSelected ? 3 : 1.5,
+        fillColor: sourceColor(s.bedrijf.source),
+        fillOpacity: 0.95,
+        interactive: true,
       })
-        .bindPopup(popupHtml(s.bedrijf, `${(typeof s.km === 'number' ? s.km : 0).toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`), popupOpts)
+        .bindPopup(popupHtml(s.bedrijf, `${(typeof s.km === 'number' ? s.km : 0).toFixed(1)} km ${s.driving ? 'rijden' : '(hemelsbreed)'}`, isSelected), popupOpts)
         .addTo(markersLayerRef.current!);
       if (si >= MAX_HOVER_ZOOM_MARKERS) { bounds.push([s.coords.lat, s.coords.lng]); return; }
       // Zelfde hover-gedrag als de bolletjes op de Kaart-tab: even iets groter en geleidelijk
       // inzoomen zolang de muis erop blijft staan.
       attachHoverZoom(bolletje, map,
-        () => bolletje.setRadius(suggestionRadius + 3),
-        () => bolletje.setRadius(suggestionRadius),
+        () => bolletje.setRadius(isSelected ? suggestionRadius + 5 : suggestionRadius + 3),
+        () => bolletje.setRadius(isSelected ? suggestionRadius + 3 : suggestionRadius),
       );
       bounds.push([s.coords.lat, s.coords.lng]);
     });
@@ -741,7 +785,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
       mapRef.current.invalidateSize();
       mapRef.current.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [40, 40], maxZoom: 14 });
     }
-  }, [startCoords, startLabel, chain, suggestions, destCoords, destLabel, routeLine, mapGeneration]);
+  }, [startCoords, startLabel, chain, suggestions, destCoords, destLabel, routeLine, mapGeneration, selectedSuggestionNames]);
 
   // Fullscreen togglet de containergrootte (klein <-> volledig scherm) in één keer, een veel
   // grotere sprong dan de geleidelijke resizes die de ResizeObserver hierboven normaal opvangt
@@ -1716,23 +1760,42 @@ const RidePanel: React.FC<RidePanelProps> = ({
             {/* Voorstellen: gepagineerd door ALLE bedrijven binnen bereik (net als Live Zoeken),
                 op afstand gesorteerd — niet meer afgekapt tot alleen de eerste N. */}
             <div className="px-6 py-4">
-              <div className="flex items-center justify-between mb-2 gap-2">
+              <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   {destCoords
                     ? `Beste op route vanaf ${chain.length > 0 ? chain[chain.length - 1].bedrijf.naam : (startLabel || 'startpunt')} richting ${destLabel || 'eindadres'}`
                     : `Dichtstbijzijnde vanaf ${chain.length > 0 ? chain[chain.length - 1].bedrijf.naam : (startLabel || 'startpunt')}`}
                   {suggestTotal > 0 && <span className="normal-case font-normal text-slate-400"> ({suggestTotal} binnen bereik)</span>}
                 </span>
-                <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="flex items-center gap-2 flex-wrap">
                   {loadingSuggestions && <Loader2 className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
-                  {suggestions.length > 0 && (
+                  
+                  {/* Meervoudige selectie knoppen */}
+                  {selectedSuggestionNames.size > 0 && (
                     <button
-                      onClick={advanceAll}
-                      title={showAllSuggestions ? 'Alle getoonde bedrijven toevoegen aan de route' : 'Alle voorstellen op deze pagina toevoegen aan de route'}
-                      className="text-[10px] font-bold uppercase tracking-wider text-green-600 hover:text-green-700 hover:underline flex items-center gap-1"
+                      onClick={advanceSelected}
+                      className="px-2.5 py-1 bg-[#E85E26] hover:bg-[#d14d1b] text-white text-[11px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1 shadow-sm transition-colors"
                     >
-                      <Check className="w-3 h-3" /> {showAllSuggestions ? 'Alles toevoegen' : 'Pagina toevoegen'} ({suggestions.length})
+                      <Check className="w-3.5 h-3.5" /> Geselecteerde toevoegen ({selectedSuggestionNames.size})
                     </button>
+                  )}
+
+                  {suggestions.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={selectedSuggestionNames.size === suggestions.length ? deselectAllPageSuggestions : selectAllPageSuggestions}
+                        className="text-[10px] font-bold uppercase tracking-wider text-slate-500 hover:text-[#009FE3] hover:underline"
+                      >
+                        {selectedSuggestionNames.size === suggestions.length ? 'Alles deselecteren' : 'Pagina selecteren'}
+                      </button>
+                      <button
+                        onClick={advanceAll}
+                        title={showAllSuggestions ? 'Alle getoonde bedrijven toevoegen aan de route' : 'Alle voorstellen op deze pagina toevoegen aan de route'}
+                        className="text-[10px] font-bold uppercase tracking-wider text-green-600 hover:text-green-700 hover:underline flex items-center gap-1"
+                      >
+                        <Check className="w-3 h-3" /> {showAllSuggestions ? 'Alles toevoegen' : 'Pagina toevoegen'} ({suggestions.length})
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1740,21 +1803,31 @@ const RidePanel: React.FC<RidePanelProps> = ({
                 <p className="text-xs text-slate-400 py-4 text-center">Geen bedrijven gevonden binnen bereik met deze filters.</p>
               )}
               <div className="space-y-1.5 max-h-80 overflow-y-auto">
-                {suggestions.map((s, i) => (
-                  <div key={i} className="flex items-center gap-2 p-2.5 border border-slate-100 rounded-sm hover:border-[#009FE3]/40 transition-colors">
-                    {/* Klik op naam = open dit bedrijf in Live Zoeken (niet meteen toevoegen aan
-                        de route) — accepteren/overslaan gebeurt expliciet via de knoppen ernaast. */}
-                    <button onClick={() => onOpenInLiveZoeken?.(s.bedrijf.naam)} title="Open in Live Zoeken" className="flex-1 min-w-0 text-left flex items-center gap-1.5">
-                      <Search className="w-3 h-3 text-slate-300 flex-shrink-0" />
-                      <span className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-800 truncate">{s.bedrijf.naam}</p>
-                        <p className="text-[10px] text-slate-400">{s.bedrijf.stad}{typeof s.km === 'number' && !isNaN(s.km) ? ` · ${s.km.toFixed(1)} km${s.driving ? ' rijden' : ' (hemelsbreed)'}` : ''}</p>
-                      </span>
-                    </button>
-                    <button onClick={() => advanceTo(s)} title="Accepteer als volgende stop" className="p-1.5 rounded-full text-green-600 hover:bg-green-50 flex-shrink-0"><Check className="w-4 h-4" /></button>
-                    <button onClick={() => dismissSuggestion(s.bedrijf)} title="Overslaan" className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 flex-shrink-0"><X className="w-4 h-4" /></button>
-                  </div>
-                ))}
+                {suggestions.map((s, i) => {
+                  const isSelected = selectedSuggestionNames.has(s.bedrijf.naam);
+                  return (
+                    <div key={i} className={`flex items-center gap-2 p-2.5 border rounded-sm transition-colors ${isSelected ? 'bg-[#009FE3]/5 border-[#009FE3]' : 'border-slate-100 hover:border-[#009FE3]/40'}`}>
+                      {/* Vinkje voor meervoudige selectie */}
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelectSuggestion(s.bedrijf.naam)}
+                        className="w-4 h-4 accent-[#009FE3] cursor-pointer flex-shrink-0"
+                        title="Selecteer voor meervoudige toevoeging"
+                      />
+                      {/* Klik op naam = open dit bedrijf in Live Zoeken */}
+                      <button onClick={() => onOpenInLiveZoeken?.(s.bedrijf.naam)} title="Open in Live Zoeken" className="flex-1 min-w-0 text-left flex items-center gap-1.5">
+                        <Search className="w-3 h-3 text-slate-300 flex-shrink-0" />
+                        <span className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-800 truncate">{s.bedrijf.naam}</p>
+                          <p className="text-[10px] text-slate-400">{s.bedrijf.stad}{typeof s.km === 'number' && !isNaN(s.km) ? ` · ${s.km.toFixed(1)} km${s.driving ? ' rijden' : ' (hemelsbreed)'}` : ''}</p>
+                        </span>
+                      </button>
+                      <button onClick={() => advanceTo(s)} title="1-Klik toevoegen als volgende stop" className="p-1.5 rounded-full text-green-600 hover:bg-green-50 flex-shrink-0"><Check className="w-4 h-4" /></button>
+                      <button onClick={() => dismissSuggestion(s.bedrijf)} title="Overslaan" className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 flex-shrink-0"><X className="w-4 h-4" /></button>
+                    </div>
+                  );
+                })}
               </div>
               {!showAllSuggestions && suggestTotal > suggestCount && (() => {
                 const totalSuggestPages = Math.max(1, Math.ceil(suggestTotal / suggestCount));
