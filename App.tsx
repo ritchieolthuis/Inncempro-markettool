@@ -4283,6 +4283,8 @@ const App: React.FC = () => {
       setShowRidePanel(true);
       setSelectedRaws(matchedMap);
       setViewMode('visits');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      showToast(`Route '${route.name || 'Opgeslagen route'}' (${chainItems.length} adressen) geladen in Onderweg`);
     }
   };
 
@@ -5860,19 +5862,23 @@ const App: React.FC = () => {
                         const rawStops = Array.isArray(route.stops) ? route.stops : Array.isArray(route.points) ? route.points : [];
                         const stopNamen = rawStops.map((s: any) => (typeof s === 'string' ? s.split('|')[0] : (s?.naam || s?.name || '')));
                         return (
-                          <div key={routeId} className="bg-slate-50 border border-slate-200 rounded-md p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <h4 className="font-bold text-slate-900 text-sm truncate">{routeName}</h4>
+                          <div
+                            key={routeId}
+                            onClick={() => viewSavedRoute(route)}
+                            className="bg-slate-50 border border-slate-200 rounded-md p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-[#009FE3] hover:shadow-sm cursor-pointer transition-all group"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <h4 className="font-bold text-slate-900 text-sm truncate group-hover:text-[#009FE3] transition-colors">{routeName}</h4>
                               <p className="text-xs text-slate-500 mt-0.5">
-                                {route.savedAt ? new Date(route.savedAt).toLocaleString('nl-NL') : ''} • {stopNamen.length} bedrijven: {stopNamen.slice(0, 4).join(', ')}{stopNamen.length > 4 ? '...' : ''}
+                                {route.savedAt ? new Date(route.savedAt).toLocaleString('nl-NL') : ''} • <span className="font-semibold text-[#009FE3]">{stopNamen.length} adressen</span>: {stopNamen.slice(0, 5).join(', ')}{stopNamen.length > 5 ? '...' : ''}
                               </p>
                             </div>
-                            <div className="flex items-center gap-2 flex-shrink-0">
+                            <div className="flex items-center gap-2 flex-shrink-0" onClick={e => e.stopPropagation()}>
                               <button
                                 onClick={() => viewSavedRoute(route)}
-                                className="px-3 py-1.5 bg-[#009FE3] hover:bg-[#008ac5] text-white text-xs font-bold rounded-sm flex items-center gap-1.5 transition-colors"
+                                className="px-3 py-1.5 bg-[#009FE3] hover:bg-[#008ac5] text-white text-xs font-bold rounded-sm flex items-center gap-1.5 transition-colors shadow-sm"
                               >
-                                <Navigation className="w-3.5 h-3.5" /> Laad in Onderweg
+                                <Navigation className="w-3.5 h-3.5" /> Open in Onderweg
                               </button>
                               <button
                                 onClick={() => {
@@ -5880,6 +5886,7 @@ const App: React.FC = () => {
                                   setSavedRoutes(next);
                                   localStorage.setItem('inncempro_saved_routes', JSON.stringify(next));
                                   localStorage.setItem(uKey('inncempro_saved_routes'), JSON.stringify(next));
+                                  showToast('Route verwijderd');
                                 }}
                                 className="text-slate-400 hover:text-red-500 p-1.5 rounded transition-colors"
                                 title="Verwijderen"
