@@ -1818,35 +1818,16 @@ const RidePanel: React.FC<RidePanelProps> = ({
                     : `Dichtstbijzijnde vanaf ${chain.length > 0 ? chain[chain.length - 1].bedrijf.naam : (startLabel || 'startpunt')}`}
                   {suggestTotal > 0 && <span className="normal-case font-normal text-slate-400"> ({suggestTotal} binnen bereik)</span>}
                 </span>
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-2 flex-shrink-0">
                   {loadingSuggestions && <Loader2 className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
-                  
-                  {/* Meervoudige selectie knoppen */}
-                  {selectedSuggestionNames.size > 0 && (
-                    <button
-                      onClick={advanceSelected}
-                      className="px-2.5 py-1 bg-[#E85E26] hover:bg-[#d14d1b] text-white text-[11px] font-bold uppercase tracking-wider rounded-sm flex items-center gap-1 shadow-sm transition-colors"
-                    >
-                      <Check className="w-3.5 h-3.5" /> Geselecteerde toevoegen ({selectedSuggestionNames.size})
-                    </button>
-                  )}
-
                   {suggestions.length > 0 && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={selectedSuggestionNames.size === suggestions.length ? deselectAllPageSuggestions : selectAllPageSuggestions}
-                        className="text-[10px] font-bold uppercase tracking-wider text-slate-500 hover:text-[#009FE3] hover:underline"
-                      >
-                        {selectedSuggestionNames.size === suggestions.length ? 'Alles deselecteren' : 'Pagina selecteren'}
-                      </button>
-                      <button
-                        onClick={advanceAll}
-                        title={showAllSuggestions ? 'Alle getoonde bedrijven toevoegen aan de route' : 'Alle voorstellen op deze pagina toevoegen aan de route'}
-                        className="text-[10px] font-bold uppercase tracking-wider text-green-600 hover:text-green-700 hover:underline flex items-center gap-1"
-                      >
-                        <Check className="w-3 h-3" /> {showAllSuggestions ? 'Alles toevoegen' : 'Pagina toevoegen'} ({suggestions.length})
-                      </button>
-                    </div>
+                    <button
+                      onClick={advanceAll}
+                      title={showAllSuggestions ? 'Alle getoonde bedrijven toevoegen aan de route' : 'Alle voorstellen op deze pagina toevoegen aan de route'}
+                      className="text-[10px] font-bold uppercase tracking-wider text-green-600 hover:text-green-700 hover:underline flex items-center gap-1"
+                    >
+                      <Check className="w-3 h-3" /> {showAllSuggestions ? 'Alles toevoegen' : 'Pagina toevoegen'} ({suggestions.length})
+                    </button>
                   )}
                 </div>
               </div>
@@ -1854,31 +1835,20 @@ const RidePanel: React.FC<RidePanelProps> = ({
                 <p className="text-xs text-slate-400 py-4 text-center">Geen bedrijven gevonden binnen bereik met deze filters.</p>
               )}
               <div className="space-y-1.5 max-h-80 overflow-y-auto">
-                {suggestions.map((s, i) => {
-                  const isSelected = selectedSuggestionNames.has(s.bedrijf.naam);
-                  return (
-                    <div key={i} className={`flex items-center gap-2 p-2.5 border rounded-sm transition-colors ${isSelected ? 'bg-[#009FE3]/5 border-[#009FE3]' : 'border-slate-100 hover:border-[#009FE3]/40'}`}>
-                      {/* Vinkje voor meervoudige selectie */}
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleSelectSuggestion(s.bedrijf.naam)}
-                        className="w-4 h-4 accent-[#009FE3] cursor-pointer flex-shrink-0"
-                        title="Selecteer voor meervoudige toevoeging"
-                      />
-                      {/* Klik op naam = open dit bedrijf in Live Zoeken */}
-                      <button onClick={() => onOpenInLiveZoeken?.(s.bedrijf.naam)} title="Open in Live Zoeken" className="flex-1 min-w-0 text-left flex items-center gap-1.5">
-                        <Search className="w-3 h-3 text-slate-300 flex-shrink-0" />
-                        <span className="min-w-0">
-                          <p className="text-sm font-semibold text-slate-800 truncate">{s.bedrijf.naam}</p>
-                          <p className="text-[10px] text-slate-400">{s.bedrijf.stad}{typeof s.km === 'number' && !isNaN(s.km) ? ` · ${s.km.toFixed(1)} km${s.driving ? ' rijden' : ' (hemelsbreed)'}` : ''}</p>
-                        </span>
-                      </button>
-                      <button onClick={() => advanceTo(s)} title="1-Klik toevoegen als volgende stop" className="p-1.5 rounded-full text-green-600 hover:bg-green-50 flex-shrink-0"><Check className="w-4 h-4" /></button>
-                      <button onClick={() => dismissSuggestion(s.bedrijf)} title="Overslaan" className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 flex-shrink-0"><X className="w-4 h-4" /></button>
-                    </div>
-                  );
-                })}
+                {suggestions.map((s, i) => (
+                  <div key={i} className="flex items-center gap-2 p-2.5 border border-slate-100 rounded-sm hover:border-[#009FE3]/40 transition-colors">
+                    {/* Klik op naam = open dit bedrijf in Live Zoeken */}
+                    <button onClick={() => onOpenInLiveZoeken?.(s.bedrijf.naam)} title="Open in Live Zoeken" className="flex-1 min-w-0 text-left flex items-center gap-1.5">
+                      <Search className="w-3 h-3 text-slate-300 flex-shrink-0" />
+                      <span className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-800 truncate">{s.bedrijf.naam}</p>
+                        <p className="text-[10px] text-slate-400">{s.bedrijf.stad}{typeof s.km === 'number' && !isNaN(s.km) ? ` · ${s.km.toFixed(1)} km${s.driving ? ' rijden' : ' (hemelsbreed)'}` : ''}</p>
+                      </span>
+                    </button>
+                    <button onClick={() => advanceTo(s)} title="Accepteer als volgende stop" className="p-1.5 rounded-full text-green-600 hover:bg-green-50 flex-shrink-0"><Check className="w-4 h-4" /></button>
+                    <button onClick={() => dismissSuggestion(s.bedrijf)} title="Overslaan" className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 flex-shrink-0"><X className="w-4 h-4" /></button>
+                  </div>
+                ))}
               </div>
               {!showAllSuggestions && suggestTotal > suggestCount && (() => {
                 const totalSuggestPages = Math.max(1, Math.ceil(suggestTotal / suggestCount));
