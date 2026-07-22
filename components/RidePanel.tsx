@@ -58,12 +58,13 @@ const isTouchDevice = typeof window !== 'undefined' && window.matchMedia('(point
 // bij iedere hover sprong de kaart daardoor naar een hoek i.p.v. rustig in te zoomen. Een klik/
 // tik opent de popup nog gewoon (Leaflet's eigen standaardgedrag, hier niet aangeraakt); hover
 // doet nu uitsluitend het geleidelijke inzoomen.
-function attachHoverZoom(layer: L.Marker | L.CircleMarker, map: L.Map, onHover?: () => void, onLeave?: () => void) {
+function attachHoverZoom(layer: L.Marker | L.CircleMarker, map: L.Map, onHover?: () => void, onLeave?: () => void, isSelectionMode?: () => boolean) {
   if (isTouchDevice) return;
   let hoverTimer: ReturnType<typeof setTimeout> | null = null;
   let zoomInterval: ReturnType<typeof setInterval> | null = null;
   layer.on('mouseover', function () {
     onHover?.();
+    if (isSelectionMode?.()) return;
     const latlng = layer.getLatLng();
     hoverTimer = setTimeout(() => {
       zoomInterval = setInterval(() => {
@@ -816,6 +817,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
       attachHoverZoom(bolletje, map,
         () => bolletje.setRadius(isSelected ? suggestionRadius + 5 : suggestionRadius + 3),
         () => bolletje.setRadius(isSelected ? suggestionRadius + 3 : suggestionRadius),
+        () => mapSelectionModeRef.current
       );
       bounds.push([s.coords.lat, s.coords.lng]);
     });
@@ -828,7 +830,7 @@ const RidePanel: React.FC<RidePanelProps> = ({
       mapRef.current.invalidateSize();
       mapRef.current.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [40, 40], maxZoom: 14 });
     }
-  }, [startCoords, startLabel, chain, suggestions, destCoords, destLabel, routeLine, mapGeneration, selectedSuggestionNames]);
+  }, [startCoords, startLabel, chain, suggestions, destCoords, destLabel, routeLine, mapGeneration]);
 
   // Fullscreen togglet de containergrootte (klein <-> volledig scherm) in één keer, een veel
   // grotere sprong dan de geleidelijke resizes die de ResizeObserver hierboven normaal opvangt

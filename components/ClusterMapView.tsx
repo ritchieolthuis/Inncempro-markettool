@@ -284,7 +284,7 @@ const ClusterMapView: React.FC<ClusterMapViewProps> = ({ onOpenInDatabase, focus
 
       const HOVER_ZOOM_MAX = 15;
       marker.on('mouseover', function (this: L.CircleMarker) {
-        if (isTouchDevice) return;
+        if (isTouchDevice || selectionModeRef.current) return;
         if (popupCloseTimer) { clearTimeout(popupCloseTimer); popupCloseTimer = null; }
         this.setRadius(this.getRadius() + 3);
         if (!selectionModeRef.current && !this.isPopupOpen()) {
