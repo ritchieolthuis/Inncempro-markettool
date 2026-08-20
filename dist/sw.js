@@ -87,7 +87,7 @@ define(['./workbox-5d155c7a'], (function (workbox) { 'use strict';
     "revision": "77de9ae56cb5dff9abab29d14ba3cc49"
   }, {
     "url": "index.html",
-    "revision": "e6c028f86305a524eed46d15f3031661"
+    "revision": "b0d10a06a9273eb1c4b3740215e4bfc3"
   }, {
     "url": "icon-maskable-512.png",
     "revision": "aafb99953f9a01fa18ee7d4cfc99a645"
