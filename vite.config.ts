@@ -20,7 +20,6 @@ export default defineConfig(({ mode }) => {
         VitePWA({
           registerType: 'autoUpdate',
           manifest: false, // gebruikt het handgeschreven public/manifest.webmanifest (al in index.html gelinkt)
-          includeAssets: ['favicon.ico', 'favicon-16-inncempro.png', 'favicon-32-inncempro.png', 'apple-touch-icon-inncempro.png', 'icon-192-inncempro.png', 'icon-512-inncempro.png', 'icon-maskable-512.png', 'logo-header.png'],
           workbox: {
             maximumFileSizeToCacheInBytes: 6 * 1024 * 1024, // de gebundelde bedrijvendatabase maakt de hoofdbundel groot
             globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}'],
