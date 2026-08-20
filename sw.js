@@ -93,10 +93,10 @@ define(['./workbox-5d155c7a'], (function (workbox) { 'use strict';
     "revision": "aafb99953f9a01fa18ee7d4cfc99a645"
   }, {
     "url": "icon-512.png",
-    "revision": "4a56e55cfc10ff8ba96756940dcc9673"
+    "revision": "156ed7c9fb3fc3be26fc4ec980596d6f"
   }, {
     "url": "icon-192.png",
-    "revision": "a03f76facabf13d8051c1bdb1ebe9aee"
+    "revision": "bde7439e6a71baa99c1c68aace2277d1"
   }, {
     "url": "icon-1024.png",
     "revision": "019295de80d1aa0420c52e27b9225675"
@@ -105,13 +105,13 @@ define(['./workbox-5d155c7a'], (function (workbox) { 'use strict';
     "revision": "8a09960e5e25083d29629053495df4ac"
   }, {
     "url": "favicon-32.png",
-    "revision": "281e03a328d57236e7c71b5d07f48003"
+    "revision": "f817247d278f9a21913c854070554025"
   }, {
     "url": "favicon-16.png",
     "revision": "32cc037009d5d2975e557a4bc8c94cab"
   }, {
     "url": "apple-touch-icon.png",
-    "revision": "0214a924cfd2a2be5adb183f567e37c5"
+    "revision": "70ab32e84b5d418848b39366c03a7401"
   }, {
     "url": "assets/index-DO6yLyEl.css",
     "revision": null
@@ -120,22 +120,22 @@ define(['./workbox-5d155c7a'], (function (workbox) { 'use strict';
     "revision": null
   }, {
     "url": "apple-touch-icon.png",
-    "revision": "0214a924cfd2a2be5adb183f567e37c5"
+    "revision": "70ab32e84b5d418848b39366c03a7401"
   }, {
     "url": "favicon-16.png",
     "revision": "32cc037009d5d2975e557a4bc8c94cab"
   }, {
     "url": "favicon-32.png",
-    "revision": "281e03a328d57236e7c71b5d07f48003"
+    "revision": "f817247d278f9a21913c854070554025"
   }, {
     "url": "favicon.ico",
     "revision": "8a09960e5e25083d29629053495df4ac"
   }, {
     "url": "icon-192.png",
-    "revision": "a03f76facabf13d8051c1bdb1ebe9aee"
+    "revision": "bde7439e6a71baa99c1c68aace2277d1"
   }, {
     "url": "icon-512.png",
-    "revision": "4a56e55cfc10ff8ba96756940dcc9673"
+    "revision": "156ed7c9fb3fc3be26fc4ec980596d6f"
   }, {
     "url": "icon-maskable-512.png",
     "revision": "aafb99953f9a01fa18ee7d4cfc99a645"
