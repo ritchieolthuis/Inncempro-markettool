@@ -81,36 +81,36 @@ define(['./workbox-5d155c7a'], (function (workbox) { 'use strict';
     "revision": "123fed109c95b6539df97f9415adb80e"
   }, {
     "url": "manifest.webmanifest",
-    "revision": "5ec71ae60d716ffb2503afca8a161dfc"
+    "revision": "af550fd2398b233013e9ae411c86717f"
   }, {
     "url": "logo-header.png",
     "revision": "77de9ae56cb5dff9abab29d14ba3cc49"
   }, {
     "url": "index.html",
-    "revision": "b0d10a06a9273eb1c4b3740215e4bfc3"
+    "revision": "3240fa5e752d8a716dc1b5430445caa2"
   }, {
     "url": "icon-maskable-512.png",
     "revision": "aafb99953f9a01fa18ee7d4cfc99a645"
   }, {
-    "url": "icon-512.png",
+    "url": "icon-512-inncempro.png",
     "revision": "156ed7c9fb3fc3be26fc4ec980596d6f"
   }, {
-    "url": "icon-192.png",
+    "url": "icon-192-inncempro.png",
     "revision": "bde7439e6a71baa99c1c68aace2277d1"
   }, {
     "url": "icon-1024.png",
     "revision": "019295de80d1aa0420c52e27b9225675"
   }, {
-    "url": "favicon.ico",
+    "url": "favicon-inncempro.ico",
     "revision": "8a09960e5e25083d29629053495df4ac"
   }, {
-    "url": "favicon-32.png",
+    "url": "favicon-32-inncempro.png",
     "revision": "f817247d278f9a21913c854070554025"
   }, {
-    "url": "favicon-16.png",
+    "url": "favicon-16-inncempro.png",
     "revision": "32cc037009d5d2975e557a4bc8c94cab"
   }, {
-    "url": "apple-touch-icon.png",
+    "url": "apple-touch-icon-inncempro.png",
     "revision": "70ab32e84b5d418848b39366c03a7401"
   }, {
     "url": "assets/index-DO6yLyEl.css",
@@ -118,24 +118,6 @@ define(['./workbox-5d155c7a'], (function (workbox) { 'use strict';
   }, {
     "url": "assets/index-Cqnmkbsp.js",
     "revision": null
-  }, {
-    "url": "apple-touch-icon.png",
-    "revision": "70ab32e84b5d418848b39366c03a7401"
-  }, {
-    "url": "favicon-16.png",
-    "revision": "32cc037009d5d2975e557a4bc8c94cab"
-  }, {
-    "url": "favicon-32.png",
-    "revision": "f817247d278f9a21913c854070554025"
-  }, {
-    "url": "favicon.ico",
-    "revision": "8a09960e5e25083d29629053495df4ac"
-  }, {
-    "url": "icon-192.png",
-    "revision": "bde7439e6a71baa99c1c68aace2277d1"
-  }, {
-    "url": "icon-512.png",
-    "revision": "156ed7c9fb3fc3be26fc4ec980596d6f"
   }, {
     "url": "icon-maskable-512.png",
     "revision": "aafb99953f9a01fa18ee7d4cfc99a645"
