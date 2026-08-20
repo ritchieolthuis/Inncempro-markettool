@@ -119,6 +119,21 @@ define(['./workbox-5d155c7a'], (function (workbox) { 'use strict';
     "url": "assets/index-Cqnmkbsp.js",
     "revision": null
   }, {
+    "url": "apple-touch-icon-inncempro.png",
+    "revision": "70ab32e84b5d418848b39366c03a7401"
+  }, {
+    "url": "favicon-16-inncempro.png",
+    "revision": "32cc037009d5d2975e557a4bc8c94cab"
+  }, {
+    "url": "favicon-32-inncempro.png",
+    "revision": "f817247d278f9a21913c854070554025"
+  }, {
+    "url": "icon-192-inncempro.png",
+    "revision": "bde7439e6a71baa99c1c68aace2277d1"
+  }, {
+    "url": "icon-512-inncempro.png",
+    "revision": "156ed7c9fb3fc3be26fc4ec980596d6f"
+  }, {
     "url": "icon-maskable-512.png",
     "revision": "aafb99953f9a01fa18ee7d4cfc99a645"
   }, {
