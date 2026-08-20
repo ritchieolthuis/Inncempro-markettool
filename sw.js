@@ -80,17 +80,17 @@ define(['./workbox-5d155c7a'], (function (workbox) { 'use strict';
     "url": "registerSW.js",
     "revision": "123fed109c95b6539df97f9415adb80e"
   }, {
+    "url": "opaque-logo.png",
+    "revision": "ef346436a5fbd293b99f8fcef79ab9e6"
+  }, {
     "url": "manifest.webmanifest",
-    "revision": "af550fd2398b233013e9ae411c86717f"
+    "revision": "472918fa0f17f00c30a378e272ea49cc"
   }, {
     "url": "logo-header.png",
     "revision": "77de9ae56cb5dff9abab29d14ba3cc49"
   }, {
     "url": "index.html",
-    "revision": "3240fa5e752d8a716dc1b5430445caa2"
-  }, {
-    "url": "icon-maskable-512.png",
-    "revision": "aafb99953f9a01fa18ee7d4cfc99a645"
+    "revision": "116d2e523f12cb8b27399ab8da1eac27"
   }, {
     "url": "icon-512-inncempro.png",
     "revision": "156ed7c9fb3fc3be26fc4ec980596d6f"
@@ -110,35 +110,17 @@ define(['./workbox-5d155c7a'], (function (workbox) { 'use strict';
     "url": "favicon-16-inncempro.png",
     "revision": "32cc037009d5d2975e557a4bc8c94cab"
   }, {
-    "url": "apple-touch-icon-inncempro.png",
+    "url": "apple-touch-icon-final.png",
     "revision": "70ab32e84b5d418848b39366c03a7401"
+  }, {
+    "url": "Logo-Inncempro-facebook.png",
+    "revision": "97418cc3b61c89487d50473464f0b478"
   }, {
     "url": "assets/index-DO6yLyEl.css",
     "revision": null
   }, {
     "url": "assets/index-Cqnmkbsp.js",
     "revision": null
-  }, {
-    "url": "apple-touch-icon-inncempro.png",
-    "revision": "70ab32e84b5d418848b39366c03a7401"
-  }, {
-    "url": "favicon-16-inncempro.png",
-    "revision": "32cc037009d5d2975e557a4bc8c94cab"
-  }, {
-    "url": "favicon-32-inncempro.png",
-    "revision": "f817247d278f9a21913c854070554025"
-  }, {
-    "url": "icon-192-inncempro.png",
-    "revision": "bde7439e6a71baa99c1c68aace2277d1"
-  }, {
-    "url": "icon-512-inncempro.png",
-    "revision": "156ed7c9fb3fc3be26fc4ec980596d6f"
-  }, {
-    "url": "icon-maskable-512.png",
-    "revision": "aafb99953f9a01fa18ee7d4cfc99a645"
-  }, {
-    "url": "logo-header.png",
-    "revision": "77de9ae56cb5dff9abab29d14ba3cc49"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html")));
